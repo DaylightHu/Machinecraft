@@ -18,5 +18,5 @@ void world_destroy(World *world);
 bool world_in_bounds(const World *world, BlockPos position);
 BlockState world_get(const World *world, BlockPos position);
 size_t world_volume(const World *world);
-
+bool world_set(World *world, BlockPos position, BlockState state);
 #endif

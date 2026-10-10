@@ -87,6 +87,19 @@ BlockState world_get(const World *world, BlockPos position)
     return world->cells[world_index(world, position)];
 }
 
+bool world_set(World *world, BlockPos position, BlockState state)
+{
+    if (!world_in_bounds(world, position) || state.id >= BLOCK_COUNT){
+        return false;
+    }
+
+    if (state.id == BLOCK_REDSTONE_DUST && state.data.dust.power > 15){
+        return false;
+    }
+    world->cells[world_index(world, position)] = state;
+    return true;
+}
+
 size_t world_volume(const World *world)
 {
     return world ? world->volume : 0;
