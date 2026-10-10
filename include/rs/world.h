@@ -10,16 +10,13 @@ typedef struct {
     int size_x, size_y, size_z, ground_layers;
 } WorldConfig;
 
-typedef struct World{
-    WorldConfig config;
-    size_t volume;
-    BlockState *cells;
-    uint64_t tick, revision;
-} World;
+typedef struct World World;
 
 WorldConfig world_config_default(void);
-World *world_create(WorldConfig, config);
+World *world_create(WorldConfig config);
 void world_destroy(World *world);
-
+bool world_in_bounds(const World *world, BlockPos position);
+BlockState world_get(const World *world, BlockPos position);
+size_t world_volume(const World *world);
 
 #endif

@@ -11,7 +11,13 @@ typedef enum{
     BLOCK_REDSTONE_DUST,
     BLOCK_REDSTONE_TORCH,
     BLOCK_REDSTONE,
+    BLOCK_COUNT
 } BlockId;
+
+typedef enum {
+    DIR_EAST = 0, DIR_WEST, DIR_UP, DIR_DOWN, DIR_SOUTH, DIR_NORTH,
+    DIR_COUNT
+} Direction;
 
 typedef struct {
     uint8_t id;
@@ -28,5 +34,7 @@ typedef struct {
         } torch;
     }data;
 } BlockState;
+
+BlockState block_default(BlockId id);
 
 #endif
