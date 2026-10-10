@@ -10,6 +10,14 @@ struct Block{
     int wire_connections;
 };
 
+int calculate_power(struct Block neighbor){
+    if (neighbor.id == 4){
+        return 15;
+    } else {
+        return 0;
+    }
+}
+        
 int main(void){
     struct Block source = {0};
     source.id = 4;
@@ -20,20 +28,13 @@ int main(void){
     dust.x = 1;
 
     printf("开始时: %d\n", dust.power);
-    
-    if (source.id == 4){
-         dust.power = 15;
-    } else{
-         dust.power = 0;
-    }
+
+    dust.power = calculate_power(source);
     printf("通电时: %d\n", dust.power);
 
     source.id = 0;
-    if (source.id == 4){
-        dust.power = 15;
-    } else{
-        dust.power = 0;
-    }
+    
+    dust.power = calculate_power(source);
     printf("电源拆掉时: %d\n", dust.power);
     return 0;
 }
