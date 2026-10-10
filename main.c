@@ -1,13 +1,11 @@
 #include <stdio.h>
 #include <stdbool.h>
+
 // 0air 1iron 2dust 3torch 4source
 struct Block{
     int x, y, z;
     int id;
     int power;
-    bool is_lit;
-    int torch_dir;
-    int wire_connections;
 };
 
 int calculate_power(struct Block neighbor){
