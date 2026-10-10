@@ -13,7 +13,15 @@ struct Block{
 int calculate_power(struct Block neighbor){
     if (neighbor.id == 4){
         return 15;
-    } else {
+    }
+    else if(neighbor.id == 2){
+        if (neighbor.power > 0){
+            return neighbor.power - 1;
+        } else{
+            return 0;
+        }
+    }
+    else {
         return 0;
     }
 }
@@ -23,18 +31,27 @@ int main(void){
     source.id = 4;
     source.x = 0;
 
-    struct Block dust = {0};
-    dust.id = 2;
-    dust.x = 1;
+    struct Block dust0 = {0};
+    dust0.id = 2;
+    dust0.x = 1;
 
-    printf("开始时: %d\n", dust.power);
+    struct Block dust1 = {0};
+    dust1.id = 2;
+    dust1.x = 2;
 
-    dust.power = calculate_power(source);
-    printf("通电时: %d\n", dust.power);
+    printf("开始时d0: %d\n", dust0.power);
+    printf("开始时d1: %d\n", dust1.power);
+
+    dust0.power = calculate_power(source);
+    dust1.power = calculate_power(dust0);
+    printf("通电时d0: %d\n", dust0.power);
+    printf("通电时d1: %d\n", dust1.power);
 
     source.id = 0;
     
-    dust.power = calculate_power(source);
-    printf("电源拆掉时: %d\n", dust.power);
+    dust0.power = calculate_power(source);
+    dust1.power = calculate_power(dust0);
+    printf("电源拆掉时d0: %d\n", dust0.power);
+    printf("电源拆掉时d1: %d\n", dust1.power);
     return 0;
 }
