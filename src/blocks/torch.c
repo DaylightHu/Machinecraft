@@ -17,8 +17,15 @@ bool torch_supported(const World *world, BlockPos position, Direction support)
 static bool input_powered(const World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
-    BlockPos support = block_offset(position, (Direction)state.data.torch.support_dir);
-    return power_received(world, support, SIGNAL_ALL) > 0;
+    Direction support_dir = (Direction)state.data.torch.support_dir;
+    BlockPos support = block_offset(position, support_dir);
+
+    return power_signal(
+        world,
+        support,
+        direction_opposite(support_dir),
+        SIGNAL_ALL
+    ) > 0;
 }
 
 static uint8_t torch_signal(const World *world, BlockPos position,
