@@ -1,10 +1,21 @@
 #include "world_internal.h"
+#include "sim_internal.h"
 #include "worldgen.h"
 
 #include <stdlib.h>
 
 WorldConfig world_config_default(void){
     return (WorldConfig){32, 16, 32, 1};
+}
+
+BlockPos world_position(const World *world, uint32_t index)
+{
+    BlockPos position;
+    position.x = (int)(index % (uint32_t)world->config.size_x);
+    index /= (uint32_t)world->config.size_x;
+    position.z = (int)(index % (uint32_t)world->config.size_z);
+    position.y = (int)(index / (uint32_t)world->config.size_z);
+    return position;
 }
 
 static bool calculate_volume(WorldConfig config, size_t *volume){

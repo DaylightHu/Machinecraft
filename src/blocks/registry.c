@@ -1,4 +1,20 @@
-#include "rs/block.h"
+#include "block_internal.h"
+#include <string.h>
+
+static const BlockDef air = { .name = "air"}
+
+const BlockDef *block_definition(BlockId id)
+{
+    static const BlockDef *const definitions[BLOCK_COUNT] = {
+        &air, &rs_iron_def, &rs_redstone_block_def, &rs_wire_def, &rs_torch_def
+    };
+    return (unsigned)id < BLOCK_COUNT ? definitions[id] : &air;
+}
+
+const char *block_name(BlockId id)
+{
+    return block_definition(id)->name;
+}
 
 BlockState block_default(BlockId id)
 {

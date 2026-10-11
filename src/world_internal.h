@@ -13,5 +13,5 @@ struct World {
 };
 
 uint32_t world_index(const World *world, BlockPos position);
-
+BlockPos world_position(const World *world, uint32_t index);
 #endif
