@@ -3,6 +3,8 @@
 
 #include "rs/world.h"
 
+typedef struct Simulator Simulator;
+
 struct World {
     WorldConfig config;
     size_t volume;

@@ -14,5 +14,11 @@ typedef struct {
 } SolidPower;
 
 RsResult sim_flush(World *world);
+RsResult sim_step(World *world);
+SimStats sim_stats(const World *world);
+void sim_reset_stats(World *world);
+SolidPower redstone_solid_power(const World *world, BlockPos pos);
+uint8_t redstone_signal(const World *world, BlockPos emitter, Direction toward);
+bool redstone_torch_burned_out(const World *world, BlockPos pos);
 
 #endif

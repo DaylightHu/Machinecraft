@@ -36,5 +36,8 @@ typedef struct {
 } BlockState;
 
 BlockState block_default(BlockId id);
+const char *block_name(BlockId id);
 BlockPos block_offset(BlockPos position, Direction direction);
+Direction direction_opposite(Direction direction);
 #endif
+
