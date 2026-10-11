@@ -1,9 +1,38 @@
 #include "wire_solver.h"
 #include "sim_internal.h"
 
-#include "string.h"
+#include <string.h>
 
-enum {POWER_LEVELS = 16, MAX_WIRE_NEIGHBORS = 12};
+enum { POWER_LEVELS = 16, MAX_WIRE_NEIGHBORS = 12 };
+
+/* Intrusive buckets: raising a queued wire removes its previous entry first. */
+static void bucket_remove(Simulator *sim, uint32_t heads[POWER_LEVELS],
+                          uint32_t index, uint8_t power)
+{
+    uint32_t previous = sim->bucket_prev[index];
+    uint32_t next = sim->bucket_next[index];
+    if (previous == RS_NONE) {
+        heads[power] = next;
+    } else {
+        sim->bucket_next[previous] = next;
+    }
+    if (next != RS_NONE) {
+        sim->bucket_prev[next] = previous;
+    }
+    sim->bucket_prev[index] = RS_NONE;
+    sim->bucket_next[index] = RS_NONE;
+}
+
+static void bucket_insert(Simulator *sim, uint32_t heads[POWER_LEVELS],
+                          uint32_t index, uint8_t power)
+{
+    sim->bucket_prev[index] = RS_NONE;
+    sim->bucket_next[index] = heads[power];
+    if (heads[power] != RS_NONE) {
+        sim->bucket_prev[heads[power]] = index;
+    }
+    heads[power] = index;
+}
 
 static size_t collect_component(World *world, uint32_t root)
 {
@@ -113,14 +142,14 @@ void wire_solver_flush(World *world)
         return;
     }
     if (++sim->epoch == 0) {
-        memset(sim->visited, 0, world->volume *sizeof(*sim->visited));
+        memset(sim->visited, 0, world->volume * sizeof(*sim->visited));
         sim->epoch = 1;
     }
 
-    for (size_t cursor = 0; cursor < sim->wire_count; ++cursor){
+    for (size_t cursor = 0; cursor < sim->wire_count; ++cursor) {
         uint32_t index = sim->wire_roots[cursor];
         sim->root_flags[index] &= (uint8_t)~ROOT_WIRE;
-        if (world->cells[index].id == BLOCK_REDSTONE_DUST && sim->visited[index] != sim->epoch){
+        if (world->cells[index].id == BLOCK_REDSTONE_WIRE && sim->visited[index] != sim->epoch) {
             solve_component(world, index);
         }
     }

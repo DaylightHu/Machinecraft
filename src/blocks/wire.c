@@ -10,13 +10,13 @@ static const Direction horizontal_faces[] = {DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_
 
 static bool is_wire(const World *world, BlockPos position)
 {
-    return world_get(world, position).id == BLOCK_REDSTONE_DUST;
+    return world_get(world, position).id == BLOCK_REDSTONE_WIRE;
 }
 
 static bool connects(const World *world, BlockPos position)
 {
     uint8_t id = world_get(world, position).id;
-    return id == BLOCK_REDSTONE_DUST || id == BLOCK_REDSTONE_TORCH || id == BLOCK_REDSTONE;
+    return id == BLOCK_REDSTONE_WIRE || id == BLOCK_REDSTONE_TORCH || id == BLOCK_REDSTONE_BLOCK;
 }
 
 bool wire_supported(const World *world, BlockPos position)

@@ -1,14 +1,15 @@
 #include "queue.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 bool queue_init(IndexQueue *queue, size_t capacity)
 {
     memset(queue, 0, sizeof(*queue));
     queue->capacity = capacity;
-    queue->items = malloc(capacity *sizeof(*queue->items));
+    queue->items = malloc(capacity * sizeof(*queue->items));
     queue->pending = calloc(capacity, 1);
-    if (!queue->items || !queue->pending){
+    if (!queue->items || !queue->pending) {
         queue_destroy(queue);
         return false;
     }
