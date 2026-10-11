@@ -11,8 +11,8 @@ typedef struct{
 typedef struct {
     uint8_t received; /* Any incident signal, e.g. dust can turn off a torch. */
     uint8_t strong;   /* Direct signal with ALL wire outputs suppressed. */
-
-
 } SolidPower;
+
+RsResult sim_flush(World *world);
 
 #endif
