@@ -1,1 +1,4 @@
-Makefile linguist-detectable=false
+CMakeLists.txt -linguist-detectable
+*.cmake -linguist-detectable
+Makefile -linguist-detectable
+*.mk -linguist-detectable
