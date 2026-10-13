@@ -11,7 +11,7 @@ int main(void)
     camera.position = (Vector3){ 0.0f, 3.0f, 3.0f };
     camera.target = (Vector3){ 0.0f, 0.0f, 0.0f };
     camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-    camera.fovy = 120.0f;
+    camera.fovy = 45.0f;
     camera.projection = CAMERA_PERSPECTIVE;
 
     SetTargetFPS(60);
@@ -22,13 +22,21 @@ int main(void)
         BeginDrawing();
         ClearBackground(BLACK);
         BeginMode3D(camera);
+            DrawCube((Vector3){0, 0, 0}, 1, 1, 1, LIGHTGRAY);
+            DrawCubeWires((Vector3){0, 0, 0}, 1, 1, 1, GRAY);
+            DrawCube((Vector3){0, 0, 1}, 1, 1, 1, LIGHTGRAY);
+            DrawCubeWires((Vector3){0, 0, 1}, 1, 1, 1, GRAY);            
         
-        Vector3 origin = {0.0f, 0.0f, 0.0f};
-        DrawCube(origin, 1, 1, 1, DARKPURPLE);
-        DrawCubeWires(origin, 1, 1, 1, PURPLE);
         EndMode3D();
+
+        DrawLine(screenWidth/2 - 5, screenHeight/2, 
+                screenWidth/2 + 5, screenHeight/2, WHITE);
+        DrawLine(screenWidth/2, screenHeight/2 - 5,
+                screenWidth/2, screenHeight/2 + 5, WHITE);
+
         EndDrawing();
     }
+    CloseWindow();
     return 0;
 }
 
