@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include "rs/sim.h"
+#include "frontend/block_renderer.h"
 #include "frontend/voxel_pick.h"
 
 #include <stdio.h>
@@ -7,13 +8,11 @@
 
 enum {SCREEN_WIDTH = 1000, SCREEN_HEIGHT = 650};
 
-// 暂时使用不同颜色来代替真实方块材质
+// 暂时使用不同颜色来代替红石粉和火把
 static Color block_color(BlockState state)
 {
     switch ((BlockId)state.id)
     {
-    case BLOCK_IRON:           return LIGHTGRAY;
-    case BLOCK_REDSTONE_BLOCK: return (Color){190, 45, 55, 255};
     case BLOCK_REDSTONE_WIRE:  return state.data.wire.power
                                ? (Color){235, 65, 55, 255}
                                : (Color){115, 39, 40, 255};
@@ -22,7 +21,7 @@ static Color block_color(BlockState state)
     }
 }
 
-static void draw_world(const World *world, WorldConfig config)
+static void draw_world(const World *world, WorldConfig config, const BlockRenderer *renderer)
 {
     /* Prototype renderer: no per-block raycast and no backend mutation. */
     for (int y = 0; y < config.size_y; ++y)
@@ -50,8 +49,7 @@ static void draw_world(const World *world, WorldConfig config)
         }
         else
         {
-            DrawCube(center, 1.0f, 1.0f, 1.0f, color);
-            DrawCubeWires(center, 1.0f, 1.0f, 1.0f, GRAY);
+            block_renderer_draw_cube(renderer, (BlockId)state.id, center);
         }
     }
 }
@@ -114,6 +112,15 @@ int main(void)
 
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Machinecraft");
     SetExitKey(KEY_NULL);
+
+    BlockRenderer renderer = {0};
+    if (!block_renderer_init(&renderer))
+    {
+        fprintf(stderr, "Cannot load block textures; run from the project root\n");
+        CloseWindow();
+        world_destroy(world);
+        return EXIT_FAILURE;
+    }
 
     Camera3D camera = {0};
     camera.position = (Vector3){ 8.0f, 3.0f, 8.0f };
@@ -241,7 +248,7 @@ int main(void)
         BeginDrawing();
         ClearBackground(BLACK);
         BeginMode3D(camera);
-            draw_world(world, config);
+            draw_world(world, config, &renderer);
             if (hit.hit)
             {
                 Vector3 center = {
