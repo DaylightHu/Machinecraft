@@ -176,6 +176,21 @@ int main(void)
         {
             UpdateCamera(&camera, CAMERA_FIRST_PERSON);
 
+            // Creative Mode: <Space>=up, <Shift>=down
+            const float vertical_speed = 5.0f;
+            float vertical_input = 0.0f;
+
+            if (IsKeyDown(KEY_SPACE))
+                vertical_input += 1.0f;
+
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+                vertical_input -= 1.0f;
+
+            float vertical_delta = vertical_input * vertical_speed * GetFrameTime();
+
+            camera.position.y += vertical_delta;
+            camera.target.y += vertical_delta;
+
             Ray ray = GetScreenToWorldRay(
                 (Vector2){GetScreenWidth()*0.5f, GetScreenHeight()*0.5f},
                 camera
