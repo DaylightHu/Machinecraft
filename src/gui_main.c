@@ -6,6 +6,7 @@ int main(void)
     const int screenHeight = 450;
 
     InitWindow(screenWidth, screenHeight, "Machinecraft");
+    SetExitKey(KEY_NULL);
 
     Camera3D camera = {0};
     camera.position = (Vector3){ 0.0f, 3.0f, 3.0f };
@@ -14,11 +15,50 @@ int main(void)
     camera.fovy = 45.0f;
     camera.projection = CAMERA_PERSPECTIVE;
 
+    DisableCursor();
+    bool mouseCaptured = true;
+
     SetTargetFPS(60);
 
     while (!WindowShouldClose())
     {
-        UpdateCamera(&camera, CAMERA_FREE);
+        bool justCaptured = false;
+        bool focused = IsWindowFocused();
+
+        if (!focused && mouseCaptured)
+        {
+            EnableCursor();
+            mouseCaptured = false;
+        }
+        else if (focused)
+        {
+            if (IsKeyPressed(KEY_ESCAPE))
+            {
+                if (mouseCaptured)
+                {
+                    EnableCursor();
+                    mouseCaptured = false;
+                }
+                else
+                {
+                    DisableCursor();
+                    mouseCaptured = true;
+                    justCaptured = true;
+                }
+            }
+            else if (!mouseCaptured && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+            {
+                DisableCursor();
+                mouseCaptured = true;
+                justCaptured = true;
+            }
+        }
+
+        if (mouseCaptured && focused && !justCaptured)
+        {
+            UpdateCamera(&camera, CAMERA_FIRST_PERSON);
+        }
+
         BeginDrawing();
         ClearBackground(BLACK);
         BeginMode3D(camera);
@@ -29,13 +69,21 @@ int main(void)
         
         EndMode3D();
 
-        DrawLine(screenWidth/2 - 5, screenHeight/2, 
-                screenWidth/2 + 5, screenHeight/2, WHITE);
-        DrawLine(screenWidth/2, screenHeight/2 - 5,
-                screenWidth/2, screenHeight/2 + 5, WHITE);
+        if (mouseCaptured)
+        {
+            int centerX = GetScreenWidth() / 2;
+            int centerY = GetScreenHeight() / 2;
+            DrawLine(centerX - 5, centerY, centerX + 5, centerY, WHITE);
+            DrawLine(centerX, centerY - 5, centerX, centerY + 5, WHITE);
+        }
+        else
+        {
+            DrawText("Paused - Click or press ESC to resume", 20, 20, 20, WHITE);
+        }
 
         EndDrawing();
     }
+    EnableCursor();
     CloseWindow();
     return 0;
 }
