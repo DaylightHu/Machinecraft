@@ -8,14 +8,11 @@
 
 enum {SCREEN_WIDTH = 1000, SCREEN_HEIGHT = 650};
 
-// 暂时使用不同颜色来代替红石粉和火把
+// 火把暂时使用随状态变化的颜色
 static Color block_color(BlockState state)
 {
     switch ((BlockId)state.id)
     {
-    case BLOCK_REDSTONE_WIRE:  return state.data.wire.power
-                               ? (Color){235, 65, 55, 255}
-                               : (Color){115, 39, 40, 255};
     case BLOCK_REDSTONE_TORCH: return state.data.torch.lit ? RED : MAROON;
     default:                   return BLANK;
     }
@@ -30,17 +27,12 @@ static void draw_world(const World *world, WorldConfig config, const BlockRender
     {
         BlockPos pos = {x, y, z};
         BlockState state = world_get(world, pos);
-        if (state.id == BLOCK_AIR) continue;
+        if (state.id == BLOCK_AIR || state.id == BLOCK_REDSTONE_WIRE) continue;
 
         Vector3 center = {(float)x, (float)y, (float)z};
         Color color = block_color(state);
 
-        if (state.id == BLOCK_REDSTONE_WIRE)
-        {
-            center.y -= 0.45f;
-            DrawCube(center, 0.82f, 0.07f, 0.82f, color);
-        }
-        else if (state.id == BLOCK_REDSTONE_TORCH)
+        if (state.id == BLOCK_REDSTONE_TORCH)
         {
             Vector3 stem = {(float)x, (float)y - 0.20f, (float)z};
             DrawCube(stem, 0.12f, 0.55f, 0.12f, BROWN);
@@ -52,6 +44,20 @@ static void draw_world(const World *world, WorldConfig config, const BlockRender
             block_renderer_draw_cube(renderer, (BlockId)state.id, center);
         }
     }
+
+    /* Dust is a cutout surface. Draw after its supports with one shader pass. */
+    block_renderer_begin_wires(renderer);
+    for (int y = 0; y < config.size_y; ++y)
+    for (int z = 0; z < config.size_z; ++z)
+    for (int x = 0; x < config.size_x; ++x)
+    {
+        BlockPos pos = {x, y, z};
+        BlockState state = world_get(world, pos);
+        if (state.id != BLOCK_REDSTONE_WIRE) continue;
+        block_renderer_draw_wire(renderer, state,
+                                 (Vector3){(float)x, (float)y, (float)z});
+    }
+    block_renderer_end_wires();
 }
 
 static void apply_edit(World *world, VoxelHit hit, BlockId selected,
@@ -281,6 +287,7 @@ int main(void)
     }
 
     EnableCursor();
+    block_renderer_unload(&renderer);
     CloseWindow();
     world_destroy(world);
     return fatal_error ? EXIT_FAILURE : EXIT_SUCCESS;

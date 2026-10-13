@@ -1,7 +1,36 @@
 #include "block_renderer.h"
 #include "rlgl.h"
 
+#include <stddef.h>
+
 enum { TILE_SIZE = 32, TILE_COUNT = 2 };
+enum {
+    WIRE_SHAPES = 16, WIRE_STATES = 2,
+    WIRE_SIDE_FIRST = WIRE_SHAPES*WIRE_STATES,
+    WIRE_TILES = WIRE_SIDE_FIRST + WIRE_STATES,
+    WIRE_COLUMNS = 8,
+    WIRE_ROWS = (WIRE_TILES + WIRE_COLUMNS - 1)/WIRE_COLUMNS
+};
+
+static const float wire_offset = 0.002f;
+static const Direction wire_directions[] = {
+    DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH
+};
+
+/* Match raylib's default desktop vertex shader; only binary-alpha pixels
+ * survive, so transparent texels cannot write depth or cover other blocks. */
+static const char wire_fragment_shader[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec4 colDiffuse;\n"
+    "out vec4 finalColor;\n"
+    "void main() {\n"
+    "    vec4 texel = texture(texture0, fragTexCoord);\n"
+    "    if (texel.a < 0.5) discard;\n"
+    "    finalColor = texel*fragColor*colDiffuse;\n"
+    "}\n";
 
 typedef struct {
     Vector3 normal;
@@ -40,6 +69,73 @@ static Image load_tile(const char *path)
     return image;
 }
 
+static Rectangle wire_tile_rectangle(int tile)
+{
+    return (Rectangle){(tile%WIRE_COLUMNS)*TILE_SIZE,
+                       (tile/WIRE_COLUMNS)*TILE_SIZE, TILE_SIZE, TILE_SIZE};
+}
+
+static Image create_wire_atlas(void)
+{
+    static const char *const paths[] = {
+        "res/textures/redstone_dot0.png", "res/textures/redstone_dot1.png",
+        "res/textures/redstone_wire0.png", "res/textures/redstone_wire1.png"
+    };
+    /* The source arm points down in image space (+Z / south in the world).
+     * CW turns map south -> west -> north -> east. */
+    static const int clockwise_turns[] = {3, 1, 0, 2};
+    Image sources[4] = {0};
+    Image arms[4] = {0};
+    Image atlas = {0};
+    Rectangle full = {0, 0, TILE_SIZE, TILE_SIZE};
+    bool complete = false;
+
+    for (int index = 0; index < 4; ++index) {
+        sources[index] = load_tile(paths[index]);
+        if (!sources[index].data) goto cleanup;
+    }
+    atlas = GenImageColor(WIRE_COLUMNS*TILE_SIZE, WIRE_ROWS*TILE_SIZE, BLANK);
+    if (!atlas.data) goto cleanup;
+
+    for (int powered = 0; powered < WIRE_STATES; ++powered) {
+        for (int direction = 0; direction < 4; ++direction) {
+            arms[direction] = ImageCopy(sources[2 + powered]);
+            if (!arms[direction].data) goto cleanup;
+            for (int turn = 0; turn < clockwise_turns[direction]; ++turn)
+                ImageRotateCW(&arms[direction]);
+        }
+        for (int mask = 0; mask < WIRE_SHAPES; ++mask) {
+            Rectangle destination = wire_tile_rectangle(powered*WIRE_SHAPES + mask);
+            for (int direction = 0; direction < 4; ++direction) {
+                if (mask & (1 << direction))
+                    ImageDraw(&atlas, arms[direction], full, destination, WHITE);
+            }
+            ImageDraw(&atlas, sources[powered], full, destination, WHITE);
+        }
+
+        /* Climbing strips use a full line without a dot in the middle. */
+        Rectangle side = wire_tile_rectangle(WIRE_SIDE_FIRST + powered);
+        ImageDraw(&atlas, arms[2], full, side, WHITE);
+        ImageDraw(&atlas, arms[3], full, side, WHITE);
+        for (int direction = 0; direction < 4; ++direction) {
+            UnloadImage(arms[direction]);
+            arms[direction] = (Image){0};
+        }
+    }
+    complete = true;
+
+cleanup:
+    for (int index = 0; index < 4; ++index) {
+        if (sources[index].data) UnloadImage(sources[index]);
+        if (arms[index].data) UnloadImage(arms[index]);
+    }
+    if (!complete) {
+        if (atlas.data) UnloadImage(atlas);
+        return (Image){0};
+    }
+    return atlas;
+}
+
 bool block_renderer_init(BlockRenderer *renderer)
 {
     if (!renderer) return false;
@@ -73,12 +169,39 @@ bool block_renderer_init(BlockRenderer *renderer)
 
     SetTextureFilter(renderer->atlas, TEXTURE_FILTER_POINT);
     SetTextureWrap(renderer->atlas, TEXTURE_WRAP_CLAMP);
+
+    Image wire_atlas = create_wire_atlas();
+    if (wire_atlas.data) {
+        renderer->wire_atlas = LoadTextureFromImage(wire_atlas);
+        UnloadImage(wire_atlas);
+    }
+    if (!renderer->wire_atlas.id) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot create the redstone dust atlas");
+        block_renderer_unload(renderer);
+        return false;
+    }
+    SetTextureFilter(renderer->wire_atlas, TEXTURE_FILTER_POINT);
+    SetTextureWrap(renderer->wire_atlas, TEXTURE_WRAP_CLAMP);
+
+    renderer->wire_shader = LoadShaderFromMemory(NULL, wire_fragment_shader);
+    if (renderer->wire_shader.id == rlGetShaderIdDefault()) {
+        /* LoadShaderFromMemory allocates its own locations even on fallback. */
+        MemFree(renderer->wire_shader.locs);
+        renderer->wire_shader = (Shader){0};
+    }
+    if (!renderer->wire_shader.id || !renderer->wire_shader.locs) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot load the dust cutout shader (OpenGL 3.3)");
+        block_renderer_unload(renderer);
+        return false;
+    }
     return true;
 }
 
 void block_renderer_unload(BlockRenderer *renderer)
 {
     if (!renderer) return;
+    if (renderer->wire_shader.id) UnloadShader(renderer->wire_shader);
+    if (renderer->wire_atlas.id) UnloadTexture(renderer->wire_atlas);
     if (renderer->atlas.id) UnloadTexture(renderer->atlas);
     *renderer = (BlockRenderer){0};
 }
@@ -118,6 +241,86 @@ void block_renderer_draw_cube(const BlockRenderer *renderer, BlockId id,
                        center.y + quad->vertices[vertex].y,
                        center.z + quad->vertices[vertex].z);
         }
+    }
+    rlEnd();
+    rlSetTexture(0);
+}
+
+static void wire_uv(Texture2D atlas, int tile, Vector2 uv[4])
+{
+    Rectangle rectangle = wire_tile_rectangle(tile);
+    float u0 = (rectangle.x + 0.5f)/atlas.width;
+    float u1 = (rectangle.x + TILE_SIZE - 0.5f)/atlas.width;
+    float v0 = (rectangle.y + 0.5f)/atlas.height;
+    float v1 = (rectangle.y + TILE_SIZE - 0.5f)/atlas.height;
+    uv[0] = (Vector2){u0, v1};
+    uv[1] = (Vector2){u1, v1};
+    uv[2] = (Vector2){u1, v0};
+    uv[3] = (Vector2){u0, v0};
+}
+
+static void emit_wire_face(const CubeFace *face, Vector3 center,
+                           const Vector2 uv[4], bool climbing)
+{
+    rlNormal3f(face->normal.x, face->normal.y, face->normal.z);
+    for (int vertex = 0; vertex < 4; ++vertex) {
+        Vector3 position = face->vertices[vertex];
+        /* Keep the lower wall edge just outside its support. The upper edge
+         * meets the higher wire exactly; this avoids a gap at the step. */
+        if (climbing && position.y < 0) {
+            position.x += face->normal.x*wire_offset;
+            position.z += face->normal.z*wire_offset;
+        }
+        rlTexCoord2f(uv[vertex].x, uv[vertex].y);
+        rlVertex3f(center.x + position.x, center.y + position.y,
+                   center.z + position.z);
+    }
+}
+
+void block_renderer_begin_wires(const BlockRenderer *renderer)
+{
+    if (renderer && renderer->wire_shader.id)
+        BeginShaderMode(renderer->wire_shader);
+}
+
+void block_renderer_end_wires(void)
+{
+    EndShaderMode();
+}
+
+void block_renderer_draw_wire(const BlockRenderer *renderer, BlockState state,
+                              Vector3 center)
+{
+    if (!renderer || !renderer->wire_atlas.id || state.id != BLOCK_REDSTONE_WIRE)
+        return;
+
+    int mask = 0;
+    for (int direction = 0; direction < 4; ++direction) {
+        if (state.data.wire.connections & (1u << wire_directions[direction]))
+            mask |= 1 << direction;
+    }
+    int powered = state.data.wire.power > 0;
+    Vector2 uv[4];
+    wire_uv(renderer->wire_atlas, powered*WIRE_SHAPES + mask, uv);
+
+    rlCheckRenderBatchLimit(20);
+    rlSetTexture(renderer->wire_atlas.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    Vector3 top = {center.x, center.y - 1.0f + wire_offset, center.z};
+    emit_wire_face(&cube_faces[4], top, uv, false);
+
+    wire_uv(renderer->wire_atlas, WIRE_SIDE_FIRST + powered, uv);
+    static const int side_faces[] = {3, 2, 1, 0};
+    static const Vector3 offsets[] = {{1,0,0}, {-1,0,0}, {0,0,1}, {0,0,-1}};
+    for (int direction = 0; direction < 4; ++direction) {
+        unsigned bit = 1u << wire_directions[direction];
+        if (!(state.data.wire.up_connections & state.data.wire.connections & bit))
+            continue;
+        Vector3 side = {center.x + offsets[direction].x,
+                        center.y + wire_offset,
+                        center.z + offsets[direction].z};
+        emit_wire_face(&cube_faces[side_faces[direction]], side, uv, true);
     }
     rlEnd();
     rlSetTexture(0);
