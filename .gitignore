@@ -8,3 +8,5 @@
 
 engine
 example
+/build/
+/third_party/raylib/
