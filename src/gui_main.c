@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include "rs/sim.h"
+#include "frontend/block_renderer.h"
 #include "frontend/voxel_pick.h"
 
 #include <stdio.h>
@@ -7,22 +8,7 @@
 
 enum {SCREEN_WIDTH = 1000, SCREEN_HEIGHT = 650};
 
-// 暂时使用不同颜色来代替真实方块材质
-static Color block_color(BlockState state)
-{
-    switch ((BlockId)state.id)
-    {
-    case BLOCK_IRON:           return LIGHTGRAY;
-    case BLOCK_REDSTONE_BLOCK: return (Color){190, 45, 55, 255};
-    case BLOCK_REDSTONE_WIRE:  return state.data.wire.power
-                               ? (Color){235, 65, 55, 255}
-                               : (Color){115, 39, 40, 255};
-    case BLOCK_REDSTONE_TORCH: return state.data.torch.lit ? RED : MAROON;
-    default:                   return BLANK;
-    }
-}
-
-static void draw_world(const World *world, WorldConfig config)
+static void draw_world(const World *world, WorldConfig config, const BlockRenderer *renderer)
 {
     /* Prototype renderer: no per-block raycast and no backend mutation. */
     for (int y = 0; y < config.size_y; ++y)
@@ -31,29 +17,25 @@ static void draw_world(const World *world, WorldConfig config)
     {
         BlockPos pos = {x, y, z};
         BlockState state = world_get(world, pos);
-        if (state.id == BLOCK_AIR) continue;
-
-        Vector3 center = {(float)x, (float)y, (float)z};
-        Color color = block_color(state);
-
-        if (state.id == BLOCK_REDSTONE_WIRE)
-        {
-            center.y -= 0.45f;
-            DrawCube(center, 0.82f, 0.07f, 0.82f, color);
-        }
-        else if (state.id == BLOCK_REDSTONE_TORCH)
-        {
-            Vector3 stem = {(float)x, (float)y - 0.20f, (float)z};
-            DrawCube(stem, 0.12f, 0.55f, 0.12f, BROWN);
-            Vector3 tip = {(float)x, (float)y + 0.11f, (float)z};
-            DrawCube(tip, 0.20f, 0.18f, 0.20f, color);
-        }
-        else
-        {
-            DrawCube(center, 1.0f, 1.0f, 1.0f, color);
-            DrawCubeWires(center, 1.0f, 1.0f, 1.0f, GRAY);
-        }
+        block_renderer_draw_cube(renderer, (BlockId)state.id,
+                                 (Vector3){(float)x, (float)y, (float)z});
     }
+
+    /* Dust and torch sheets share one cutout shader pass after solid blocks. */
+    block_renderer_begin_cutouts(renderer);
+    for (int y = 0; y < config.size_y; ++y)
+    for (int z = 0; z < config.size_z; ++z)
+    for (int x = 0; x < config.size_x; ++x)
+    {
+        BlockPos pos = {x, y, z};
+        BlockState state = world_get(world, pos);
+        Vector3 center = {(float)x, (float)y, (float)z};
+        if (state.id == BLOCK_REDSTONE_WIRE)
+            block_renderer_draw_wire(renderer, state, center);
+        else if (state.id == BLOCK_REDSTONE_TORCH)
+            block_renderer_draw_torch(renderer, state, center);
+    }
+    block_renderer_end_cutouts();
 }
 
 static void apply_edit(World *world, VoxelHit hit, BlockId selected,
@@ -114,6 +96,15 @@ int main(void)
 
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Machinecraft");
     SetExitKey(KEY_NULL);
+
+    BlockRenderer renderer = {0};
+    if (!block_renderer_init(&renderer))
+    {
+        fprintf(stderr, "Cannot load block textures; run from the project root\n");
+        CloseWindow();
+        world_destroy(world);
+        return EXIT_FAILURE;
+    }
 
     Camera3D camera = {0};
     camera.position = (Vector3){ 8.0f, 3.0f, 8.0f };
@@ -241,7 +232,7 @@ int main(void)
         BeginDrawing();
         ClearBackground(BLACK);
         BeginMode3D(camera);
-            draw_world(world, config);
+            draw_world(world, config, &renderer);
             if (hit.hit)
             {
                 Vector3 center = {
@@ -274,6 +265,7 @@ int main(void)
     }
 
     EnableCursor();
+    block_renderer_unload(&renderer);
     CloseWindow();
     world_destroy(world);
     return fatal_error ? EXIT_FAILURE : EXIT_SUCCESS;
