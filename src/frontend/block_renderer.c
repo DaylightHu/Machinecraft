@@ -110,7 +110,10 @@ static Image create_wire_atlas(void)
                 if (mask & (1 << direction))
                     ImageDraw(&atlas, arms[direction], full, destination, WHITE);
             }
-            ImageDraw(&atlas, sources[powered], full, destination, WHITE);
+            /* Opposite pairs form straight lines without a center dot. */
+            bool straight = (mask == 3 || mask == 12);
+            if (!straight)
+                ImageDraw(&atlas, sources[powered], full, destination, WHITE);
         }
 
         /* Climbing strips use a full line without a dot in the middle. */
@@ -325,3 +328,4 @@ void block_renderer_draw_wire(const BlockRenderer *renderer, BlockState state,
     rlEnd();
     rlSetTexture(0);
 }
+
