@@ -8,6 +8,8 @@ struct World {
     BlockState *cells;
     uint64_t tick, revision;
     Simulator *sim;
+    WorldChangeObserver observer;
+    void *observer_context;
 };
 uint32_t world_index(const World *world, BlockPos pos);
 BlockPos world_position(const World *world, uint32_t index);

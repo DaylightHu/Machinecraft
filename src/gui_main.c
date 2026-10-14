@@ -2,41 +2,12 @@
 #include "rs/sim.h"
 #include "frontend/block_renderer.h"
 #include "frontend/voxel_pick.h"
+#include "frontend/world_renderer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
 enum {SCREEN_WIDTH = 1000, SCREEN_HEIGHT = 650};
-
-static void draw_world(const World *world, WorldConfig config, const BlockRenderer *renderer)
-{
-    /* Prototype renderer: no per-block raycast and no backend mutation. */
-    for (int y = 0; y < config.size_y; ++y)
-    for (int z = 0; z < config.size_z; ++z)
-    for (int x = 0; x < config.size_x; ++x)
-    {
-        BlockPos pos = {x, y, z};
-        BlockState state = world_get(world, pos);
-        block_renderer_draw_cube(renderer, (BlockId)state.id,
-                                 (Vector3){(float)x, (float)y, (float)z});
-    }
-
-    /* Dust and torch sheets share one cutout shader pass after solid blocks. */
-    block_renderer_begin_cutouts(renderer);
-    for (int y = 0; y < config.size_y; ++y)
-    for (int z = 0; z < config.size_z; ++z)
-    for (int x = 0; x < config.size_x; ++x)
-    {
-        BlockPos pos = {x, y, z};
-        BlockState state = world_get(world, pos);
-        Vector3 center = {(float)x, (float)y, (float)z};
-        if (state.id == BLOCK_REDSTONE_WIRE)
-            block_renderer_draw_wire(renderer, state, center);
-        else if (state.id == BLOCK_REDSTONE_TORCH)
-            block_renderer_draw_torch(renderer, state, center);
-    }
-    block_renderer_end_cutouts();
-}
 
 static void apply_edit(World *world, VoxelHit hit, BlockId selected,
         bool place, char message[128])
@@ -101,6 +72,17 @@ int main(void)
     if (!block_renderer_init(&renderer))
     {
         fprintf(stderr, "Cannot load block textures; run from the project root\n");
+        CloseWindow();
+        world_destroy(world);
+        return EXIT_FAILURE;
+    }
+
+    WorldRenderer *cache = world_renderer_create(world, config, &renderer);
+    if (!cache || !world_renderer_sync(cache))
+    {
+        fprintf(stderr, "Cannot create the finite-world render cache\n");
+        world_renderer_destroy(cache);
+        block_renderer_unload(&renderer);
         CloseWindow();
         world_destroy(world);
         return EXIT_FAILURE;
@@ -229,10 +211,17 @@ int main(void)
             accumulator = 0.0;
         }
 
+        if (!world_renderer_sync(cache))
+        {
+            fprintf(stderr, "Cannot update render cache\n");
+            fatal_error = true;
+            break;
+        }
+
         BeginDrawing();
         ClearBackground(BLACK);
         BeginMode3D(camera);
-            draw_world(world, config, &renderer);
+            world_renderer_draw(cache);
             if (hit.hit)
             {
                 Vector3 center = {
@@ -265,6 +254,7 @@ int main(void)
     }
 
     EnableCursor();
+    world_renderer_destroy(cache);
     block_renderer_unload(&renderer);
     CloseWindow();
     world_destroy(world);
