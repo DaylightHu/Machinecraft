@@ -19,7 +19,7 @@ static const Direction wire_directions[] = {
 
 /* Match raylib's default desktop vertex shader; only binary-alpha pixels
  * survive, so transparent texels cannot write depth or cover other blocks. */
-static const char wire_fragment_shader[] =
+static const char cutout_fragment_shader[] =
     "#version 330\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
@@ -52,6 +52,31 @@ static const CubeFace cube_faces[] = {
     {{ 0, -1,  0}, {{-0.5f, -0.5f, -0.5f}, { 0.5f, -0.5f, -0.5f},
                     { 0.5f, -0.5f,  0.5f}, {-0.5f, -0.5f,  0.5f}}}
 };
+
+/* Vanilla 1.20.4-style torch: four full-texture side sheets and two caps.
+ * Each source pixel covers 1/32 of a block. The supplied sprites have a
+ * four-pixel-wide stem (x=14..17) and a body top at row 7. The lit sprite's
+ * extra pixels extend beyond these sheets' central stem, including above
+ * its cap; alpha discard removes every transparent pixel. */
+static const CubeFace torch_faces[] = {
+    {{ 0,  0,  1}, {{-0.5f, 0,  0.0625f}, { 0.5f, 0,  0.0625f},
+                    { 0.5f, 1,  0.0625f}, {-0.5f, 1,  0.0625f}}},
+    {{ 0,  0, -1}, {{ 0.5f, 0, -0.0625f}, {-0.5f, 0, -0.0625f},
+                    {-0.5f, 1, -0.0625f}, { 0.5f, 1, -0.0625f}}},
+    {{ 1,  0,  0}, {{ 0.0625f, 0,  0.5f}, { 0.0625f, 0, -0.5f},
+                    { 0.0625f, 1, -0.5f}, { 0.0625f, 1,  0.5f}}},
+    {{-1,  0,  0}, {{-0.0625f, 0, -0.5f}, {-0.0625f, 0,  0.5f},
+                    {-0.0625f, 1,  0.5f}, {-0.0625f, 1, -0.5f}}},
+    {{ 0,  1,  0}, {{-0.0625f, 0.78125f,  0.0625f}, { 0.0625f, 0.78125f,  0.0625f},
+                    { 0.0625f, 0.78125f, -0.0625f}, {-0.0625f, 0.78125f, -0.0625f}}},
+    {{ 0, -1,  0}, {{-0.0625f, 0, -0.0625f}, { 0.0625f, 0, -0.0625f},
+                    { 0.0625f, 0,  0.0625f}, {-0.0625f, 0,  0.0625f}}}
+};
+
+typedef struct {
+    Vector3 origin;
+    Vector3 x_axis, y_axis, z_axis;
+} TorchTransform;
 
 static Image load_tile(const char *path)
 {
@@ -139,6 +164,33 @@ cleanup:
     return atlas;
 }
 
+static Image create_torch_atlas(void)
+{
+    static const char *const paths[] = {
+        "res/textures/redstone_torch0.png", "res/textures/redstone_torch1.png"
+    };
+    Image sources[2] = {0};
+    Image atlas = {0};
+    for (int lit = 0; lit < 2; ++lit) {
+        sources[lit] = load_tile(paths[lit]);
+        if (!sources[lit].data) goto cleanup;
+    }
+
+    atlas = GenImageColor(2*TILE_SIZE, TILE_SIZE, BLANK);
+    if (atlas.data) {
+        Rectangle full = {0, 0, TILE_SIZE, TILE_SIZE};
+        for (int lit = 0; lit < 2; ++lit) {
+            Rectangle destination = {lit*TILE_SIZE, 0, TILE_SIZE, TILE_SIZE};
+            ImageDraw(&atlas, sources[lit], full, destination, WHITE);
+        }
+    }
+
+cleanup:
+    for (int lit = 0; lit < 2; ++lit)
+        if (sources[lit].data) UnloadImage(sources[lit]);
+    return atlas;
+}
+
 bool block_renderer_init(BlockRenderer *renderer)
 {
     if (!renderer) return false;
@@ -186,14 +238,27 @@ bool block_renderer_init(BlockRenderer *renderer)
     SetTextureFilter(renderer->wire_atlas, TEXTURE_FILTER_POINT);
     SetTextureWrap(renderer->wire_atlas, TEXTURE_WRAP_CLAMP);
 
-    renderer->wire_shader = LoadShaderFromMemory(NULL, wire_fragment_shader);
-    if (renderer->wire_shader.id == rlGetShaderIdDefault()) {
-        /* LoadShaderFromMemory allocates its own locations even on fallback. */
-        MemFree(renderer->wire_shader.locs);
-        renderer->wire_shader = (Shader){0};
+    Image torch_atlas = create_torch_atlas();
+    if (torch_atlas.data) {
+        renderer->torch_atlas = LoadTextureFromImage(torch_atlas);
+        UnloadImage(torch_atlas);
     }
-    if (!renderer->wire_shader.id || !renderer->wire_shader.locs) {
-        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot load the dust cutout shader (OpenGL 3.3)");
+    if (!renderer->torch_atlas.id) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot create the redstone torch atlas");
+        block_renderer_unload(renderer);
+        return false;
+    }
+    SetTextureFilter(renderer->torch_atlas, TEXTURE_FILTER_POINT);
+    SetTextureWrap(renderer->torch_atlas, TEXTURE_WRAP_CLAMP);
+
+    renderer->cutout_shader = LoadShaderFromMemory(NULL, cutout_fragment_shader);
+    if (renderer->cutout_shader.id == rlGetShaderIdDefault()) {
+        /* LoadShaderFromMemory allocates its own locations even on fallback. */
+        MemFree(renderer->cutout_shader.locs);
+        renderer->cutout_shader = (Shader){0};
+    }
+    if (!renderer->cutout_shader.id || !renderer->cutout_shader.locs) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot load the cutout shader (OpenGL 3.3)");
         block_renderer_unload(renderer);
         return false;
     }
@@ -203,7 +268,8 @@ bool block_renderer_init(BlockRenderer *renderer)
 void block_renderer_unload(BlockRenderer *renderer)
 {
     if (!renderer) return;
-    if (renderer->wire_shader.id) UnloadShader(renderer->wire_shader);
+    if (renderer->cutout_shader.id) UnloadShader(renderer->cutout_shader);
+    if (renderer->torch_atlas.id) UnloadTexture(renderer->torch_atlas);
     if (renderer->wire_atlas.id) UnloadTexture(renderer->wire_atlas);
     if (renderer->atlas.id) UnloadTexture(renderer->atlas);
     *renderer = (BlockRenderer){0};
@@ -280,13 +346,13 @@ static void emit_wire_face(const CubeFace *face, Vector3 center,
     }
 }
 
-void block_renderer_begin_wires(const BlockRenderer *renderer)
+void block_renderer_begin_cutouts(const BlockRenderer *renderer)
 {
-    if (renderer && renderer->wire_shader.id)
-        BeginShaderMode(renderer->wire_shader);
+    if (renderer && renderer->cutout_shader.id)
+        BeginShaderMode(renderer->cutout_shader);
 }
 
-void block_renderer_end_wires(void)
+void block_renderer_end_cutouts(void)
 {
     EndShaderMode();
 }
@@ -329,3 +395,89 @@ void block_renderer_draw_wire(const BlockRenderer *renderer, BlockState state,
     rlSetTexture(0);
 }
 
+static TorchTransform torch_transform(Vector3 center, Direction support)
+{
+    TorchTransform transform = {
+        {center.x, center.y - 0.5f, center.z},
+        {1, 0, 0}, {0, 1, 0}, {0, 0, 1}
+    };
+    /* Facing is away from the support, whose direction points toward it. */
+    Vector3 facing;
+    switch (support) {
+    case DIR_EAST:  facing = (Vector3){-1, 0,  0}; break;
+    case DIR_WEST:  facing = (Vector3){ 1, 0,  0}; break;
+    case DIR_SOUTH: facing = (Vector3){ 0, 0, -1}; break;
+    case DIR_NORTH: facing = (Vector3){ 0, 0,  1}; break;
+    default: return transform;
+    }
+
+    /* Vanilla's wall mount is 3.5/16 above the cell bottom, tilted 22.5
+     * degrees outward. The stem's bottom intersects the supporting face. */
+    const float sine = 0.3826834324f, cosine = 0.9238795325f;
+    transform.origin.x -= facing.x*0.5f;
+    transform.origin.y += 3.5f/16.0f;
+    transform.origin.z -= facing.z*0.5f;
+    transform.x_axis = (Vector3){facing.x*cosine, -sine, facing.z*cosine};
+    transform.y_axis = (Vector3){facing.x*sine, cosine, facing.z*sine};
+    transform.z_axis = (Vector3){-facing.z, 0, facing.x};
+    return transform;
+}
+
+static Vector3 torch_rotate(TorchTransform transform, Vector3 vector)
+{
+    return (Vector3){
+        transform.x_axis.x*vector.x + transform.y_axis.x*vector.y + transform.z_axis.x*vector.z,
+        transform.x_axis.y*vector.x + transform.y_axis.y*vector.y + transform.z_axis.y*vector.z,
+        transform.x_axis.z*vector.x + transform.y_axis.z*vector.y + transform.z_axis.z*vector.z
+    };
+}
+
+static void torch_uv(Texture2D atlas, int lit, Rectangle source, Vector2 uv[4])
+{
+    /* Use texel boundaries so the four-pixel stem meets its caps exactly.
+     * Point filtering preserves pixels; tile sides are transparent gutters. */
+    float u0 = (lit*TILE_SIZE + source.x)/atlas.width;
+    float u1 = (lit*TILE_SIZE + source.x + source.width)/atlas.width;
+    float v0 = source.y/atlas.height;
+    float v1 = (source.y + source.height)/atlas.height;
+    uv[0] = (Vector2){u0, v1};
+    uv[1] = (Vector2){u1, v1};
+    uv[2] = (Vector2){u1, v0};
+    uv[3] = (Vector2){u0, v0};
+}
+
+void block_renderer_draw_torch(const BlockRenderer *renderer, BlockState state,
+                               Vector3 center)
+{
+    if (!renderer || !renderer->torch_atlas.id || state.id != BLOCK_REDSTONE_TORCH)
+        return;
+
+    TorchTransform transform = torch_transform(center, (Direction)state.data.torch.support_dir);
+    int lit = state.data.torch.lit ? 1 : 0;
+    Vector2 uv[4];
+    torch_uv(renderer->torch_atlas, lit, (Rectangle){0, 0, TILE_SIZE, TILE_SIZE}, uv);
+
+    rlCheckRenderBatchLimit(24);
+    rlSetTexture(renderer->torch_atlas.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    for (int face = 0; face < 6; ++face) {
+        if (face == 4)
+            torch_uv(renderer->torch_atlas, lit, (Rectangle){14, 7, 4, 4}, uv);
+        else if (face == 5)
+            torch_uv(renderer->torch_atlas, lit, (Rectangle){14, 28, 4, 4}, uv);
+
+        const CubeFace *quad = &torch_faces[face];
+        Vector3 normal = torch_rotate(transform, quad->normal);
+        rlNormal3f(normal.x, normal.y, normal.z);
+        for (int vertex = 0; vertex < 4; ++vertex) {
+            Vector3 position = torch_rotate(transform, quad->vertices[vertex]);
+            rlTexCoord2f(uv[vertex].x, uv[vertex].y);
+            rlVertex3f(transform.origin.x + position.x,
+                       transform.origin.y + position.y,
+                       transform.origin.z + position.z);
+        }
+    }
+    rlEnd();
+    rlSetTexture(0);
+}

@@ -8,16 +8,6 @@
 
 enum {SCREEN_WIDTH = 1000, SCREEN_HEIGHT = 650};
 
-// 火把暂时使用随状态变化的颜色
-static Color block_color(BlockState state)
-{
-    switch ((BlockId)state.id)
-    {
-    case BLOCK_REDSTONE_TORCH: return state.data.torch.lit ? RED : MAROON;
-    default:                   return BLANK;
-    }
-}
-
 static void draw_world(const World *world, WorldConfig config, const BlockRenderer *renderer)
 {
     /* Prototype renderer: no per-block raycast and no backend mutation. */
@@ -27,37 +17,25 @@ static void draw_world(const World *world, WorldConfig config, const BlockRender
     {
         BlockPos pos = {x, y, z};
         BlockState state = world_get(world, pos);
-        if (state.id == BLOCK_AIR || state.id == BLOCK_REDSTONE_WIRE) continue;
-
-        Vector3 center = {(float)x, (float)y, (float)z};
-        Color color = block_color(state);
-
-        if (state.id == BLOCK_REDSTONE_TORCH)
-        {
-            Vector3 stem = {(float)x, (float)y - 0.20f, (float)z};
-            DrawCube(stem, 0.12f, 0.55f, 0.12f, BROWN);
-            Vector3 tip = {(float)x, (float)y + 0.11f, (float)z};
-            DrawCube(tip, 0.20f, 0.18f, 0.20f, color);
-        }
-        else
-        {
-            block_renderer_draw_cube(renderer, (BlockId)state.id, center);
-        }
+        block_renderer_draw_cube(renderer, (BlockId)state.id,
+                                 (Vector3){(float)x, (float)y, (float)z});
     }
 
-    /* Dust is a cutout surface. Draw after its supports with one shader pass. */
-    block_renderer_begin_wires(renderer);
+    /* Dust and torch sheets share one cutout shader pass after solid blocks. */
+    block_renderer_begin_cutouts(renderer);
     for (int y = 0; y < config.size_y; ++y)
     for (int z = 0; z < config.size_z; ++z)
     for (int x = 0; x < config.size_x; ++x)
     {
         BlockPos pos = {x, y, z};
         BlockState state = world_get(world, pos);
-        if (state.id != BLOCK_REDSTONE_WIRE) continue;
-        block_renderer_draw_wire(renderer, state,
-                                 (Vector3){(float)x, (float)y, (float)z});
+        Vector3 center = {(float)x, (float)y, (float)z};
+        if (state.id == BLOCK_REDSTONE_WIRE)
+            block_renderer_draw_wire(renderer, state, center);
+        else if (state.id == BLOCK_REDSTONE_TORCH)
+            block_renderer_draw_torch(renderer, state, center);
     }
-    block_renderer_end_wires();
+    block_renderer_end_cutouts();
 }
 
 static void apply_edit(World *world, VoxelHit hit, BlockId selected,

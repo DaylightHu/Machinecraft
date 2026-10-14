@@ -7,17 +7,20 @@
 typedef struct{
     Texture2D atlas;
     Texture2D wire_atlas;
-    Shader wire_shader;
+    Texture2D torch_atlas;
+    Shader cutout_shader;
 } BlockRenderer;
 
 bool block_renderer_init(BlockRenderer *renderer);
 void block_renderer_unload(BlockRenderer *renderer);
 void block_renderer_draw_cube(const BlockRenderer *renderer, BlockId id, Vector3 center);
 
-/* Draw dust after solid blocks. Keep one begin/end pair around the wire pass. */
-void block_renderer_begin_wires(const BlockRenderer *renderer);
+/* Draw dust and torches after solids, inside one shared cutout shader pass. */
+void block_renderer_begin_cutouts(const BlockRenderer *renderer);
 void block_renderer_draw_wire(const BlockRenderer *renderer, BlockState state,
                               Vector3 center);
-void block_renderer_end_wires(void);
+void block_renderer_draw_torch(const BlockRenderer *renderer, BlockState state,
+                               Vector3 center);
+void block_renderer_end_cutouts(void);
 
 #endif
