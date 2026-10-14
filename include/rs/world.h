@@ -4,6 +4,10 @@
 #include "block.h"
 
 typedef struct World World;
+/* One optional observer, called after a cell is written. It must not edit the
+ * world or retain pointers into it. Passing NULL detaches the observer. */
+typedef void (*WorldChangeObserver)(void *context, BlockPos pos,
+                                    BlockState previous, BlockState current);
 typedef enum {
     RS_OK = 0, RS_UNCHANGED, RS_OUT_OF_BOUNDS, RS_UNSUPPORTED,
     RS_INVALID_ARGUMENT, RS_OUT_OF_MEMORY, RS_INTERNAL_ERROR
@@ -22,5 +26,7 @@ RsResult world_toggle_wire_dot(World *world, BlockPos pos);
 uint64_t world_tick(const World *world);
 uint64_t world_revision(const World *world);
 size_t world_volume(const World *world);
+void world_set_change_observer(World *world, WorldChangeObserver observer,
+                               void *context);
 const char *rs_result_name(RsResult result);
 #endif

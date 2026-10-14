@@ -2,6 +2,7 @@
 #include "rlgl.h"
 
 #include <stddef.h>
+#include <string.h>
 
 enum { TILE_SIZE = 32, TILE_COUNT = 2 };
 enum {
@@ -480,4 +481,92 @@ void block_renderer_draw_torch(const BlockRenderer *renderer, BlockState state,
     }
     rlEnd();
     rlSetTexture(0);
+}
+
+int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
+                            unsigned solid_faces,
+                            Vector2 uv[BLOCK_GEOMETRY_QUADS][4])
+{
+    int count = 0;
+    if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK) {
+        int tile = state.id == BLOCK_IRON ? 0 : 1;
+        float u0 = (tile*TILE_SIZE + 0.5f)/renderer->atlas.width;
+        float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/renderer->atlas.width;
+        float v0 = 0.5f/renderer->atlas.height;
+        float v1 = (TILE_SIZE - 0.5f)/renderer->atlas.height;
+        Vector2 face_uv[4] = {{u0,v1},{u1,v1},{u1,v0},{u0,v0}};
+        for (int face = 0; face < 6; ++face)
+            if (solid_faces & (1u << face))
+                memcpy(uv[count++], face_uv, sizeof(face_uv));
+    } else if (state.id == BLOCK_REDSTONE_WIRE) {
+        int mask = 0;
+        for (int direction = 0; direction < 4; ++direction)
+            if (state.data.wire.connections & (1u << wire_directions[direction]))
+                mask |= 1 << direction;
+        int powered = state.data.wire.power > 0;
+        wire_uv(renderer->wire_atlas, powered*WIRE_SHAPES + mask, uv[count++]);
+        for (int direction = 0; direction < 4; ++direction) {
+            unsigned bit = 1u << wire_directions[direction];
+            if (state.data.wire.up_connections & state.data.wire.connections & bit)
+                wire_uv(renderer->wire_atlas, WIRE_SIDE_FIRST + powered, uv[count++]);
+        }
+    } else if (state.id == BLOCK_REDSTONE_TORCH) {
+        int lit = state.data.torch.lit ? 1 : 0;
+        for (int face = 0; face < 6; ++face) {
+            Rectangle source = {0,0,TILE_SIZE,TILE_SIZE};
+            if (face == 4) source = (Rectangle){14,7,4,4};
+            if (face == 5) source = (Rectangle){14,28,4,4};
+            torch_uv(renderer->torch_atlas, lit, source, uv[count++]);
+        }
+    }
+    return count;
+}
+
+void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState state,
+                                   Vector3 center, unsigned solid_faces,
+                                   BlockGeometry *geometry)
+{
+    geometry->quads = block_renderer_build_uv(renderer, state, solid_faces, geometry->uv);
+    int count = 0;
+    if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK) {
+        for (int face = 0; face < 6; ++face) {
+            if (!(solid_faces & (1u << face))) continue;
+            for (int vertex = 0; vertex < 4; ++vertex) {
+                Vector3 p = cube_faces[face].vertices[vertex];
+                geometry->vertices[count][vertex] = (Vector3){center.x+p.x,center.y+p.y,center.z+p.z};
+            }
+            ++count;
+        }
+    } else if (state.id == BLOCK_REDSTONE_WIRE) {
+        for (int vertex = 0; vertex < 4; ++vertex) {
+            Vector3 p = cube_faces[4].vertices[vertex];
+            geometry->vertices[0][vertex] = (Vector3){center.x+p.x,center.y-1+wire_offset+p.y,center.z+p.z};
+        }
+        count = 1;
+        static const int side_faces[] = {3,2,1,0};
+        static const Vector3 offsets[] = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1}};
+        for (int direction = 0; direction < 4; ++direction) {
+            unsigned bit = 1u << wire_directions[direction];
+            if (!(state.data.wire.up_connections & state.data.wire.connections & bit)) continue;
+            const CubeFace *face = &cube_faces[side_faces[direction]];
+            for (int vertex = 0; vertex < 4; ++vertex) {
+                Vector3 p = face->vertices[vertex];
+                if (p.y < 0) {
+                    p.x += face->normal.x*wire_offset;
+                    p.z += face->normal.z*wire_offset;
+                }
+                geometry->vertices[count][vertex] = (Vector3){
+                    center.x+offsets[direction].x+p.x,
+                    center.y+wire_offset+p.y,center.z+offsets[direction].z+p.z};
+            }
+            ++count;
+        }
+    } else if (state.id == BLOCK_REDSTONE_TORCH) {
+        TorchTransform transform = torch_transform(center, (Direction)state.data.torch.support_dir);
+        for (int face = 0; face < 6; ++face)
+            for (int vertex = 0; vertex < 4; ++vertex) {
+                Vector3 p = torch_rotate(transform, torch_faces[face].vertices[vertex]);
+                geometry->vertices[face][vertex] = (Vector3){transform.origin.x+p.x,transform.origin.y+p.y,transform.origin.z+p.z};
+            }
+    }
 }

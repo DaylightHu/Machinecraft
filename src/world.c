@@ -101,8 +101,12 @@ BlockState world_get(const World *world, BlockPos position)
 
 void world_write_derived(World *world, uint32_t index, BlockState state)
 {
+    BlockState previous = world->cells[index];
     world->cells[index] = state;
     ++world->revision;
+    if (world->observer)
+        world->observer(world->observer_context, world_position(world, index),
+                        previous, state);
 }
 
 void world_remove_internal(World *world, uint32_t index)
@@ -216,6 +220,14 @@ uint64_t world_revision(const World *world)
 size_t world_volume(const World *world)
 {
     return world ? world->volume : 0;
+}
+
+void world_set_change_observer(World *world, WorldChangeObserver observer,
+                               void *context)
+{
+    if (!world) return;
+    world->observer = observer;
+    world->observer_context = observer ? context : NULL;
 }
 
 const char *rs_result_name(RsResult result)
