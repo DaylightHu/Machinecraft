@@ -518,8 +518,10 @@ static void draw_pause(GuiApp *app)
 {
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
                   (Color){10, 18, 20, 150});
+
     int center = GetScreenWidth()/2;
     Rectangle panel = {(float)center - 190, 105, 380, 400};
+
     DrawRectangleRec(panel, (Color){226, 218, 196, 248});
     DrawRectangleLinesEx(panel, 3.0f, (Color){34, 63, 66, 255});
     draw_centered("WORLD PAUSED", 137, 30, (Color){26, 50, 55, 255});
@@ -528,24 +530,37 @@ static void draw_pause(GuiApp *app)
     Rectangle save = {(float)center - 140, 265, 280, 44};
     Rectangle title = {(float)center - 140, 325, 280, 44};
     Rectangle exit = {(float)center - 140, 385, 280, 44};
+
     if (button(resume, "Continue", true)) {
         app->screen = GUI_WORLD;
         capture_mouse(app);
+        return;
     }
+
     if (button(save, "Save", true)) {
         GameSessionResult result = game_session_save(app->session);
+
         snprintf(app->message, sizeof(app->message), "Save: %s",
                  game_session_result_name(result));
+
         if (result != GAME_SESSION_OK) {
             app->screen_before_error = GUI_PAUSE;
             app->screen = GUI_SAVE_ERROR;
             app->after_save = AFTER_SAVE_NONE;
         }
+
+        return;
     }
-    if (button(title, "Save and title", true))
+
+    if (button(title, "Save and title", true)) {
         request_save_action(app, AFTER_SAVE_TITLE);
-    if (button(exit, "Save and exit", true))
+        return;
+    }
+
+    if (button(exit, "Save and exit", true)) {
         request_save_action(app, AFTER_SAVE_EXIT);
+        return;
+    }
 }
 
 static void draw_save_error(GuiApp *app)
