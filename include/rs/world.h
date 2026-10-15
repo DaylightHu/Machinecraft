@@ -26,6 +26,7 @@ RsResult world_toggle_wire_dot(World *world, BlockPos pos);
 uint64_t world_tick(const World *world);
 uint64_t world_revision(const World *world);
 size_t world_volume(const World *world);
+WorldConfig world_config(const World *world);
 void world_set_change_observer(World *world, WorldChangeObserver observer,
                                void *context);
 const char *rs_result_name(RsResult result);
