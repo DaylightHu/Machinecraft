@@ -528,7 +528,7 @@ static void draw_pause(GuiApp *app)
     Rectangle save = {(float)center - 140, 265, 280, 44};
     Rectangle title = {(float)center - 140, 325, 280, 44};
     Rectangle exit = {(float)center - 140, 385, 280, 44};
-    if (button(resume, "Continue", true) || IsKeyPressed(KEY_ESCAPE)) {
+    if (button(resume, "Continue", true)) {
         app->screen = GUI_WORLD;
         capture_mouse(app);
     }
