@@ -104,8 +104,10 @@ static Rectangle wire_tile_rectangle(int tile)
 static Image create_wire_atlas(void)
 {
     static const char *const paths[] = {
-        "res/textures/redstone_dot0.png", "res/textures/redstone_dot1.png",
-        "res/textures/redstone_wire0.png", "res/textures/redstone_wire1.png"
+        "res/textures/block/redstone_dot0.png",
+        "res/textures/block/redstone_dot1.png",
+        "res/textures/block/redstone_wire0.png", 
+        "res/textures/block/redstone_wire1.png"
     };
     /* The source arm points down in image space (+Z / south in the world).
      * CW turns map south -> west -> north -> east. */
@@ -168,7 +170,8 @@ cleanup:
 static Image create_torch_atlas(void)
 {
     static const char *const paths[] = {
-        "res/textures/redstone_torch0.png", "res/textures/redstone_torch1.png"
+        "res/textures/block/redstone_torch0.png", 
+        "res/textures/block/redstone_torch1.png"
     };
     Image sources[2] = {0};
     Image atlas = {0};
@@ -197,10 +200,10 @@ bool block_renderer_init(BlockRenderer *renderer)
     if (!renderer) return false;
     *renderer = (BlockRenderer){0};
 
-    Image iron = load_tile("res/textures/iron_block.png");
+    Image iron = load_tile("res/textures/block/iron_block.png");
     if (!iron.data) return false;
 
-    Image redstone = load_tile("res/textures/redstone_block.png");
+    Image redstone = load_tile("res/textures/block/redstone_block.png");
     if (!redstone.data) {
         UnloadImage(iron);
         return false;
