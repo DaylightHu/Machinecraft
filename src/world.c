@@ -222,6 +222,11 @@ size_t world_volume(const World *world)
     return world ? world->volume : 0;
 }
 
+WorldConfig world_config(const World *world)
+{
+    return world ? world->config : (WorldConfig){0};
+}
+
 void world_set_change_observer(World *world, WorldChangeObserver observer,
                                void *context)
 {
