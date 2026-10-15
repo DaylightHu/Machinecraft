@@ -1,6 +1,7 @@
 #include "raylib.h"
 #include "rs/sim.h"
 #include "frontend/block_renderer.h"
+#include "frontend/hotbar.h"
 #include "frontend/voxel_pick.h"
 #include "frontend/world_renderer.h"
 
@@ -13,6 +14,11 @@ static void apply_edit(World *world, VoxelHit hit, BlockId selected,
         bool place, char message[128])
 {
     if (!hit.hit) return;
+    if (place && selected == BLOCK_AIR)
+    {
+        snprintf(message, 128, "Selected hotbar slot is empty");
+        return;
+    }
 
     RsResult result;
     if (place)
@@ -77,11 +83,22 @@ int main(void)
         return EXIT_FAILURE;
     }
 
+    Hotbar hotbar = {0};
+    if (!hotbar_init(&hotbar))
+    {
+        fprintf(stderr, "Cannot load hotbar textures; run from the project root\n");
+        block_renderer_unload(&renderer);
+        CloseWindow();
+        world_destroy(world);
+        return EXIT_FAILURE;
+    }
+
     WorldRenderer *cache = world_renderer_create(world, config, &renderer);
     if (!cache || !world_renderer_sync(cache))
     {
         fprintf(stderr, "Cannot create the finite-world render cache\n");
         world_renderer_destroy(cache);
+        hotbar_unload(&hotbar);
         block_renderer_unload(&renderer);
         CloseWindow();
         world_destroy(world);
@@ -97,8 +114,7 @@ int main(void)
 
     DisableCursor();
     bool mouse_captured = true;
-    BlockId selected = BLOCK_IRON;
-    char message[128] = "LMB remove | RMB place | MMB wire dot | 1-4 select";
+    char message[128] = "LMB remove | RMB place | MMB wire dot | 1-9 or wheel select";
     double accumulator = 0.0;
     bool fatal_error = false;
 
@@ -138,10 +154,8 @@ int main(void)
             }
         }
 
-        if (IsKeyPressed(KEY_ONE))   selected = BLOCK_IRON;
-        if (IsKeyPressed(KEY_TWO))   selected = BLOCK_REDSTONE_BLOCK;
-        if (IsKeyPressed(KEY_THREE)) selected = BLOCK_REDSTONE_WIRE;
-        if (IsKeyPressed(KEY_FOUR))  selected = BLOCK_REDSTONE_TORCH;
+        hotbar_update(&hotbar);
+        BlockId selected = hotbar_selected_block(&hotbar);
 
         VoxelHit hit = {0};
 
@@ -244,17 +258,17 @@ int main(void)
                      15, 72, 20, DARKBLUE);
         }
 
-        DrawText("1 Iron | 2 Redstone Block | 3 Wire | 4 Torch",
-                 15, 15, 20, DARKBLUE);
         DrawText(TextFormat("Selected: %s | Tick: %llu",
                  block_name(selected), (unsigned long long)world_tick(world)),
-                 15, 42, 20, DARKBLUE);
-        DrawText(message, 15, GetScreenHeight()-34, 18, DARKBLUE);
+                 15, 15, 20, DARKBLUE);
+        DrawText(message, 15, 42, 18, DARKBLUE);
+        hotbar_draw(&hotbar);
         EndDrawing();
     }
 
     EnableCursor();
     world_renderer_destroy(cache);
+    hotbar_unload(&hotbar);
     block_renderer_unload(&renderer);
     CloseWindow();
     world_destroy(world);
