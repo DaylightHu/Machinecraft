@@ -1,54 +1,31 @@
 #include "queue.h"
-
 #include <stdlib.h>
 #include <string.h>
-
-bool queue_init(IndexQueue *queue, size_t capacity)
+void queue_destroy(PositionQueue *q)
 {
-    memset(queue, 0, sizeof(*queue));
-    queue->capacity = capacity;
-    queue->items = malloc(capacity * sizeof(*queue->items));
-    queue->pending = calloc(capacity, 1);
-    if (!queue->items || !queue->pending) {
-        queue_destroy(queue);
-        return false;
-    }
-    return true;
+    free(q->items); posmap_destroy(&q->pending); *q = (PositionQueue){0};
 }
-
-void queue_destroy(IndexQueue *queue)
+bool queue_push(PositionQueue *q, BlockPos p)
 {
-    free(queue->items);
-    free(queue->pending);
-    memset(queue, 0, sizeof(*queue));
+    if (posmap_get(&q->pending, p, NULL)) return true;
+    if (q->head && q->count == q->capacity) {
+        memmove(q->items, q->items + q->head, (q->count - q->head) * sizeof(BlockPos));
+        q->count -= q->head; q->head = 0;
+    }
+    if (q->count == q->capacity) {
+        size_t capacity = q->capacity ? q->capacity * 2 : 16;
+        if (capacity < q->capacity || capacity > SIZE_MAX / sizeof(BlockPos)) return false;
+        BlockPos *next = realloc(q->items, capacity * sizeof(BlockPos));
+        if (!next) return false;
+        q->items = next; q->capacity = capacity;
+    }
+    if (!posmap_set(&q->pending, p, 0)) return false;
+    q->items[q->count++] = p; return true;
 }
-
-bool queue_push(IndexQueue *queue, uint32_t index)
+bool queue_pop(PositionQueue *q, BlockPos *p)
 {
-    if (index >= queue->capacity) {
-        return false;
-    }
-    if (queue->pending[index]) {
-        return true;
-    }
-    if (queue->count == queue->capacity) {
-        return false;
-    }
-    queue->pending[index] = 1;
-    queue->items[queue->tail] = index;
-    queue->tail = (queue->tail + 1) % queue->capacity;
-    ++queue->count;
-    return true;
-}
-
-bool queue_pop(IndexQueue *queue, uint32_t *index)
-{
-    if (!queue->count) {
-        return false;
-    }
-    *index = queue->items[queue->head];
-    queue->head = (queue->head + 1) % queue->capacity;
-    --queue->count;
-    queue->pending[*index] = 0;
+    if (q->head == q->count) return false;
+    *p = q->items[q->head++]; posmap_remove(&q->pending, *p);
+    if (q->head == q->count) q->head = q->count = 0;
     return true;
 }

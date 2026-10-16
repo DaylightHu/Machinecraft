@@ -1,6 +1,7 @@
 #include "block_internal.h"
 
 #include <string.h>
+#include <limits.h>
 
 static const BlockDef air = { .name = "air" };
 
@@ -49,9 +50,12 @@ BlockPos block_offset(BlockPos position, Direction direction)
         {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
     };
     if ((unsigned)direction < DIR_COUNT) {
-        position.x += offsets[direction].x;
-        position.y += offsets[direction].y;
-        position.z += offsets[direction].z;
+        int64_t x = (int64_t)position.x + offsets[direction].x;
+        int64_t y = (int64_t)position.y + offsets[direction].y;
+        int64_t z = (int64_t)position.z + offsets[direction].z;
+        if (x < INT_MIN || x > INT_MAX || y < INT_MIN || y > INT_MAX || z < INT_MIN || z > INT_MAX)
+            return (BlockPos){INT_MIN, INT_MIN, INT_MIN};
+        position = (BlockPos){(int)x, (int)y, (int)z};
     }
     return position;
 }

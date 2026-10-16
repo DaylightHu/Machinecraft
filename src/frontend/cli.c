@@ -215,8 +215,9 @@ static void print_stats(const World *world, FILE *output)
 {
     SimStats stats = sim_stats(world);
     fprintf(output, "tick=%" PRIu64 " revision=%" PRIu64 " pending=%zu "
-            "components=%" PRIu64 " wires=%" PRIu64 " events=%" PRIu64 "\n",
+            "loaded_chunks=%zu stored_chunks=%zu components=%" PRIu64 " wires=%" PRIu64 " events=%" PRIu64 "\n",
             world_tick(world), world_revision(world), stats.pending_events,
+            world_loaded_chunks(world), world_stored_chunks(world),
             stats.components_solved, stats.wires_visited, stats.events_processed);
 }
 

@@ -47,7 +47,7 @@ void torch_check_input(World *world, BlockPos position)
     BlockState state = world_get(world, position);
     bool should_be_lit = !input_powered(world, position);
     if (state.data.torch.lit != should_be_lit) {
-        sim_schedule(world, world_index(world, position), TORCH_DELAY);
+        sim_schedule(world, position, TORCH_DELAY);
     }
 }
 
@@ -55,10 +55,10 @@ static void torch_neighbor(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
     if (!torch_supported(world, position, (Direction)state.data.torch.support_dir)) {
-        world_remove_internal(world, world_index(world, position));
+        world_remove_internal(world, position);
         return;
     }
-    sim_mark_input(world, world_index(world, position));
+    sim_mark_input(world, position);
 }
 
 static bool recently_burned(const TorchRuntime *runtime, uint64_t tick)
@@ -78,7 +78,7 @@ static TickAction torch_tick(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
     TickAction action = {state, false, 0};
-    TorchRuntime *runtime = sim_torch_runtime(world, world_index(world, position));
+    TorchRuntime *runtime = sim_torch_runtime(world, position);
     if (!runtime) {
         world->sim->error = RS_INTERNAL_ERROR;
         return action;
@@ -114,7 +114,7 @@ bool redstone_torch_burned_out(const World *world, BlockPos position)
     if (!world || world_get(world, position).id != BLOCK_REDSTONE_TORCH) {
         return false;
     }
-    TorchRuntime *runtime = sim_torch_runtime(world, world_index(world, position));
+    TorchRuntime *runtime = sim_torch_runtime(world, position);
     return runtime && runtime->burned_until > world->tick;
 }
 

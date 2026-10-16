@@ -5,39 +5,34 @@
 #include "queue.h"
 #include "scheduler.h"
 #include "blocks/block_internal.h"
-
-enum { ROOT_WIRE = 1u, ROOT_INPUT = 2u };
-
 typedef struct {
     uint64_t off_times[8], burned_until;
     uint8_t off_count, off_head;
-    uint32_t next_free;
+    BlockPos pos;
+    size_t next_free;
+    bool used;
 } TorchRuntime;
-typedef struct { uint32_t index; TickAction action; } DueAction;
+typedef struct { BlockPos pos; TickAction action; } DueAction;
 struct Simulator {
-    IndexQueue dirty;
+    PositionQueue dirty, wire_roots, input_roots;
     Scheduler scheduler;
-    uint32_t *wire_roots, *input_roots, *nodes, *visited;
-    uint32_t *bucket_next, *bucket_prev, *torch_slots;
-    uint8_t *root_flags, *staged_power;
-    size_t wire_count, input_count;
-    uint32_t epoch;
+    PosMap torch_slots;
     TorchRuntime *torches;
     DueAction *due_actions;
-    size_t torch_used, torch_capacity;
-    uint32_t free_torch;
+    size_t torch_used, torch_capacity, due_capacity, free_torch;
     SimStats stats;
     RsResult error;
 };
 bool sim_init_internal(World *);
 void sim_destroy_internal(World *);
 RsResult sim_prepare_torch(World *);
-void sim_attach_torch(World *, uint32_t);
-void sim_forget_cell(World *, uint32_t);
+bool sim_attach_torch(World *, BlockPos);
+void sim_forget_cell(World *, BlockPos);
 void sim_notify_change(World *, BlockPos);
-void sim_notify_power(World *, BlockPos); /* Only deferred inputs need updates. */
-void sim_mark_wire(World *, uint32_t);
-void sim_mark_input(World *, uint32_t);
-void sim_schedule(World *, uint32_t, uint32_t delay);
-TorchRuntime *sim_torch_runtime(const World *, uint32_t);
+void sim_notify_power(World *, BlockPos);
+void sim_mark_wire(World *, BlockPos);
+void sim_mark_input(World *, BlockPos);
+void sim_schedule(World *, BlockPos, uint32_t delay);
+TorchRuntime *sim_torch_runtime(const World *, BlockPos);
+bool sim_chunk_pinned(const World *, BlockPos chunk);
 #endif

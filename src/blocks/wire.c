@@ -24,7 +24,7 @@ bool wire_supported(const World *world, BlockPos position)
     return block_supports_wire(world, block_offset(position, DIR_DOWN));
 }
 
-size_t wire_neighbors(const World *world, BlockPos position, uint32_t output[12])
+size_t wire_neighbors(const World *world, BlockPos position, BlockPos output[12])
 {
     size_t count = 0;
     bool can_ascend = !block_is_conductor(world, block_offset(position, DIR_UP));
@@ -32,15 +32,15 @@ size_t wire_neighbors(const World *world, BlockPos position, uint32_t output[12]
     for (size_t cursor = 0; cursor < 4; ++cursor) {
         BlockPos neighbor = block_offset(position, horizontal_faces[cursor]);
         if (is_wire(world, neighbor)) {
-            output[count++] = world_index(world, neighbor);
+            output[count++] = neighbor;
         }
         BlockPos above = block_offset(neighbor, DIR_UP);
         BlockPos below = block_offset(neighbor, DIR_DOWN);
         if (can_ascend && block_supports_wire(world, neighbor) && is_wire(world, above)) {
-            output[count++] = world_index(world, above);
+            output[count++] = above;
         }
         if (!block_is_conductor(world, neighbor) && is_wire(world, below)) {
-            output[count++] = world_index(world, below);
+            output[count++] = below;
         }
     }
     return count;
@@ -48,8 +48,7 @@ size_t wire_neighbors(const World *world, BlockPos position, uint32_t output[12]
 
 void wire_refresh_shape(World *world, BlockPos position)
 {
-    uint32_t index = world_index(world, position);
-    BlockState state = world->cells[index];
+    BlockState state = world_get(world, position);
     uint8_t connections = 0;
     uint8_t ascending = 0;
     bool can_ascend = !block_is_conductor(world, block_offset(position, DIR_UP));
@@ -82,7 +81,7 @@ void wire_refresh_shape(World *world, BlockPos position)
     if (connections != state.data.wire.connections || ascending != state.data.wire.up_connections) {
         state.data.wire.connections = connections;
         state.data.wire.up_connections = ascending;
-        world_write_derived(world, index, state);
+        world_write_derived(world, position, state);
         sim_notify_power(world, position);
     }
 }
@@ -108,11 +107,11 @@ static uint8_t wire_signal(const World *world, BlockPos position,
 static void wire_neighbor(World *world, BlockPos position)
 {
     if (!wire_supported(world, position)) {
-        world_remove_internal(world, world_index(world, position));
+        world_remove_internal(world, position);
         return;
     }
     wire_refresh_shape(world, position);
-    sim_mark_wire(world, world_index(world, position));
+    sim_mark_wire(world, position);
 }
 
 /* Both query forms are suppressed in SIGNAL_WITHOUT_WIRE mode. */
