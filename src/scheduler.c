@@ -5,7 +5,7 @@
 
 static bool before(ScheduledEvent first, ScheduledEvent second)
 {
-    return first.due < second.due || (first.due == second.due && first.index < second.index);
+    return first.due < second.due || (first.due == second.due && pos_compare(first.pos, second.pos) < 0);
 }
 
 static void swap(Scheduler *scheduler, size_t first, size_t second)
@@ -13,8 +13,8 @@ static void swap(Scheduler *scheduler, size_t first, size_t second)
     ScheduledEvent temporary = scheduler->heap[first];
     scheduler->heap[first] = scheduler->heap[second];
     scheduler->heap[second] = temporary;
-    scheduler->slots[scheduler->heap[first].index] = (uint32_t)first;
-    scheduler->slots[scheduler->heap[second].index] = (uint32_t)second;
+    (void)posmap_set(&scheduler->slots, scheduler->heap[first].pos, first);
+    (void)posmap_set(&scheduler->slots, scheduler->heap[second].pos, second);
 }
 
 static void sift_up(Scheduler *scheduler, size_t index)
@@ -49,18 +49,9 @@ static void sift_down(Scheduler *scheduler, size_t index)
     }
 }
 
-bool scheduler_init(Scheduler *scheduler, size_t volume)
+void scheduler_init(Scheduler *scheduler)
 {
     memset(scheduler, 0, sizeof(*scheduler));
-    scheduler->volume = volume;
-    scheduler->slots = malloc(volume * sizeof(*scheduler->slots));
-    if (!scheduler->slots) {
-        return false;
-    }
-    for (size_t index = 0; index < volume; ++index) {
-        scheduler->slots[index] = RS_NONE;
-    }
-    return true;
 }
 
 bool scheduler_reserve(Scheduler *scheduler, size_t capacity)
@@ -83,51 +74,39 @@ bool scheduler_reserve(Scheduler *scheduler, size_t capacity)
 void scheduler_destroy(Scheduler *scheduler)
 {
     free(scheduler->heap);
-    free(scheduler->slots);
+    posmap_destroy(&scheduler->slots);
     memset(scheduler, 0, sizeof(*scheduler));
 }
 
-bool scheduler_pending(const Scheduler *scheduler, uint32_t index)
+bool scheduler_pending(const Scheduler *s, BlockPos pos)
 {
-    return index < scheduler->volume && scheduler->slots[index] != RS_NONE;
+    return posmap_get(&s->slots, pos, NULL);
 }
 
-bool scheduler_add(Scheduler *scheduler, uint32_t index, uint64_t due)
+bool scheduler_add(Scheduler *s, BlockPos pos, uint64_t due)
 {
-    if (index >= scheduler->volume) {
-        return false;
+    if (scheduler_pending(s, pos)) return true;
+    if (s->count == s->capacity) {
+        size_t capacity = s->capacity ? s->capacity * 2 : 8;
+        if (capacity < s->capacity || !scheduler_reserve(s, capacity)) return false;
     }
-    if (scheduler_pending(scheduler, index)) {
-        return true; /* Keep the first due time. */
-    }
-    if (scheduler->count == scheduler->capacity) {
-        return false;
-    }
-    size_t slot = scheduler->count++;
-    scheduler->heap[slot] = (ScheduledEvent){due, index};
-    scheduler->slots[index] = (uint32_t)slot;
-    sift_up(scheduler, slot);
-    return true;
+    if (!posmap_set(&s->slots, pos, s->count)) return false;
+    size_t slot = s->count++;
+    s->heap[slot] = (ScheduledEvent){due, pos};
+    sift_up(s, slot); return true;
 }
 
-void scheduler_cancel(Scheduler *scheduler, uint32_t index)
+void scheduler_cancel(Scheduler *s, BlockPos pos)
 {
-    if (!scheduler_pending(scheduler, index)) {
-        return;
-    }
-    size_t slot = scheduler->slots[index];
-    scheduler->slots[index] = RS_NONE;
-    --scheduler->count;
-    if (slot == scheduler->count) {
-        return;
-    }
-    scheduler->heap[slot] = scheduler->heap[scheduler->count];
-    scheduler->slots[scheduler->heap[slot].index] = (uint32_t)slot;
-    if (slot && before(scheduler->heap[slot], scheduler->heap[(slot - 1) / 2])) {
-        sift_up(scheduler, slot);
-    } else {
-        sift_down(scheduler, slot);
-    }
+    size_t slot;
+    if (!posmap_get(&s->slots, pos, &slot)) return;
+    posmap_remove(&s->slots, pos);
+    --s->count;
+    if (slot == s->count) return;
+    s->heap[slot] = s->heap[s->count];
+    (void)posmap_set(&s->slots, s->heap[slot].pos, slot);
+    if (slot && before(s->heap[slot], s->heap[(slot - 1) / 2])) sift_up(s, slot);
+    else sift_down(s, slot);
 }
 
 bool scheduler_pop_due(Scheduler *scheduler, uint64_t now, ScheduledEvent *event)
@@ -136,6 +115,6 @@ bool scheduler_pop_due(Scheduler *scheduler, uint64_t now, ScheduledEvent *event
         return false;
     }
     *event = scheduler->heap[0];
-    scheduler_cancel(scheduler, event->index);
+    scheduler_cancel(scheduler, event->pos);
     return true;
 }

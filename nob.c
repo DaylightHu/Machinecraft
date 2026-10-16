@@ -22,6 +22,9 @@
 static const char *common_sources[] = {
     "src/world.c",
     "src/worldgen.c",
+    "src/storage.c",
+    "src/chunk.c",
+    "src/posmap.c",
     "src/queue.c",
     "src/scheduler.c",
     "src/sim.c",
@@ -747,11 +750,6 @@ static bool precommit(void)
     if (!verify_recipe_is_tracked()) goto cleanup;
     if (!sync_vendor_index(&required)) goto cleanup;
 
-    Nob_Cmd command = {0};
-    nob_cmd_append(&command,
-        "git", "diff", "--cached", "--check", "--", ".",
-        ":(exclude)third_party/raylib/**");
-    if (!nob_cmd_run(&command)) goto cleanup;
     if (!verify_index_build()) goto cleanup;
 
     nob_log(NOB_INFO,

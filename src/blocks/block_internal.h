@@ -25,7 +25,7 @@ bool block_supports_wire(const World *, BlockPos);
 bool block_supports_torch(const World *, BlockPos);
 bool wire_supported(const World *, BlockPos);
 bool torch_supported(const World *, BlockPos, Direction);
-size_t wire_neighbors(const World *, BlockPos, uint32_t out[12]);
+size_t wire_neighbors(const World *, BlockPos, BlockPos out[12]);
 uint8_t wire_external_power(const World *, BlockPos);
 void wire_refresh_shape(World *, BlockPos);
 void torch_check_input(World *, BlockPos);

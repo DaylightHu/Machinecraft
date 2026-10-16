@@ -1,9 +1,6 @@
 #ifndef RS_WORLDGEN_H
 #define RS_WORLDGEN_H
-
 #include "world_internal.h"
-
-/* Initialization only: fills fresh cells, without edits or simulation events. */
-void world_generate_flat(World *world);
-
+bool world_generate_chunk(const World *world, Chunk *chunk);
+BlockState world_generated_state(const World *world, BlockPos position);
 #endif

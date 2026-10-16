@@ -1,157 +1,82 @@
 #include "wire_solver.h"
 #include "sim_internal.h"
-
-#include <string.h>
+#include <stdlib.h>
 
 enum { POWER_LEVELS = 16, MAX_WIRE_NEIGHBORS = 12 };
-
-/* Intrusive buckets: raising a queued wire removes its previous entry first. */
-static void bucket_remove(Simulator *sim, uint32_t heads[POWER_LEVELS],
-                          uint32_t index, uint8_t power)
+typedef struct { BlockPos pos; size_t next, previous; uint8_t power; } WireNode;
+typedef struct { WireNode *nodes; size_t count, capacity; PosMap visited; } WireWork;
+static bool add_node(WireWork *work, BlockPos p)
 {
-    uint32_t previous = sim->bucket_prev[index];
-    uint32_t next = sim->bucket_next[index];
-    if (previous == RS_NONE) {
-        heads[power] = next;
-    } else {
-        sim->bucket_next[previous] = next;
+    if (work->count == work->capacity) {
+        size_t capacity = work->capacity ? work->capacity * 2 : 64;
+        if (capacity < work->capacity || capacity > SIZE_MAX / sizeof(WireNode)) return false;
+        WireNode *next = realloc(work->nodes, capacity * sizeof(WireNode));
+        if (!next) return false;
+        work->nodes = next; work->capacity = capacity;
     }
-    if (next != RS_NONE) {
-        sim->bucket_prev[next] = previous;
-    }
-    sim->bucket_prev[index] = RS_NONE;
-    sim->bucket_next[index] = RS_NONE;
+    if (!posmap_set(&work->visited, p, work->count)) return false;
+    work->nodes[work->count++] = (WireNode){p, SIZE_MAX, SIZE_MAX, 0}; return true;
 }
-
-static void bucket_insert(Simulator *sim, uint32_t heads[POWER_LEVELS],
-                          uint32_t index, uint8_t power)
+static void bucket_remove(WireWork *w, size_t heads[16], size_t i)
 {
-    sim->bucket_prev[index] = RS_NONE;
-    sim->bucket_next[index] = heads[power];
-    if (heads[power] != RS_NONE) {
-        sim->bucket_prev[heads[power]] = index;
-    }
-    heads[power] = index;
+    WireNode *n = &w->nodes[i];
+    if (n->previous == SIZE_MAX) heads[n->power] = n->next;
+    else w->nodes[n->previous].next = n->next;
+    if (n->next != SIZE_MAX) w->nodes[n->next].previous = n->previous;
+    n->next = n->previous = SIZE_MAX;
 }
-
-static size_t collect_component(World *world, uint32_t root)
+static void bucket_insert(WireWork *w, size_t heads[16], size_t i)
 {
-    Simulator *sim = world->sim;
-    size_t count = 1;
-    sim->nodes[0] = root;
-    sim->visited[root] = sim->epoch;
-
-    for (size_t cursor = 0; cursor < count; ++cursor) {
-        uint32_t index = sim->nodes[cursor];
-        sim->staged_power[index] = 0;
-        sim->bucket_next[index] = RS_NONE;
-        sim->bucket_prev[index] = RS_NONE;
-
-        uint32_t neighbors[MAX_WIRE_NEIGHBORS];
-        size_t neighbor_count = wire_neighbors(world, world_position(world, index), neighbors);
-        for (size_t neighbor = 0; neighbor < neighbor_count; ++neighbor) {
-            uint32_t next = neighbors[neighbor];
-            if (sim->visited[next] == sim->epoch) {
-                continue;
-            }
-            sim->visited[next] = sim->epoch;
-            sim->nodes[count++] = next;
+    WireNode *n = &w->nodes[i]; n->previous = SIZE_MAX; n->next = heads[n->power];
+    if (n->next != SIZE_MAX) w->nodes[n->next].previous = i;
+    heads[n->power] = i;
+}
+static bool solve(World *world, WireWork *w, BlockPos root)
+{
+    size_t start = w->count;
+    if (!add_node(w, root)) return false;
+    for (size_t cursor = start; cursor < w->count; ++cursor) {
+        BlockPos neighbors[MAX_WIRE_NEIGHBORS];
+        size_t count = wire_neighbors(world, w->nodes[cursor].pos, neighbors);
+        for (size_t i = 0; i < count; ++i)
+            if (!posmap_get(&w->visited, neighbors[i], NULL) && !add_node(w, neighbors[i])) return false;
+    }
+    ++world->sim->stats.components_solved;
+    world->sim->stats.wires_visited += w->count - start;
+    size_t heads[POWER_LEVELS];
+    for (unsigned i = 0; i < POWER_LEVELS; ++i) heads[i] = SIZE_MAX;
+    for (size_t i = start; i < w->count; ++i) {
+        w->nodes[i].power = wire_external_power(world, w->nodes[i].pos);
+        if (w->nodes[i].power) bucket_insert(w, heads, i);
+    }
+    for (int level = 15; level > 0; --level) while (heads[level] != SIZE_MAX) {
+        size_t index = heads[level]; bucket_remove(w, heads, index);
+        if (level == 1) continue;
+        BlockPos neighbors[MAX_WIRE_NEIGHBORS];
+        size_t count = wire_neighbors(world, w->nodes[index].pos, neighbors);
+        for (size_t i = 0; i < count; ++i) {
+            size_t next;
+            if (!posmap_get(&w->visited, neighbors[i], &next)) return false;
+            if (w->nodes[next].power >= level - 1) continue;
+            if (w->nodes[next].power) bucket_remove(w, heads, next);
+            w->nodes[next].power = (uint8_t)(level - 1); bucket_insert(w, heads, next);
         }
     }
-    ++sim->stats.components_solved;
-    sim->stats.wires_visited += count;
-    return count;
-}
-
-static void seed_sources(World *world, size_t count, uint32_t heads[POWER_LEVELS])
-{
-    Simulator *sim = world->sim;
-    for (size_t cursor = 0; cursor < count; ++cursor) {
-        uint32_t index = sim->nodes[cursor];
-        uint8_t power = wire_external_power(world, world_position(world, index));
-        sim->staged_power[index] = power;
-        if (power) {
-            bucket_insert(sim, heads, index, power);
-        }
+    for (size_t i = start; i < w->count; ++i) {
+        WireNode *n = &w->nodes[i]; BlockState state = world_get(world, n->pos);
+        if (state.data.wire.power == n->power) continue;
+        state.data.wire.power = n->power;
+        if (!world_write_derived(world, n->pos, state)) return false;
+        ++world->sim->stats.wire_changes; sim_notify_power(world, n->pos);
     }
+    return true;
 }
-
-static void propagate_power(World *world, uint32_t heads[POWER_LEVELS])
-{
-    Simulator *sim = world->sim;
-    for (int level = POWER_LEVELS - 1; level > 0; --level) {
-        while (heads[level] != RS_NONE) {
-            uint32_t index = heads[level];
-            bucket_remove(sim, heads, index, (uint8_t)level);
-            if (level == 1) {
-                continue;
-            }
-
-            uint32_t neighbors[MAX_WIRE_NEIGHBORS];
-            size_t count = wire_neighbors(world, world_position(world, index), neighbors);
-            for (size_t cursor = 0; cursor < count; ++cursor) {
-                uint32_t next = neighbors[cursor];
-                uint8_t previous = sim->staged_power[next];
-                uint8_t candidate = (uint8_t)(level - 1);
-                if (candidate <= previous) {
-                    continue;
-                }
-                if (previous) {
-                    bucket_remove(sim, heads, next, previous);
-                }
-                sim->staged_power[next] = candidate;
-                bucket_insert(sim, heads, next, candidate);
-            }
-        }
-    }
-}
-
-static void commit_power(World *world, size_t count)
-{
-    Simulator *sim = world->sim;
-    for (size_t cursor = 0; cursor < count; ++cursor) {
-        uint32_t index = sim->nodes[cursor];
-        BlockState state = world->cells[index];
-        if (state.data.wire.power == sim->staged_power[index]) {
-            continue;
-        }
-        state.data.wire.power = sim->staged_power[index];
-        world_write_derived(world, index, state);
-        ++sim->stats.wire_changes;
-        sim_notify_power(world, world_position(world, index));
-    }
-}
-
-static void solve_component(World *world, uint32_t root)
-{
-    uint32_t heads[POWER_LEVELS];
-    for (size_t level = 0; level < POWER_LEVELS; ++level) {
-        heads[level] = RS_NONE;
-    }
-
-    size_t count = collect_component(world, root);
-    seed_sources(world, count, heads);
-    propagate_power(world, heads);
-    commit_power(world, count);
-}
-
 void wire_solver_flush(World *world)
 {
-    Simulator *sim = world->sim;
-    if (!sim->wire_count) {
-        return;
+    WireWork work = {0}; BlockPos root;
+    while (queue_pop(&world->sim->wire_roots, &root)) {
+        if (world_get(world, root).id != BLOCK_REDSTONE_WIRE || posmap_get(&work.visited, root, NULL)) continue;
+        if (!solve(world, &work, root)) { if (world->sim->error == RS_OK) world->sim->error = RS_OUT_OF_MEMORY; break; }
     }
-    if (++sim->epoch == 0) {
-        memset(sim->visited, 0, world->volume * sizeof(*sim->visited));
-        sim->epoch = 1;
-    }
-
-    for (size_t cursor = 0; cursor < sim->wire_count; ++cursor) {
-        uint32_t index = sim->wire_roots[cursor];
-        sim->root_flags[index] &= (uint8_t)~ROOT_WIRE;
-        if (world->cells[index].id == BLOCK_REDSTONE_WIRE && sim->visited[index] != sim->epoch) {
-            solve_component(world, index);
-        }
-    }
-    sim->wire_count = 0;
+    free(work.nodes); posmap_destroy(&work.visited);
 }

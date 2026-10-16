@@ -8,6 +8,8 @@
 #include "rs/session.h"
 
 #include <ctype.h>
+#include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -152,8 +154,11 @@ static void close_world(GuiApp *app)
 static bool open_world(GuiApp *app, GameSession *session)
 {
     World *world = game_session_world(session);
-    WorldConfig config = game_session_config(session);
-    WorldRenderer *renderer = world_renderer_create(world, config, &app->blocks);
+    if (world_stream(world,(BlockPos){16,3,16},5) != RS_OK) {
+        snprintf(app->message,sizeof(app->message),"Cannot load world chunks");
+        return false;
+    }
+    WorldRenderer *renderer = world_renderer_create(world, &app->blocks);
     if (!renderer || !world_renderer_sync(renderer)) {
         world_renderer_destroy(renderer);
         snprintf(app->message, sizeof(app->message),
@@ -164,10 +169,8 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->session = session;
     app->world_renderer = renderer;
     app->camera = (Camera3D){0};
-    app->camera.position = (Vector3){config.size_x*0.5f, 3.0f,
-                                     config.size_z*0.5f};
-    app->camera.target = (Vector3){config.size_x*0.5f, 2.0f,
-                                   config.size_z*0.5f - 1.0f};
+    app->camera.position = (Vector3){16.0f, 3.0f, 16.0f};
+    app->camera.target = (Vector3){16.0f, 2.0f, 15.0f};
     app->camera.up = (Vector3){0.0f, 1.0f, 0.0f};
     app->camera.fovy = 65.0f;
     app->camera.projection = CAMERA_PERSPECTIVE;
@@ -452,6 +455,15 @@ static VoxelHit update_world(GuiApp *app)
     Ray ray = GetScreenToWorldRay(
         (Vector2){GetScreenWidth()*0.5f, GetScreenHeight()*0.5f}, app->camera);
     World *world = game_session_world(app->session);
+    double camera_x = floor((double)app->camera.position.x + 0.5);
+    double camera_z = floor((double)app->camera.position.z + 0.5);
+    if (!isfinite(camera_x) || !isfinite(camera_z) || camera_x < (double)INT32_MIN+16 ||
+        camera_x > (double)INT32_MAX-16 || camera_z < (double)INT32_MIN+16 || camera_z > (double)INT32_MAX-16 ||
+        world_stream(world,(BlockPos){(int)camera_x,0,(int)camera_z},5) != RS_OK) {
+        snprintf(app->message,sizeof(app->message),"Cannot stream world chunks");
+        app->fatal_error = true; app->running = false;
+        return hit;
+    }
     hit = voxel_pick(world,
         (PickVec3){ray.position.x, ray.position.y, ray.position.z},
         (PickVec3){ray.direction.x, ray.direction.y, ray.direction.z}, 6.0f);
