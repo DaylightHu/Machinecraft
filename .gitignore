@@ -10,4 +10,8 @@ engine
 example
 /build/
 /third_party/raylib/
+/nob
+/nob.old
+/nob.exe
+/nob.exe.oid
 /saves/
