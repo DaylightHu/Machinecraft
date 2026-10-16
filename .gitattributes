@@ -1,4 +1,6 @@
-CMakeLists.txt -linguist-detectable
-*.cmake -linguist-detectable
-Makefile -linguist-detectable
-*.mk -linguist-detectable
+# Machinecraft headers are C.
+*.h linguist-language=C
+
+# External source carried only to make builds reproducible.
+nob.h linguist-vendored
+third_party/** linguist-vendored
