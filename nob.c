@@ -325,7 +325,7 @@ static bool parse_dependency_file(const char *path, Files *files)
 static void append_dependency_scan_flags(Nob_Cmd *command, bool macos)
 {
     nob_cmd_append(command,
-        "-MM", "-MG", "-x", "c",
+        "-MM", "-MG", "-nostdinc", "-x", "c",
         "-U__linux__", "-U__FreeBSD__", "-U__OpenBSD__",
         "-U__NetBSD__", "-U__DragonFly__");
 

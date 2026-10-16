@@ -505,12 +505,23 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         DrawLine(cx, cy - 6, cx, cy + 6, BLACK);
     }
     BlockId selected = hotbar_selected_block(&app->hotbar);
-    DrawText(TextFormat("Selected: %s | Tick: %llu%s",
+    DrawText(TextFormat("Selected: %s%s",
              block_name(selected),
-             (unsigned long long)world_tick(game_session_world(app->session)),
              game_session_dirty(app->session) ? " | unsaved" : ""),
              15, 15, 20, DARKBLUE);
-    DrawText(app->message, 15, 42, 18, DARKBLUE);
+    DrawText(TextFormat("Camera: (%.2f, %.2f, %.2f)",
+             app->camera.position.x,
+             app->camera.position.y,
+             app->camera.position.z),
+             15, 42, 18, DARKBLUE);
+    if (hit.hit) {
+        DrawText(TextFormat("Target: (%d, %d, %d)",
+                 hit.pos.x, hit.pos.y, hit.pos.z),
+                 15, 66, 18, DARKBLUE);
+    } else {
+        DrawText("Target: none", 15, 66, 18, DARKBLUE);
+    }
+    DrawText(app->message, 15, 90, 18, DARKBLUE);
     hotbar_draw(&app->hotbar);
 }
 
