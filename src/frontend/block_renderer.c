@@ -24,9 +24,11 @@ enum {
     COMPARATOR_COLUMNS = COMPARATOR_MODES,
     COMPARATOR_ROWS = COMPARATOR_STATES
 };
+enum { RAIL_STATES = 2 };
 
 static const float wire_offset = 0.002f;
 static const float redstone_gate_height = 2.0f/16.0f;
+static const float rail_offset = 0.003f;
 static const Direction wire_directions[] = {
     DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH
 };
@@ -298,6 +300,36 @@ cleanup:
     return atlas;
 }
 
+static Image create_rail_atlas(const char *unpowered_path,
+                               const char *powered_path)
+{
+    const char *const paths[RAIL_STATES] = {
+        unpowered_path, powered_path
+    };
+    Image sources[RAIL_STATES] = {0};
+    Image atlas = {0};
+    for (int powered = 0; powered < RAIL_STATES; ++powered) {
+        sources[powered] = load_tile(paths[powered]);
+        if (!sources[powered].data) goto cleanup;
+    }
+
+    atlas = GenImageColor(RAIL_STATES*TILE_SIZE, TILE_SIZE, BLANK);
+    if (atlas.data) {
+        Rectangle full = {0, 0, TILE_SIZE, TILE_SIZE};
+        for (int powered = 0; powered < RAIL_STATES; ++powered) {
+            Rectangle destination = {
+                powered*TILE_SIZE, 0, TILE_SIZE, TILE_SIZE
+            };
+            ImageDraw(&atlas, sources[powered], full, destination, WHITE);
+        }
+    }
+
+cleanup:
+    for (int powered = 0; powered < RAIL_STATES; ++powered)
+        if (sources[powered].data) UnloadImage(sources[powered]);
+    return atlas;
+}
+
 bool block_renderer_init(BlockRenderer *renderer)
 {
     if (!renderer) return false;
@@ -397,6 +429,36 @@ bool block_renderer_init(BlockRenderer *renderer)
     SetTextureFilter(renderer->comparator_atlas, TEXTURE_FILTER_POINT);
     SetTextureWrap(renderer->comparator_atlas, TEXTURE_WRAP_CLAMP);
 
+    Image powered_rail_atlas = create_rail_atlas(
+        "res/textures/block/powered_rail0.png",
+        "res/textures/block/powered_rail1.png");
+    if (powered_rail_atlas.data) {
+        renderer->powered_rail_atlas = LoadTextureFromImage(powered_rail_atlas);
+        UnloadImage(powered_rail_atlas);
+    }
+    if (!renderer->powered_rail_atlas.id) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot create the powered rail atlas");
+        block_renderer_unload(renderer);
+        return false;
+    }
+    SetTextureFilter(renderer->powered_rail_atlas, TEXTURE_FILTER_POINT);
+    SetTextureWrap(renderer->powered_rail_atlas, TEXTURE_WRAP_CLAMP);
+
+    Image activator_rail_atlas = create_rail_atlas(
+        "res/textures/block/activator_rail0.png",
+        "res/textures/block/activator_rail1.png");
+    if (activator_rail_atlas.data) {
+        renderer->activator_rail_atlas = LoadTextureFromImage(activator_rail_atlas);
+        UnloadImage(activator_rail_atlas);
+    }
+    if (!renderer->activator_rail_atlas.id) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot create the activator rail atlas");
+        block_renderer_unload(renderer);
+        return false;
+    }
+    SetTextureFilter(renderer->activator_rail_atlas, TEXTURE_FILTER_POINT);
+    SetTextureWrap(renderer->activator_rail_atlas, TEXTURE_WRAP_CLAMP);
+
     renderer->cutout_shader = LoadShaderFromMemory(NULL, cutout_fragment_shader);
     if (renderer->cutout_shader.id == rlGetShaderIdDefault()) {
         /* LoadShaderFromMemory allocates its own locations even on fallback. */
@@ -415,6 +477,10 @@ void block_renderer_unload(BlockRenderer *renderer)
 {
     if (!renderer) return;
     if (renderer->cutout_shader.id) UnloadShader(renderer->cutout_shader);
+    if (renderer->activator_rail_atlas.id)
+        UnloadTexture(renderer->activator_rail_atlas);
+    if (renderer->powered_rail_atlas.id)
+        UnloadTexture(renderer->powered_rail_atlas);
     if (renderer->comparator_atlas.id) UnloadTexture(renderer->comparator_atlas);
     if (renderer->repeater_atlas.id) UnloadTexture(renderer->repeater_atlas);
     if (renderer->torch_atlas.id) UnloadTexture(renderer->torch_atlas);
@@ -698,6 +764,45 @@ static void comparator_uv(Texture2D atlas, BlockState state,
         redstone_gate_side_uv(atlas, column, row, uv[face]);
 }
 
+static Texture2D rail_texture(const BlockRenderer *renderer, BlockId id)
+{
+    return id == BLOCK_POWERED_RAIL ? renderer->powered_rail_atlas :
+           renderer->activator_rail_atlas;
+}
+
+static void rail_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
+{
+    int column = state.data.rail.powered ? 1 : 0;
+    redstone_gate_top_uv(atlas, column, 0,
+                         (Direction)state.data.rail.facing, uv);
+}
+
+static bool rail_vertex_high(Direction facing, Vector3 point)
+{
+    switch (facing) {
+    case DIR_EAST:  return point.x > 0.0f;
+    case DIR_WEST:  return point.x < 0.0f;
+    case DIR_SOUTH: return point.z > 0.0f;
+    case DIR_NORTH: return point.z < 0.0f;
+    default: return false;
+    }
+}
+
+static void rail_geometry(BlockState state, Vector3 center,
+                          Vector3 vertices[4])
+{
+    Direction facing = (Direction)state.data.rail.facing;
+    float bottom = center.y - 0.5f + rail_offset;
+    for (int vertex = 0; vertex < 4; ++vertex) {
+        Vector3 point = cube_faces[4].vertices[vertex];
+        float rise = state.data.rail.ascending &&
+                     rail_vertex_high(facing, point) ? 1.0f : 0.0f;
+        vertices[vertex] = (Vector3){
+            center.x + point.x, bottom + rise, center.z + point.z
+        };
+    }
+}
+
 static void redstone_gate_geometry(
     Vector3 center,
     Vector3 vertices[REDSTONE_GATE_GEOMETRY_QUADS][4])
@@ -768,6 +873,32 @@ void block_renderer_draw_comparator(const BlockRenderer *renderer,
     draw_redstone_gate(renderer->comparator_atlas, uv, center);
 }
 
+void block_renderer_draw_rail(const BlockRenderer *renderer, BlockState state,
+                              Vector3 center)
+{
+    if (!renderer || (state.id != BLOCK_POWERED_RAIL &&
+                      state.id != BLOCK_ACTIVATOR_RAIL)) return;
+    Texture2D atlas = rail_texture(renderer, (BlockId)state.id);
+    if (!atlas.id) return;
+    Vector2 uv[4];
+    Vector3 vertices[4];
+    rail_uv(atlas, state, uv);
+    rail_geometry(state, center, vertices);
+
+    rlCheckRenderBatchLimit(4);
+    rlSetTexture(atlas.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    rlNormal3f(0.0f, 1.0f, 0.0f);
+    for (int vertex = 0; vertex < 4; ++vertex) {
+        rlTexCoord2f(uv[vertex].x, uv[vertex].y);
+        rlVertex3f(vertices[vertex].x, vertices[vertex].y,
+                   vertices[vertex].z);
+    }
+    rlEnd();
+    rlSetTexture(0);
+}
+
 int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
                             unsigned solid_faces,
                             Vector2 uv[BLOCK_GEOMETRY_QUADS][4])
@@ -812,6 +943,10 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
     } else if (state.id == BLOCK_REDSTONE_COMPARATOR) {
         comparator_uv(renderer->comparator_atlas, state, uv);
         count = REDSTONE_GATE_GEOMETRY_QUADS;
+    } else if (state.id == BLOCK_POWERED_RAIL ||
+               state.id == BLOCK_ACTIVATOR_RAIL) {
+        rail_uv(rail_texture(renderer, (BlockId)state.id), state, uv[0]);
+        count = 1;
     }
     return count;
 }
@@ -867,5 +1002,8 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
         redstone_gate_geometry(center, geometry->vertices);
     } else if (state.id == BLOCK_REDSTONE_COMPARATOR) {
         redstone_gate_geometry(center, geometry->vertices);
+    } else if (state.id == BLOCK_POWERED_RAIL ||
+               state.id == BLOCK_ACTIVATOR_RAIL) {
+        rail_geometry(state, center, geometry->vertices[0]);
     }
 }

@@ -14,7 +14,7 @@ typedef struct {
 } TorchRuntime;
 typedef struct { BlockPos pos; TickAction action; } DueAction;
 struct Simulator {
-    PositionQueue dirty, wire_roots, input_roots;
+    PositionQueue dirty, wire_roots, rail_roots, input_roots;
     Scheduler scheduler;
     PosMap torch_slots;
     TorchRuntime *torches;
@@ -31,6 +31,7 @@ void sim_forget_cell(World *, BlockPos);
 void sim_notify_change(World *, BlockPos);
 void sim_notify_power(World *, BlockPos);
 void sim_mark_wire(World *, BlockPos);
+void sim_mark_rail(World *, BlockPos);
 void sim_mark_input(World *, BlockPos);
 void sim_schedule(World *, BlockPos, uint32_t delay);
 TorchRuntime *sim_torch_runtime(const World *, BlockPos);

@@ -29,6 +29,7 @@ static const char *common_sources[] = {
     "src/scheduler.c",
     "src/sim.c",
     "src/wire_solver.c",
+    "src/rail_solver.c",
     "src/power.c",
     "src/session.c",
     "src/save_file.c",
@@ -40,6 +41,7 @@ static const char *common_sources[] = {
     "src/blocks/torch.c",
     "src/blocks/repeater.c",
     "src/blocks/comparator.c",
+    "src/blocks/rail.c",
 };
 
 static const char *cli_sources[] = {

@@ -9,7 +9,10 @@
 #include <string.h>
 
 enum { REGION_SIZE = 16 };
-enum { SOLIDS, GLASS, DUST, REPEATERS, COMPARATORS, TORCHES, PARTS };
+enum {
+    SOLIDS, GLASS, DUST, REPEATERS, COMPARATORS,
+    POWERED_RAILS, ACTIVATOR_RAILS, TORCHES, PARTS
+};
 
 typedef struct {
     BlockState state;
@@ -53,6 +56,8 @@ static int part_for(unsigned id)
     case BLOCK_REDSTONE_WIRE: return DUST;
     case BLOCK_REDSTONE_REPEATER: return REPEATERS;
     case BLOCK_REDSTONE_COMPARATOR: return COMPARATORS;
+    case BLOCK_POWERED_RAIL: return POWERED_RAILS;
+    case BLOCK_ACTIVATOR_RAIL: return ACTIVATOR_RAILS;
     case BLOCK_REDSTONE_TORCH: return TORCHES;
     default: return -1;
     }
@@ -123,6 +128,12 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
                  before.data.comparator.subtract != after.data.comparator.subtract ||
                  (before.data.comparator.output > 0) !=
                  (after.data.comparator.output > 0);
+    } else if (old_part == new_part &&
+               (new_part == POWERED_RAILS || new_part == ACTIVATOR_RAILS)) {
+        geometry = before.data.rail.facing != after.data.rail.facing ||
+                   before.data.rail.ascending != after.data.rail.ascending;
+        visual = geometry ||
+                 before.data.rail.powered != after.data.rail.powered;
     }
     cell->state = after;
     if (!visual && !geometry) return;
@@ -188,6 +199,8 @@ static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
         } else if (kind == DUST) quads += 1+(int)bit_count(wire_sides(cell->state));
         else if (kind == REPEATERS || kind == COMPARATORS)
             quads += REDSTONE_GATE_GEOMETRY_QUADS;
+        else if (kind == POWERED_RAILS || kind == ACTIVATOR_RAILS)
+            quads += 1;
         else quads += 6;
     }
 
@@ -321,7 +334,9 @@ WorldRenderer *world_renderer_create(World *world, const BlockRenderer *blocks)
     r->blocks = blocks; r->world = world; r->topology_revision = UINT64_MAX;
     const Texture2D textures[] = {
         blocks->atlas, blocks->glass_texture, blocks->wire_atlas,
-        blocks->repeater_atlas, blocks->comparator_atlas, blocks->torch_atlas
+        blocks->repeater_atlas, blocks->comparator_atlas,
+        blocks->powered_rail_atlas, blocks->activator_rail_atlas,
+        blocks->torch_atlas
     };
     for (int kind = 0; kind < PARTS; ++kind) {
         r->materials[kind] = LoadMaterialDefault();
@@ -393,7 +408,8 @@ void world_renderer_draw(WorldRenderer *r)
         /* Dust and redstone gates are surface quads; keep their reverse sides
          * visible to a noclip camera and through transparent glass. */
         bool two_sided = kind == DUST || kind == REPEATERS ||
-                         kind == COMPARATORS;
+                         kind == COMPARATORS || kind == POWERED_RAILS ||
+                         kind == ACTIVATOR_RAILS;
         if (two_sided) rlDisableBackfaceCulling();
         for (size_t region = 0; region < r->region_count; ++region) {
             Mesh mesh = r->regions[region]->parts[kind].mesh;

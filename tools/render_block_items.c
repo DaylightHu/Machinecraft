@@ -200,6 +200,13 @@ static void paint_isometric_redstone_gate(
     );
 }
 
+static void paint_isometric_surface(
+    SourceImage source,
+    Pixel *destination)
+{
+    paint_isometric_prism(source, source, destination, 0.0f);
+}
+
 
 
 static bool ensure_output_directory(const char *path)
@@ -276,6 +283,16 @@ int main(int argc, char **argv)
             "res/textures/block/comparator1_0.png",
             "redstone_comparator.png",
             paint_isometric_redstone_gate
+        },
+        {
+            "res/textures/block/powered_rail0.png",
+            "powered_rail.png",
+            paint_isometric_surface
+        },
+        {
+            "res/textures/block/activator_rail0.png",
+            "activator_rail.png",
+            paint_isometric_surface
         }
     };
     const char *output_directory = "res/textures/item";

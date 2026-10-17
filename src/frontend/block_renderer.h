@@ -11,6 +11,8 @@ typedef struct{
     Texture2D torch_atlas;
     Texture2D repeater_atlas;
     Texture2D comparator_atlas;
+    Texture2D powered_rail_atlas;
+    Texture2D activator_rail_atlas;
     Shader cutout_shader;
 } BlockRenderer;
 
@@ -38,6 +40,8 @@ void block_renderer_draw_repeater(const BlockRenderer *renderer, BlockState stat
                                   Vector3 center);
 void block_renderer_draw_comparator(const BlockRenderer *renderer,
                                     BlockState state, Vector3 center);
+void block_renderer_draw_rail(const BlockRenderer *renderer, BlockState state,
+                              Vector3 center);
 void block_renderer_end_cutouts(void);
 
 /* CPU geometry for persistent meshes. Solid face bits follow the renderer's

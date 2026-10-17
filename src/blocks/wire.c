@@ -24,6 +24,7 @@ static bool connects(const World *world, BlockPos position, Direction face)
         /* Comparators accept dust from the rear and from either side. */
         return true;
     }
+    if (block_is_rail((BlockId)state.id)) return true;
     return state.id == BLOCK_REDSTONE_WIRE ||
            state.id == BLOCK_REDSTONE_TORCH ||
            state.id == BLOCK_REDSTONE_BLOCK;

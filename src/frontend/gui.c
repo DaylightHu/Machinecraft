@@ -424,13 +424,17 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
         }
         if ((selected == BLOCK_REDSTONE_WIRE ||
              selected == BLOCK_REDSTONE_REPEATER ||
-             selected == BLOCK_REDSTONE_COMPARATOR) && hit.face != DIR_UP) {
+             selected == BLOCK_REDSTONE_COMPARATOR ||
+             selected == BLOCK_POWERED_RAIL ||
+             selected == BLOCK_ACTIVATOR_RAIL) && hit.face != DIR_UP) {
             snprintf(app->message, sizeof(app->message),
                      "%s must be placed on a top face", block_name(selected));
             return;
         }
         bool directional = selected == BLOCK_REDSTONE_REPEATER ||
-                           selected == BLOCK_REDSTONE_COMPARATOR;
+                           selected == BLOCK_REDSTONE_COMPARATOR ||
+                           selected == BLOCK_POWERED_RAIL ||
+                           selected == BLOCK_ACTIVATOR_RAIL;
         Direction placement = directional ? facing : direction_opposite(hit.face);
         result = world_place(world, target, selected, placement);
     } else {
