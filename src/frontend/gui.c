@@ -2,6 +2,7 @@
 
 #include "block_renderer.h"
 #include "hotbar.h"
+#include "inventory.h"
 #include "voxel_pick.h"
 #include "world_renderer.h"
 #include "raylib.h"
@@ -26,6 +27,7 @@ static const char save_directory[] = "saves";
 typedef enum {
     GUI_TITLE,
     GUI_WORLD,
+    GUI_INVENTORY,
     GUI_PAUSE,
     GUI_SAVE_ERROR
 } GuiScreen;
@@ -38,6 +40,7 @@ typedef enum {
 
 typedef struct {
     BlockRenderer blocks;
+    Inventory inventory;
     Hotbar hotbar;
     GameSession *session;
     WorldRenderer *world_renderer;
@@ -177,7 +180,7 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->accumulator = 0.0;
     app->screen = GUI_WORLD;
     snprintf(app->message, sizeof(app->message),
-             "LMB remove | RMB place | MMB wire dot | ESC menu");
+             "LMB remove | RMB place | MMB wire dot | E inventory | ESC menu");
     capture_mouse(app);
     return true;
 }
@@ -397,6 +400,16 @@ static Direction camera_horizontal_direction(const Camera3D *camera)
     return z >= 0.0f ? DIR_SOUTH : DIR_NORTH;
 }
 
+static Direction camera_direction(const Camera3D *camera)
+{
+    float x = camera->target.x - camera->position.x;
+    float y = camera->target.y - camera->position.y;
+    float z = camera->target.z - camera->position.z;
+    float ax = fabsf(x), ay = fabsf(y), az = fabsf(z);
+    if (ay > ax && ay > az) return y >= 0.0f ? DIR_UP : DIR_DOWN;
+    return camera_horizontal_direction(camera);
+}
+
 static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                        Direction facing)
 {
@@ -424,14 +437,21 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
         }
         if ((selected == BLOCK_REDSTONE_WIRE ||
              selected == BLOCK_REDSTONE_REPEATER ||
-             selected == BLOCK_REDSTONE_COMPARATOR) && hit.face != DIR_UP) {
+             selected == BLOCK_REDSTONE_COMPARATOR ||
+             selected == BLOCK_POWERED_RAIL ||
+             selected == BLOCK_ACTIVATOR_RAIL) && hit.face != DIR_UP) {
             snprintf(app->message, sizeof(app->message),
                      "%s must be placed on a top face", block_name(selected));
             return;
         }
         bool directional = selected == BLOCK_REDSTONE_REPEATER ||
-                           selected == BLOCK_REDSTONE_COMPARATOR;
-        Direction placement = directional ? facing : direction_opposite(hit.face);
+                           selected == BLOCK_REDSTONE_COMPARATOR ||
+                           selected == BLOCK_POWERED_RAIL ||
+                           selected == BLOCK_ACTIVATOR_RAIL;
+        Direction placement = selected == BLOCK_OBSERVER ?
+                              direction_opposite(
+                                  camera_direction(&app->camera)) :
+                              (directional ? facing : direction_opposite(hit.face));
         result = world_place(world, target, selected, placement);
     } else {
         result = world_remove(world, hit.pos);
@@ -444,9 +464,34 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
              place ? "Place" : "Remove", rs_result_name(result));
 }
 
+static void advance_simulation(GuiApp *app)
+{
+    double frame = GetFrameTime();
+    if (frame > 0.25) frame = 0.25;
+    app->accumulator += frame;
+    while (app->accumulator >= 0.05) {
+        RsResult result = game_session_step(app->session);
+        if (result != RS_OK) {
+            snprintf(app->message, sizeof(app->message), "Simulation: %s",
+                     rs_result_name(result));
+            app->fatal_error = true;
+            app->running = false;
+            break;
+        }
+        app->accumulator -= 0.05;
+    }
+}
+
 static VoxelHit update_world(GuiApp *app)
 {
     VoxelHit hit = {0};
+    if (IsKeyPressed(KEY_E)) {
+        release_mouse(app);
+        app->screen = GUI_INVENTORY;
+        snprintf(app->message, sizeof(app->message),
+                 "Inventory: choose a hotbar slot, then click a block");
+        return hit;
+    }
     if (IsKeyPressed(KEY_ESCAPE) || !IsWindowFocused()) {
         release_mouse(app);
         app->screen = GUI_PAUSE;
@@ -511,21 +556,27 @@ static VoxelHit update_world(GuiApp *app)
                  rs_result_name(result));
     }
 
-    double frame = GetFrameTime();
-    if (frame > 0.25) frame = 0.25;
-    app->accumulator += frame;
-    while (app->accumulator >= 0.05) {
-        RsResult result = game_session_step(app->session);
-        if (result != RS_OK) {
-            snprintf(app->message, sizeof(app->message), "Simulation: %s",
-                     rs_result_name(result));
-            app->fatal_error = true;
-            app->running = false;
-            break;
-        }
-        app->accumulator -= 0.05;
-    }
+    advance_simulation(app);
     return hit;
+}
+
+static void update_inventory(GuiApp *app)
+{
+    if (IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ESCAPE)) {
+        app->screen = GUI_WORLD;
+        capture_mouse(app);
+        return;
+    }
+
+    hotbar_update(&app->hotbar);
+    BlockId picked = inventory_update(&app->inventory);
+    if (picked != BLOCK_AIR && hotbar_set_selected_block(&app->hotbar, picked)) {
+        snprintf(app->message, sizeof(app->message),
+                 "Hotbar slot %d: %s", app->hotbar.selected_slot + 1,
+                 block_name(picked));
+    }
+
+    advance_simulation(app);
 }
 
 static void draw_world(GuiApp *app, VoxelHit hit)
@@ -564,7 +615,7 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         DrawText("Target: none", 15, 66, 18, DARKBLUE);
     }
     DrawText(app->message, 15, 90, 18, DARKBLUE);
-    hotbar_draw(&app->hotbar);
+    hotbar_draw(&app->hotbar, &app->inventory);
 }
 
 static void draw_pause(GuiApp *app)
@@ -667,7 +718,11 @@ static bool initialize(GuiApp *app)
         fprintf(stderr, "Cannot load block textures; run from the project root\n");
         return false;
     }
-    if (!hotbar_init(&app->hotbar)) {
+    if (!inventory_init(&app->inventory)) {
+        fprintf(stderr, "Cannot load inventory textures; run from the project root\n");
+        return false;
+    }
+    if (!hotbar_init(&app->hotbar, &app->inventory)) {
         fprintf(stderr, "Cannot load hotbar textures; run from the project root\n");
         return false;
     }
@@ -679,6 +734,7 @@ static void shutdown_gui(GuiApp *app)
 {
     close_world(app);
     hotbar_unload(&app->hotbar);
+    inventory_unload(&app->inventory);
     block_renderer_unload(&app->blocks);
     CloseWindow();
 }
@@ -706,6 +762,7 @@ int gui_run(void)
         VoxelHit hit = {0};
         if (app.screen == GUI_TITLE) update_title(&app);
         else if (app.screen == GUI_WORLD) hit = update_world(&app);
+        else if (app.screen == GUI_INVENTORY) update_inventory(&app);
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
@@ -720,6 +777,11 @@ int gui_run(void)
             draw_save_error(&app);
         } else {
             draw_world(&app, hit);
+            if (app.screen == GUI_INVENTORY) {
+                inventory_draw(&app.inventory,
+                               hotbar_selected_block(&app.hotbar));
+                hotbar_draw(&app.hotbar, &app.inventory);
+            }
             if (app.screen == GUI_PAUSE) draw_pause(&app);
         }
         EndDrawing();

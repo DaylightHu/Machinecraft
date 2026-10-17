@@ -155,7 +155,10 @@ static bool parse_command(char *tokens[], int count, Command *command)
                      (count == 5 || parse_direction(tokens[5], &command->support));
         if (valid && count == 5 &&
             (command->block == BLOCK_REDSTONE_REPEATER ||
-             command->block == BLOCK_REDSTONE_COMPARATOR))
+             command->block == BLOCK_REDSTONE_COMPARATOR ||
+             command->block == BLOCK_POWERED_RAIL ||
+             command->block == BLOCK_ACTIVATOR_RAIL ||
+             command->block == BLOCK_OBSERVER))
             command->support = DIR_NORTH;
         return valid;
     } else if (count == 4) {
@@ -189,7 +192,8 @@ static void print_help(FILE *output)
         fprintf(output, " %s", block_name(id));
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
-          "Repeater/comparator direction is output: east/west/north/south; default north.\n",
+          "Repeater/comparator/observer direction is output; rail direction is the texture top.\n"
+          "Observer accepts all six directions; other directional blocks are horizontal. Default north.\n",
           output);
 }
 
@@ -224,6 +228,18 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 direction_names[state.data.comparator.facing],
                 state.data.comparator.subtract ? "subtract" : "compare");
         break;
+    case BLOCK_POWERED_RAIL:
+    case BLOCK_ACTIVATOR_RAIL:
+        fprintf(output, " powered=%s facing=%s slope=%s",
+                state.data.rail.powered ? "yes" : "no",
+                direction_names[state.data.rail.facing],
+                state.data.rail.ascending ? "ascending" : "flat");
+        break;
+    case BLOCK_OBSERVER:
+        fprintf(output, " powered=%s facing=%s",
+                state.data.observer.powered ? "yes" : "no",
+                direction_names[state.data.observer.facing]);
+        break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);
         fprintf(output, " received=%u strong=%u", (unsigned)power.received,
@@ -241,10 +257,14 @@ static void print_stats(const World *world, FILE *output)
 {
     SimStats stats = sim_stats(world);
     fprintf(output, "tick=%" PRIu64 " revision=%" PRIu64 " pending=%zu "
-            "loaded_chunks=%zu stored_chunks=%zu components=%" PRIu64 " wires=%" PRIu64 " events=%" PRIu64 "\n",
+            "loaded_chunks=%zu stored_chunks=%zu components=%" PRIu64
+            " wires=%" PRIu64 " rail_components=%" PRIu64
+            " rails=%" PRIu64 " events=%" PRIu64 "\n",
             world_tick(world), world_revision(world), stats.pending_events,
             world_loaded_chunks(world), world_stored_chunks(world),
-            stats.components_solved, stats.wires_visited, stats.events_processed);
+            stats.components_solved, stats.wires_visited,
+            stats.rail_components_solved, stats.rails_visited,
+            stats.events_processed);
 }
 
 static RsResult execute_command(World *world, const Command *command,

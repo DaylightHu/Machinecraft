@@ -1,5 +1,6 @@
 #include "sim_internal.h"
 #include "wire_solver.h"
+#include "rail_solver.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +16,8 @@ void sim_destroy_internal(World *w)
 {
     Simulator *s = w->sim;
     if (!s) return;
-    queue_destroy(&s->dirty); queue_destroy(&s->wire_roots); queue_destroy(&s->input_roots);
+    queue_destroy(&s->dirty); queue_destroy(&s->wire_roots);
+    queue_destroy(&s->rail_roots); queue_destroy(&s->input_roots);
     scheduler_destroy(&s->scheduler); posmap_destroy(&s->torch_slots);
     free(s->torches); free(s->due_actions); free(s); w->sim = NULL;
 }
@@ -58,6 +60,10 @@ void sim_mark_wire(World *w, BlockPos p)
 {
     if (!queue_push(&w->sim->wire_roots, p)) w->sim->error = RS_OUT_OF_MEMORY;
 }
+void sim_mark_rail(World *w, BlockPos p)
+{
+    if (!queue_push(&w->sim->rail_roots, p)) w->sim->error = RS_OUT_OF_MEMORY;
+}
 void sim_mark_input(World *w, BlockPos p)
 {
     if (!queue_push(&w->sim->input_roots, p)) w->sim->error = RS_OUT_OF_MEMORY;
@@ -77,6 +83,16 @@ static void notify(World *w, BlockPos p, bool topology)
 }
 void sim_notify_change(World *w, BlockPos p) { notify(w, p, true); }
 void sim_notify_power(World *w, BlockPos p) { notify(w, p, false); }
+void sim_notify_observers(World *w, BlockPos changed)
+{
+    for (Direction direction = 0; direction < DIR_COUNT; ++direction) {
+        BlockPos position = block_offset(changed, direction);
+        const BlockDef *definition = block_definition(
+            (BlockId)world_get(w, position).id);
+        if (definition->observed_changed)
+            definition->observed_changed(w, position, changed);
+    }
+}
 void sim_schedule(World *w, BlockPos p, uint32_t delay)
 {
     if (!delay || UINT64_MAX - w->tick < delay) { w->sim->error = RS_INTERNAL_ERROR; return; }
@@ -99,6 +115,8 @@ RsResult sim_flush(World *w)
         if (d->input_changed) d->input_changed(w, p);
         if (s->error != RS_OK) return s->error;
     }
+    rail_solver_flush(w);
+    if (s->error != RS_OK) return s->error;
     return s->error;
 }
 RsResult sim_step(World *w)
@@ -145,8 +163,10 @@ bool sim_chunk_pinned(const World *w, BlockPos chunk)
 {
     const Simulator *s = w->sim;
     for (size_t i = 0; i < s->scheduler.count; ++i) if (near_chunk(s->scheduler.heap[i].pos, chunk)) return true;
-    const PositionQueue *queues[] = {&s->dirty, &s->wire_roots, &s->input_roots};
-    for (size_t q = 0; q < 3; ++q)
+    const PositionQueue *queues[] = {
+        &s->dirty, &s->wire_roots, &s->rail_roots, &s->input_roots
+    };
+    for (size_t q = 0; q < 4; ++q)
         for (size_t i = queues[q]->head; i < queues[q]->count; ++i)
             if (near_chunk(queues[q]->items[i], chunk)) return true;
     return false;

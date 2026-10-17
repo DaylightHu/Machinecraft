@@ -23,8 +23,8 @@ World *world_create(WorldConfig config);
 void world_destroy(World *world);
 bool world_in_bounds(const World *world, BlockPos pos);
 BlockState world_get(const World *world, BlockPos pos); /* Outside vertical/coordinate limits = air; reads may restore archived chunks. */
-/* direction is the supporting block relative to a torch, and the output
- * direction for a repeater or comparator. Other blocks ignore it. */
+/* direction is the supporting block relative to a torch; the output direction
+ * for a repeater/comparator/observer; and the texture-top direction for a rail. */
 RsResult world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
 RsResult world_remove(World *world, BlockPos pos);
 RsResult world_toggle_wire_dot(World *world, BlockPos pos);

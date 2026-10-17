@@ -188,6 +188,7 @@ bool world_write_derived(World *w, BlockPos p, BlockState state)
     }
     c->modified = true; c->archive_size = 0; ++w->revision;
     if (w->observer) w->observer(w->observer_context, p, previous, state);
+    sim_notify_observers(w, p);
     return true;
 }
 void world_remove_internal(World *w, BlockPos p)
@@ -206,11 +207,17 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         if (support != DIR_DOWN && !direction_horizontal(support)) return RS_INVALID_ARGUMENT;
         if (!torch_supported(w, p, support)) return RS_UNSUPPORTED;
     } else if (id == BLOCK_REDSTONE_REPEATER ||
-               id == BLOCK_REDSTONE_COMPARATOR) {
-        if (!direction_horizontal(support)) return RS_INVALID_ARGUMENT;
+               id == BLOCK_REDSTONE_COMPARATOR || block_is_rail(id) ||
+               id == BLOCK_OBSERVER) {
+        if (id != BLOCK_OBSERVER && !direction_horizontal(support))
+            return RS_INVALID_ARGUMENT;
+        if (id == BLOCK_OBSERVER && (unsigned)support >= DIR_COUNT)
+            return RS_INVALID_ARGUMENT;
         if (id == BLOCK_REDSTONE_REPEATER && !repeater_supported(w, p))
             return RS_UNSUPPORTED;
         if (id == BLOCK_REDSTONE_COMPARATOR && !comparator_supported(w, p))
+            return RS_UNSUPPORTED;
+        if (block_is_rail(id) && !rail_supported(w, p))
             return RS_UNSUPPORTED;
     }
     BlockState previous = world_get(w, p);
@@ -218,7 +225,11 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         (id != BLOCK_REDSTONE_TORCH || previous.data.torch.support_dir == support) &&
         (id != BLOCK_REDSTONE_REPEATER || previous.data.repeater.facing == support) &&
         (id != BLOCK_REDSTONE_COMPARATOR ||
-         previous.data.comparator.facing == support))
+         previous.data.comparator.facing == support) &&
+        (!block_is_rail(id) || previous.data.rail.facing == support))
+        return RS_UNCHANGED;
+    if (previous.id == id && id == BLOCK_OBSERVER &&
+        previous.data.observer.facing == support)
         return RS_UNCHANGED;
     if (id == BLOCK_REDSTONE_TORCH && sim_prepare_torch(w) != RS_OK) return RS_OUT_OF_MEMORY;
     BlockState state = block_default(id);
@@ -226,6 +237,9 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
     if (id == BLOCK_REDSTONE_REPEATER) state.data.repeater.facing = (uint8_t)support;
     if (id == BLOCK_REDSTONE_COMPARATOR)
         state.data.comparator.facing = (uint8_t)support;
+    if (block_is_rail(id)) state.data.rail.facing = (uint8_t)support;
+    if (id == BLOCK_OBSERVER)
+        state.data.observer.facing = (uint8_t)support;
     if (!world_write_derived(w, p, state)) return w->sim->error;
     sim_forget_cell(w, p);
     if (id == BLOCK_REDSTONE_TORCH && !sim_attach_torch(w, p)) { w->sim->error = RS_OUT_OF_MEMORY; return RS_OUT_OF_MEMORY; }

@@ -78,7 +78,8 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
 {
     World *w = (World *)world;
     Simulator *s = w->sim;
-    if (s->error != RS_OK || s->dirty.count || s->wire_roots.count || s->input_roots.count)
+    if (s->error != RS_OK || s->dirty.count || s->wire_roots.count ||
+        s->rail_roots.count || s->input_roots.count)
         return GAME_SESSION_SIMULATION_ERROR;
     if (w->chunk_count > UINT32_MAX || s->torch_slots.count > UINT32_MAX || s->torch_used > UINT32_MAX || s->scheduler.count > UINT32_MAX)
         return GAME_SESSION_SIMULATION_ERROR;
@@ -246,6 +247,8 @@ World *save_file_read(const char *path, GameSessionResult *result)
                     goto fail;
                 if (state.id == BLOCK_REDSTONE_COMPARATOR &&
                     !comparator_supported(w, p)) goto fail;
+                if (block_is_rail((BlockId)state.id) && !rail_supported(w, p))
+                    goto fail;
                 if (state.id == BLOCK_REDSTONE_TORCH) {
                     if (!torch_supported(w, p, (Direction)state.data.torch.support_dir)) goto fail;
                     ++actual_torches;

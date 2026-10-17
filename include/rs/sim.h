@@ -4,7 +4,8 @@
 
 typedef struct {
     uint64_t neighbor_checks, components_solved, wires_visited;
-    uint64_t wire_changes, events_processed;
+    uint64_t wire_changes, rail_components_solved, rails_visited;
+    uint64_t rail_changes, events_processed;
     size_t pending_events;
 } SimStats;
 typedef struct {

@@ -1,0 +1,50 @@
+#include "block_internal.h"
+#include "sim_internal.h"
+
+enum { OBSERVER_DELAY = 2, OBSERVER_PULSE = 2 };
+
+static uint8_t observer_signal(const World *world, BlockPos position,
+                               Direction face, SignalMode mode)
+{
+    (void)mode;
+    BlockState state = world_get(world, position);
+    return state.data.observer.powered &&
+           face == (Direction)state.data.observer.facing ? 15 : 0;
+}
+
+static void observer_observed_changed(World *world, BlockPos position,
+                                      BlockPos changed)
+{
+    BlockState state = world_get(world, position);
+    if (state.id != BLOCK_OBSERVER || state.data.observer.powered ||
+        scheduler_pending(&world->sim->scheduler, position)) return;
+
+    Direction output = (Direction)state.data.observer.facing;
+    if ((unsigned)output >= DIR_COUNT) return;
+    BlockPos watched = block_offset(position, direction_opposite(output));
+    if (pos_equal(watched, changed))
+        sim_schedule(world, position, OBSERVER_DELAY);
+}
+
+static TickAction observer_tick(World *world, BlockPos position)
+{
+    BlockState state = world_get(world, position);
+    TickAction action = {state, false, 0};
+    if (state.id != BLOCK_OBSERVER) return action;
+
+    action.state.data.observer.powered = !state.data.observer.powered;
+    action.changed = true;
+    if (!state.data.observer.powered) action.next_delay = OBSERVER_PULSE;
+    return action;
+}
+
+const BlockDef rs_observer_def = {
+    .name = "observer",
+    .full_cube = true,
+    .conductor = true,
+    .supports_wire = true,
+    .signal = observer_signal,
+    .direct_signal = observer_signal,
+    .observed_changed = observer_observed_changed,
+    .scheduled_tick = observer_tick
+};

@@ -7,7 +7,12 @@ enum {
     STATE_REPEATER_FIRST = 8208,
     STATE_REPEATER_COUNT = 64,
     STATE_COMPARATOR_FIRST = STATE_REPEATER_FIRST + STATE_REPEATER_COUNT,
-    STATE_COMPARATOR_COUNT = 128
+    STATE_COMPARATOR_COUNT = 128,
+    STATE_POWERED_RAIL_FIRST = STATE_COMPARATOR_FIRST + STATE_COMPARATOR_COUNT,
+    STATE_RAIL_COUNT = 16,
+    STATE_ACTIVATOR_RAIL_FIRST = STATE_POWERED_RAIL_FIRST + STATE_RAIL_COUNT,
+    STATE_OBSERVER_FIRST = STATE_ACTIVATOR_RAIL_FIRST + STATE_RAIL_COUNT,
+    STATE_OBSERVER_COUNT = DIR_COUNT * 2
 };
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -73,6 +78,22 @@ bool state_encode(BlockState s, StateId *id)
               (s.data.comparator.subtract ? 64u : 0u));
         return true;
     }
+    if (s.id == BLOCK_POWERED_RAIL || s.id == BLOCK_ACTIVATOR_RAIL) {
+        unsigned facing;
+        if (!horizontal_index(s.data.rail.facing, &facing)) return false;
+        StateId first = s.id == BLOCK_POWERED_RAIL ?
+                        STATE_POWERED_RAIL_FIRST : STATE_ACTIVATOR_RAIL_FIRST;
+        *id = (StateId)(first + facing +
+              (s.data.rail.ascending ? 4u : 0u) +
+              (s.data.rail.powered ? 8u : 0u));
+        return true;
+    }
+    if (s.id == BLOCK_OBSERVER) {
+        if (s.data.observer.facing >= DIR_COUNT) return false;
+        *id = (StateId)(STATE_OBSERVER_FIRST + s.data.observer.facing +
+              (s.data.observer.powered ? DIR_COUNT : 0));
+        return true;
+    }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
         (s.data.wire.connections & ~0x33u) ||
         (s.data.wire.up_connections & ~s.data.wire.connections)) return false;
@@ -107,6 +128,36 @@ bool state_decode(StateId id, BlockState *s)
         s->data.comparator.facing = (uint8_t)horizontal_face(value);
         s->data.comparator.output = (uint8_t)((value >> 2) & 15u);
         s->data.comparator.subtract = (value & 64u) != 0;
+        return true;
+    }
+    StateId rail_first;
+    BlockId rail_id;
+    if (id >= STATE_POWERED_RAIL_FIRST &&
+        id < STATE_POWERED_RAIL_FIRST + STATE_RAIL_COUNT) {
+        rail_first = STATE_POWERED_RAIL_FIRST;
+        rail_id = BLOCK_POWERED_RAIL;
+    } else if (id >= STATE_ACTIVATOR_RAIL_FIRST &&
+               id < STATE_ACTIVATOR_RAIL_FIRST + STATE_RAIL_COUNT) {
+        rail_first = STATE_ACTIVATOR_RAIL_FIRST;
+        rail_id = BLOCK_ACTIVATOR_RAIL;
+    } else {
+        rail_first = 0;
+        rail_id = BLOCK_AIR;
+    }
+    if (rail_id != BLOCK_AIR) {
+        unsigned value = id - rail_first;
+        *s = block_default(rail_id);
+        s->data.rail.facing = (uint8_t)horizontal_face(value);
+        s->data.rail.ascending = (value & 4u) != 0;
+        s->data.rail.powered = (value & 8u) != 0;
+        return true;
+    }
+    if (id >= STATE_OBSERVER_FIRST &&
+        id < STATE_OBSERVER_FIRST + STATE_OBSERVER_COUNT) {
+        unsigned value = id - STATE_OBSERVER_FIRST;
+        *s = block_default(BLOCK_OBSERVER);
+        s->data.observer.facing = (uint8_t)(value % DIR_COUNT);
+        s->data.observer.powered = value >= DIR_COUNT;
         return true;
     }
     if (id < 16 || id > 8207) return false;

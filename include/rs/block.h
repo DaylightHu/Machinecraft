@@ -8,6 +8,7 @@ typedef enum {
     BLOCK_AIR = 0, /* Empty storage cell, never a placeable block. */
     BLOCK_IRON, BLOCK_REDSTONE_BLOCK, BLOCK_REDSTONE_WIRE, BLOCK_REDSTONE_TORCH,
     BLOCK_GLASS, BLOCK_REDSTONE_REPEATER, BLOCK_REDSTONE_COMPARATOR,
+    BLOCK_POWERED_RAIL, BLOCK_ACTIVATOR_RAIL, BLOCK_OBSERVER,
     BLOCK_COUNT
 } BlockId;
 
@@ -41,6 +42,15 @@ typedef struct {
             uint8_t output;         /* Stored analog output, 0..15. */
             bool subtract;          /* false: compare, true: subtract. */
         } comparator;
+        struct {
+            uint8_t facing;         /* Texture top; uphill direction on slopes. */
+            bool ascending;
+            bool powered;
+        } rail;
+        struct {
+            uint8_t facing;
+            bool powered;
+        } observer;
     } data;
 } BlockState;
 
