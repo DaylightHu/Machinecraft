@@ -12,8 +12,15 @@ enum {
     WIRE_COLUMNS = 8,
     WIRE_ROWS = (WIRE_TILES + WIRE_COLUMNS - 1)/WIRE_COLUMNS
 };
+enum {
+    REPEATER_DELAYS = 4,
+    REPEATER_STATES = 2,
+    REPEATER_COLUMNS = REPEATER_DELAYS,
+    REPEATER_ROWS = REPEATER_STATES
+};
 
 static const float wire_offset = 0.002f;
+static const float repeater_offset = 0.003f;
 static const Direction wire_directions[] = {
     DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH
 };
@@ -195,6 +202,53 @@ cleanup:
     return atlas;
 }
 
+static Image create_repeater_atlas(void)
+{
+    static const char *const paths[REPEATER_STATES][REPEATER_DELAYS] = {
+        {
+            "res/textures/block/repeater1_0.png",
+            "res/textures/block/repeater2_0.png",
+            "res/textures/block/repeater3_0.png",
+            "res/textures/block/repeater4_0.png"
+        },
+        {
+            "res/textures/block/repeater1_1.png",
+            "res/textures/block/repeater2_1.png",
+            "res/textures/block/repeater3_1.png",
+            "res/textures/block/repeater4_1.png"
+        }
+    };
+    Image sources[REPEATER_STATES][REPEATER_DELAYS] = {0};
+    Image atlas = {0};
+    Rectangle full = {0, 0, TILE_SIZE, TILE_SIZE};
+
+    for (int powered = 0; powered < REPEATER_STATES; ++powered)
+        for (int delay = 0; delay < REPEATER_DELAYS; ++delay) {
+            sources[powered][delay] = load_tile(paths[powered][delay]);
+            if (!sources[powered][delay].data) goto cleanup;
+        }
+
+    atlas = GenImageColor(REPEATER_COLUMNS*TILE_SIZE,
+                          REPEATER_ROWS*TILE_SIZE, BLANK);
+    if (atlas.data)
+        for (int powered = 0; powered < REPEATER_STATES; ++powered)
+            for (int delay = 0; delay < REPEATER_DELAYS; ++delay) {
+                Rectangle destination = {
+                    delay*TILE_SIZE, powered*TILE_SIZE,
+                    TILE_SIZE, TILE_SIZE
+                };
+                ImageDraw(&atlas, sources[powered][delay], full,
+                          destination, WHITE);
+            }
+
+cleanup:
+    for (int powered = 0; powered < REPEATER_STATES; ++powered)
+        for (int delay = 0; delay < REPEATER_DELAYS; ++delay)
+            if (sources[powered][delay].data)
+                UnloadImage(sources[powered][delay]);
+    return atlas;
+}
+
 bool block_renderer_init(BlockRenderer *renderer)
 {
     if (!renderer) return false;
@@ -268,6 +322,19 @@ bool block_renderer_init(BlockRenderer *renderer)
     SetTextureFilter(renderer->torch_atlas, TEXTURE_FILTER_POINT);
     SetTextureWrap(renderer->torch_atlas, TEXTURE_WRAP_CLAMP);
 
+    Image repeater_atlas = create_repeater_atlas();
+    if (repeater_atlas.data) {
+        renderer->repeater_atlas = LoadTextureFromImage(repeater_atlas);
+        UnloadImage(repeater_atlas);
+    }
+    if (!renderer->repeater_atlas.id) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot create the repeater atlas");
+        block_renderer_unload(renderer);
+        return false;
+    }
+    SetTextureFilter(renderer->repeater_atlas, TEXTURE_FILTER_POINT);
+    SetTextureWrap(renderer->repeater_atlas, TEXTURE_WRAP_CLAMP);
+
     renderer->cutout_shader = LoadShaderFromMemory(NULL, cutout_fragment_shader);
     if (renderer->cutout_shader.id == rlGetShaderIdDefault()) {
         /* LoadShaderFromMemory allocates its own locations even on fallback. */
@@ -286,6 +353,7 @@ void block_renderer_unload(BlockRenderer *renderer)
 {
     if (!renderer) return;
     if (renderer->cutout_shader.id) UnloadShader(renderer->cutout_shader);
+    if (renderer->repeater_atlas.id) UnloadTexture(renderer->repeater_atlas);
     if (renderer->torch_atlas.id) UnloadTexture(renderer->torch_atlas);
     if (renderer->wire_atlas.id) UnloadTexture(renderer->wire_atlas);
     if (renderer->glass_texture.id) UnloadTexture(renderer->glass_texture);
@@ -508,6 +576,46 @@ void block_renderer_draw_torch(const BlockRenderer *renderer, BlockState state,
     rlSetTexture(0);
 }
 
+static void repeater_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
+{
+    int delay = state.data.repeater.delay;
+    if (delay < 1 || delay > REPEATER_DELAYS) delay = 1;
+    int powered = state.data.repeater.powered ? 1 : 0;
+    float u0 = ((delay - 1)*TILE_SIZE + 0.5f)/atlas.width;
+    float u1 = (delay*TILE_SIZE - 0.5f)/atlas.width;
+    float v0 = (powered*TILE_SIZE + 0.5f)/atlas.height;
+    float v1 = ((powered + 1)*TILE_SIZE - 0.5f)/atlas.height;
+    const Vector2 base[4] = {{u0,v1},{u1,v1},{u1,v0},{u0,v0}};
+
+    /* The top edge of every source image is the repeater's output/front. */
+    int turn = 0;
+    switch ((Direction)state.data.repeater.facing) {
+    case DIR_EAST:  turn = 1; break;
+    case DIR_SOUTH: turn = 2; break;
+    case DIR_WEST:  turn = 3; break;
+    default: break; /* north */
+    }
+    for (int vertex = 0; vertex < 4; ++vertex)
+        uv[vertex] = base[(vertex + turn) & 3];
+}
+
+void block_renderer_draw_repeater(const BlockRenderer *renderer,
+                                  BlockState state, Vector3 center)
+{
+    if (!renderer || !renderer->repeater_atlas.id ||
+        state.id != BLOCK_REDSTONE_REPEATER) return;
+    Vector2 uv[4];
+    repeater_uv(renderer->repeater_atlas, state, uv);
+    rlCheckRenderBatchLimit(4);
+    rlSetTexture(renderer->repeater_atlas.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    Vector3 plane = {center.x, center.y - 1.0f + repeater_offset, center.z};
+    emit_wire_face(&cube_faces[4], plane, uv, false);
+    rlEnd();
+    rlSetTexture(0);
+}
+
 int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
                             unsigned solid_faces,
                             Vector2 uv[BLOCK_GEOMETRY_QUADS][4])
@@ -546,6 +654,8 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
             if (face == 5) source = (Rectangle){14,28,4,4};
             torch_uv(renderer->torch_atlas, lit, source, uv[count++]);
         }
+    } else if (state.id == BLOCK_REDSTONE_REPEATER) {
+        repeater_uv(renderer->repeater_atlas, state, uv[count++]);
     }
     return count;
 }
@@ -597,5 +707,14 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
                 Vector3 p = torch_rotate(transform, torch_faces[face].vertices[vertex]);
                 geometry->vertices[face][vertex] = (Vector3){transform.origin.x+p.x,transform.origin.y+p.y,transform.origin.z+p.z};
             }
+    } else if (state.id == BLOCK_REDSTONE_REPEATER) {
+        for (int vertex = 0; vertex < 4; ++vertex) {
+            Vector3 p = cube_faces[4].vertices[vertex];
+            geometry->vertices[0][vertex] = (Vector3){
+                center.x + p.x,
+                center.y - 1.0f + repeater_offset + p.y,
+                center.z + p.z
+            };
+        }
     }
 }

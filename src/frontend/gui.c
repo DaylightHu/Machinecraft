@@ -389,7 +389,16 @@ static void draw_title(GuiApp *app)
                   (Color){112, 65, 52, 255});
 }
 
-static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place)
+static Direction camera_horizontal_direction(const Camera3D *camera)
+{
+    float x = camera->target.x - camera->position.x;
+    float z = camera->target.z - camera->position.z;
+    if (fabsf(x) > fabsf(z)) return x >= 0.0f ? DIR_EAST : DIR_WEST;
+    return z >= 0.0f ? DIR_SOUTH : DIR_NORTH;
+}
+
+static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
+                       Direction facing)
 {
     if (!hit.hit) return;
     if (place && selected == BLOCK_AIR) {
@@ -413,13 +422,15 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place)
                      "Target occupied or outside world");
             return;
         }
-        if (selected == BLOCK_REDSTONE_WIRE && hit.face != DIR_UP) {
+        if ((selected == BLOCK_REDSTONE_WIRE ||
+             selected == BLOCK_REDSTONE_REPEATER) && hit.face != DIR_UP) {
             snprintf(app->message, sizeof(app->message),
-                     "Wire must be placed on a top face");
+                     "%s must be placed on a top face", block_name(selected));
             return;
         }
-        result = world_place(world, target, selected,
-                             direction_opposite(hit.face));
+        Direction placement = selected == BLOCK_REDSTONE_REPEATER ?
+                              facing : direction_opposite(hit.face);
+        result = world_place(world, target, selected, placement);
     } else {
         result = world_remove(world, hit.pos);
     }
@@ -468,10 +479,20 @@ static VoxelHit update_world(GuiApp *app)
         (PickVec3){ray.position.x, ray.position.y, ray.position.z},
         (PickVec3){ray.direction.x, ray.direction.y, ray.direction.z}, 6.0f);
     BlockId selected = hotbar_selected_block(&app->hotbar);
+    Direction facing = camera_horizontal_direction(&app->camera);
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-        apply_edit(app, hit, selected, false);
-    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
-        apply_edit(app, hit, selected, true);
+        apply_edit(app, hit, selected, false, facing);
+    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+        if (hit.hit && world_get(world, hit.pos).id == BLOCK_REDSTONE_REPEATER) {
+            RsResult result = world_cycle_repeater_delay(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            snprintf(app->message, sizeof(app->message),
+                     "Cycle repeater delay: %s", rs_result_name(result));
+        } else {
+            apply_edit(app, hit, selected, true, facing);
+        }
+    }
     if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) && hit.hit &&
         world_get(world, hit.pos).id == BLOCK_REDSTONE_WIRE) {
         RsResult result = world_toggle_wire_dot(world, hit.pos);

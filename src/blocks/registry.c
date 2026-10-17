@@ -13,7 +13,8 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_REDSTONE_BLOCK] = &rs_redstone_block_def,
         [BLOCK_REDSTONE_WIRE] = &rs_wire_def,
         [BLOCK_REDSTONE_TORCH] = &rs_torch_def,
-        [BLOCK_GLASS] = &rs_glass_def
+        [BLOCK_GLASS] = &rs_glass_def,
+        [BLOCK_REDSTONE_REPEATER] = &rs_repeater_def
     };
     return (unsigned)id < BLOCK_COUNT ? definitions[id] : &air;
 }
@@ -31,6 +32,9 @@ BlockState block_default(BlockId id)
     if (id == BLOCK_REDSTONE_TORCH) {
         state.data.torch.support_dir = DIR_DOWN;
         state.data.torch.lit = true;
+    } else if (id == BLOCK_REDSTONE_REPEATER) {
+        state.data.repeater.facing = DIR_NORTH;
+        state.data.repeater.delay = 1;
     }
     return state;
 }

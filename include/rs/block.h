@@ -7,7 +7,7 @@ typedef struct { int x, y, z; } BlockPos;
 typedef enum {
     BLOCK_AIR = 0, /* Empty storage cell, never a placeable block. */
     BLOCK_IRON, BLOCK_REDSTONE_BLOCK, BLOCK_REDSTONE_WIRE, BLOCK_REDSTONE_TORCH,
-    BLOCK_GLASS,
+    BLOCK_GLASS, BLOCK_REDSTONE_REPEATER,
     BLOCK_COUNT
 } BlockId;
 
@@ -30,6 +30,12 @@ typedef struct {
             uint8_t support_dir;     /* DIR_DOWN or a horizontal face. */
             bool lit;
         } torch;
+        struct {
+            uint8_t facing;         /* Horizontal output direction. */
+            uint8_t delay;          /* 1..4 redstone ticks (2..8 game ticks). */
+            bool powered;
+            bool locked;
+        } repeater;
     } data;
 } BlockState;
 
