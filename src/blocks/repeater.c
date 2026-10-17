@@ -1,0 +1,123 @@
+#include "block_internal.h"
+#include "sim_internal.h"
+
+enum { REPEATER_DELAY_SCALE = 2 };
+
+bool repeater_supported(const World *world, BlockPos position)
+{
+    return block_supports_wire(world, block_offset(position, DIR_DOWN));
+}
+
+static bool valid_facing(Direction facing)
+{
+    return direction_horizontal(facing);
+}
+
+static bool repeater_input_powered(const World *world, BlockPos position,
+                                   BlockState state)
+{
+    Direction facing = (Direction)state.data.repeater.facing;
+    if (!valid_facing(facing)) return false;
+    Direction rear = direction_opposite(facing);
+    BlockPos source = block_offset(position, rear);
+    return power_signal(world, source, facing, SIGNAL_ALL) > 0;
+}
+
+static bool repeater_side_locked(const World *world, BlockPos position,
+                                 BlockState state)
+{
+    Direction facing = (Direction)state.data.repeater.facing;
+    if (!valid_facing(facing)) return false;
+    const Direction *sides;
+    static const Direction east_west_sides[] = {DIR_NORTH, DIR_SOUTH};
+    static const Direction north_south_sides[] = {DIR_EAST, DIR_WEST};
+    sides = (facing == DIR_EAST || facing == DIR_WEST) ?
+            east_west_sides : north_south_sides;
+
+    for (int index = 0; index < 2; ++index) {
+        Direction side = sides[index];
+        BlockPos source = block_offset(position, side);
+        if (block_is_diode(world, source) &&
+            power_direct(world, source, direction_opposite(side),
+                         SIGNAL_ALL) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint8_t repeater_signal(const World *world, BlockPos position,
+                               Direction face, SignalMode mode)
+{
+    (void)mode;
+    BlockState state = world_get(world, position);
+    return state.data.repeater.powered &&
+           face == (Direction)state.data.repeater.facing ? 15 : 0;
+}
+
+void repeater_check_input(World *world, BlockPos position)
+{
+    BlockState state = world_get(world, position);
+    if (state.id != BLOCK_REDSTONE_REPEATER) return;
+
+    bool locked = repeater_side_locked(world, position, state);
+    if (state.data.repeater.locked != locked) {
+        state.data.repeater.locked = locked;
+        if (!world_write_derived(world, position, state)) return;
+    }
+    if (locked) return;
+
+    bool should_be_powered = repeater_input_powered(world, position, state);
+    if (state.data.repeater.powered != should_be_powered) {
+        sim_schedule(world, position,
+                     (uint32_t)state.data.repeater.delay*REPEATER_DELAY_SCALE);
+    }
+}
+
+static void repeater_neighbor(World *world, BlockPos position)
+{
+    if (!repeater_supported(world, position)) {
+        world_remove_internal(world, position);
+        return;
+    }
+    sim_mark_input(world, position);
+}
+
+static TickAction repeater_tick(World *world, BlockPos position)
+{
+    BlockState state = world_get(world, position);
+    TickAction action = {state, false, 0};
+    bool locked = repeater_side_locked(world, position, state);
+    if (state.data.repeater.locked != locked) {
+        action.state.data.repeater.locked = locked;
+        action.changed = true;
+    }
+    if (locked) return action;
+
+    bool input = repeater_input_powered(world, position, state);
+    if (state.data.repeater.powered && !input) {
+        action.state.data.repeater.powered = false;
+        action.changed = true;
+    } else if (!state.data.repeater.powered) {
+        /* Vanilla repeaters preserve an input pulse shorter than their delay:
+         * the already scheduled tick turns the output on, then schedules the
+         * corresponding turn-off tick. */
+        action.state.data.repeater.powered = true;
+        action.changed = true;
+        if (!input) {
+            action.next_delay =
+                (uint32_t)state.data.repeater.delay*REPEATER_DELAY_SCALE;
+        }
+    }
+    return action;
+}
+
+const BlockDef rs_repeater_def = {
+    .name = "redstone_repeater",
+    .diode = true,
+    .signal = repeater_signal,
+    .direct_signal = repeater_signal,
+    .neighbor_changed = repeater_neighbor,
+    .input_changed = repeater_check_input,
+    .scheduled_tick = repeater_tick
+};

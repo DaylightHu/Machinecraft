@@ -242,6 +242,10 @@ World *save_file_read(const char *path, GameSessionResult *result)
                 BlockPos p = {c->key.x * 16 + (int)(j & 15), WORLD_MIN_Y + (int)sec * 16 + (int)(j >> 8),
                               c->key.z * 16 + (int)((j >> 4) & 15)};
                 if (state.id == BLOCK_REDSTONE_WIRE && !wire_supported(w, p)) goto fail;
+                if (state.id == BLOCK_REDSTONE_REPEATER && !repeater_supported(w, p))
+                    goto fail;
+                if (state.id == BLOCK_REDSTONE_COMPARATOR &&
+                    !comparator_supported(w, p)) goto fail;
                 if (state.id == BLOCK_REDSTONE_TORCH) {
                     if (!torch_supported(w, p, (Direction)state.data.torch.support_dir)) goto fail;
                     ++actual_torches;

@@ -9,10 +9,15 @@ typedef struct{
     Texture2D glass_texture;
     Texture2D wire_atlas;
     Texture2D torch_atlas;
+    Texture2D repeater_atlas;
+    Texture2D comparator_atlas;
     Shader cutout_shader;
 } BlockRenderer;
 
-enum { BLOCK_GEOMETRY_QUADS = 6 };
+enum {
+    BLOCK_GEOMETRY_QUADS = 6,
+    REDSTONE_GATE_GEOMETRY_QUADS = 5
+};
 typedef struct {
     Vector3 vertices[BLOCK_GEOMETRY_QUADS][4];
     Vector2 uv[BLOCK_GEOMETRY_QUADS][4];
@@ -23,12 +28,16 @@ bool block_renderer_init(BlockRenderer *renderer);
 void block_renderer_unload(BlockRenderer *renderer);
 void block_renderer_draw_cube(const BlockRenderer *renderer, BlockId id, Vector3 center);
 
-/* Draw glass, dust and torches after opaque solids with the cutout shader. */
+/* Draw glass and redstone cutouts after opaque solids. */
 void block_renderer_begin_cutouts(const BlockRenderer *renderer);
 void block_renderer_draw_wire(const BlockRenderer *renderer, BlockState state,
                               Vector3 center);
 void block_renderer_draw_torch(const BlockRenderer *renderer, BlockState state,
                                Vector3 center);
+void block_renderer_draw_repeater(const BlockRenderer *renderer, BlockState state,
+                                  Vector3 center);
+void block_renderer_draw_comparator(const BlockRenderer *renderer,
+                                    BlockState state, Vector3 center);
 void block_renderer_end_cutouts(void);
 
 /* CPU geometry for persistent meshes. Solid face bits follow the renderer's

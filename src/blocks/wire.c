@@ -13,10 +13,20 @@ static bool is_wire(const World *world, BlockPos position)
     return world_get(world, position).id == BLOCK_REDSTONE_WIRE;
 }
 
-static bool connects(const World *world, BlockPos position)
+static bool connects(const World *world, BlockPos position, Direction face)
 {
-    uint8_t id = world_get(world, position).id;
-    return id == BLOCK_REDSTONE_WIRE || id == BLOCK_REDSTONE_TORCH || id == BLOCK_REDSTONE_BLOCK;
+    BlockState state = world_get(world, position);
+    if (state.id == BLOCK_REDSTONE_REPEATER) {
+        Direction facing = (Direction)state.data.repeater.facing;
+        return facing == face || facing == direction_opposite(face);
+    }
+    if (state.id == BLOCK_REDSTONE_COMPARATOR) {
+        /* Comparators accept dust from the rear and from either side. */
+        return true;
+    }
+    return state.id == BLOCK_REDSTONE_WIRE ||
+           state.id == BLOCK_REDSTONE_TORCH ||
+           state.id == BLOCK_REDSTONE_BLOCK;
 }
 
 bool wire_supported(const World *world, BlockPos position)
@@ -60,7 +70,7 @@ void wire_refresh_shape(World *world, BlockPos position)
             is_wire(world, block_offset(neighbor, DIR_UP))) {
             connections |= FACE_BIT(face);
             ascending |= FACE_BIT(face);
-        } else if (connects(world, neighbor) ||
+        } else if (connects(world, neighbor, face) ||
                    (!block_is_conductor(world, neighbor) &&
                     is_wire(world, block_offset(neighbor, DIR_DOWN)))) {
             connections |= FACE_BIT(face);

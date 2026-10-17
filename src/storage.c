@@ -2,7 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { STATE_GLASS = 13 };
+enum {
+    STATE_GLASS = 13,
+    STATE_REPEATER_FIRST = 8208,
+    STATE_REPEATER_COUNT = 64,
+    STATE_COMPARATOR_FIRST = STATE_REPEATER_FIRST + STATE_REPEATER_COUNT,
+    STATE_COMPARATOR_COUNT = 128
+};
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
 int floor_mod16(int x) { int r = x % 16; return r < 0 ? r + 16 : r; }
@@ -19,6 +25,23 @@ static uint8_t expand_faces(unsigned value)
 {
     return (uint8_t)((value & 3u) | ((value & 12u) << 2));
 }
+static bool horizontal_index(unsigned face, unsigned *index)
+{
+    switch ((Direction)face) {
+    case DIR_EAST:  *index = 0; return true;
+    case DIR_WEST:  *index = 1; return true;
+    case DIR_SOUTH: *index = 2; return true;
+    case DIR_NORTH: *index = 3; return true;
+    default: return false;
+    }
+}
+static Direction horizontal_face(unsigned index)
+{
+    static const Direction faces[] = {
+        DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH
+    };
+    return faces[index & 3u];
+}
 bool state_encode(BlockState s, StateId *id)
 {
     if (s.id <= BLOCK_REDSTONE_BLOCK) { *id = s.id; return true; }
@@ -30,6 +53,25 @@ bool state_encode(BlockState s, StateId *id)
         else if (face == DIR_NORTH) face = 3;
         else if (face > DIR_WEST) return false;
         *id = (StateId)(3 + face * 2 + s.data.torch.lit); return true;
+    }
+    if (s.id == BLOCK_REDSTONE_REPEATER) {
+        unsigned facing;
+        if (!horizontal_index(s.data.repeater.facing, &facing) ||
+            s.data.repeater.delay < 1 || s.data.repeater.delay > 4) return false;
+        *id = (StateId)(STATE_REPEATER_FIRST + facing +
+              (unsigned)(s.data.repeater.delay - 1)*4u +
+              (s.data.repeater.powered ? 16u : 0u) +
+              (s.data.repeater.locked ? 32u : 0u));
+        return true;
+    }
+    if (s.id == BLOCK_REDSTONE_COMPARATOR) {
+        unsigned facing;
+        if (!horizontal_index(s.data.comparator.facing, &facing) ||
+            s.data.comparator.output > 15) return false;
+        *id = (StateId)(STATE_COMPARATOR_FIRST + facing +
+              (unsigned)s.data.comparator.output*4u +
+              (s.data.comparator.subtract ? 64u : 0u));
+        return true;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
         (s.data.wire.connections & ~0x33u) ||
@@ -48,6 +90,25 @@ bool state_decode(StateId id, BlockState *s)
         s->data.torch.lit = ((id - 3) & 1u) != 0; return true;
     }
     if (id == STATE_GLASS) { *s = block_default(BLOCK_GLASS); return true; }
+    if (id >= STATE_REPEATER_FIRST &&
+        id < STATE_REPEATER_FIRST + STATE_REPEATER_COUNT) {
+        unsigned value = id - STATE_REPEATER_FIRST;
+        *s = block_default(BLOCK_REDSTONE_REPEATER);
+        s->data.repeater.facing = (uint8_t)horizontal_face(value);
+        s->data.repeater.delay = (uint8_t)(((value >> 2) & 3u) + 1u);
+        s->data.repeater.powered = (value & 16u) != 0;
+        s->data.repeater.locked = (value & 32u) != 0;
+        return true;
+    }
+    if (id >= STATE_COMPARATOR_FIRST &&
+        id < STATE_COMPARATOR_FIRST + STATE_COMPARATOR_COUNT) {
+        unsigned value = id - STATE_COMPARATOR_FIRST;
+        *s = block_default(BLOCK_REDSTONE_COMPARATOR);
+        s->data.comparator.facing = (uint8_t)horizontal_face(value);
+        s->data.comparator.output = (uint8_t)((value >> 2) & 15u);
+        s->data.comparator.subtract = (value & 64u) != 0;
+        return true;
+    }
     if (id < 16 || id > 8207) return false;
     unsigned v = id - 16;
     unsigned connections = (v >> 4) & 15u, up = (v >> 8) & 15u;

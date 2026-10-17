@@ -59,6 +59,11 @@ bool block_supports_torch(const World *world, BlockPos position)
     return block_definition((BlockId)world_get(world, position).id)->full_cube;
 }
 
+bool block_is_diode(const World *world, BlockPos position)
+{
+    return block_definition((BlockId)world_get(world, position).id)->diode;
+}
+
 SolidPower redstone_solid_power(const World *world, BlockPos position)
 {
     if (!world || !block_is_conductor(world, position)) {
