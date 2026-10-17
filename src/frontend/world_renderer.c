@@ -9,7 +9,7 @@
 #include <string.h>
 
 enum { REGION_SIZE = 16 };
-enum { SOLIDS, DUST, TORCHES, PARTS };
+enum { SOLIDS, GLASS, DUST, TORCHES, PARTS };
 
 typedef struct {
     BlockState state;
@@ -49,6 +49,7 @@ static int part_for(unsigned id)
 {
     switch (id) {
     case BLOCK_IRON: case BLOCK_REDSTONE_BLOCK: return SOLIDS;
+    case BLOCK_GLASS: return GLASS;
     case BLOCK_REDSTONE_WIRE: return DUST;
     case BLOCK_REDSTONE_TORCH: return TORCHES;
     default: return -1;
@@ -69,6 +70,12 @@ static bool solid_at(const WorldRenderer *r, BlockPos p)
     return part_for(world_get(r->world, p).id) == SOLIDS;
 }
 
+static bool cube_at(const WorldRenderer *r, BlockPos p)
+{
+    int part = part_for(world_get(r->world, p).id);
+    return part == SOLIDS || part == GLASS;
+}
+
 static unsigned wire_sides(BlockState state)
 {
     const unsigned horizontal = (1u << DIR_EAST) | (1u << DIR_WEST) |
@@ -83,10 +90,15 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
     RenderRegion *region = find_region(r,p);
     int old_part = part_for(before.id), new_part = part_for(after.id);
     /* New sections are discovered during sync, even if no cache exists yet. */
-    if ((old_part == SOLIDS) != (new_part == SOLIDS)) {
+    bool solid_changed = (old_part == SOLIDS) != (new_part == SOLIDS);
+    bool cube_changed = (old_part == SOLIDS || old_part == GLASS) !=
+                        (new_part == SOLIDS || new_part == GLASS);
+    if (solid_changed || cube_changed) {
         for (Direction face = 0; face < DIR_COUNT; ++face) {
             RenderRegion *neighbor = find_region(r,block_offset(p,face));
-            if (neighbor) neighbor->parts[SOLIDS].dirty = true;
+            if (!neighbor) continue;
+            if (solid_changed) neighbor->parts[SOLIDS].dirty = true;
+            if (cube_changed) neighbor->parts[GLASS].dirty = true;
         }
     }
     if (!region) return;
@@ -126,6 +138,18 @@ static unsigned visible_faces(const WorldRenderer *r, BlockPos p)
     return mask;
 }
 
+
+static unsigned visible_glass_faces(const WorldRenderer *r, BlockPos p)
+{
+    static const BlockPos offsets[] = {{0,0,1},{0,0,-1},{1,0,0},{-1,0,0},{0,1,0},{0,-1,0}};
+    unsigned mask = 0;
+    for (int face = 0; face < 6; ++face) {
+        BlockPos n = {p.x+offsets[face].x,p.y+offsets[face].y,p.z+offsets[face].z};
+        if (!cube_at(r,n)) mask |= 1u << face;
+    }
+    return mask;
+}
+
 static unsigned bit_count(unsigned bits)
 {
     unsigned count = 0;
@@ -146,8 +170,9 @@ static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
         BlockPos p = {x,y,z};
         RenderCell *cell = &region->cells[section_index(p)];
         if (part_for(cell->state.id) != kind) continue;
-        if (kind == SOLIDS) {
-            cell->solid_faces = (uint8_t)visible_faces(r,p);
+        if (kind == SOLIDS || kind == GLASS) {
+            cell->solid_faces = (uint8_t)(kind == SOLIDS ? visible_faces(r,p) :
+                                                           visible_glass_faces(r,p));
             quads += (int)bit_count(cell->solid_faces);
         } else if (kind == DUST) quads += 1+(int)bit_count(wire_sides(cell->state));
         else quads += 6;
@@ -281,7 +306,10 @@ WorldRenderer *world_renderer_create(World *world, const BlockRenderer *blocks)
     WorldRenderer *r = calloc(1,sizeof(*r));
     if (!r) return NULL;
     r->blocks = blocks; r->world = world; r->topology_revision = UINT64_MAX;
-    const Texture2D textures[] = {blocks->atlas,blocks->wire_atlas,blocks->torch_atlas};
+    const Texture2D textures[] = {
+        blocks->atlas, blocks->glass_texture, blocks->wire_atlas,
+        blocks->torch_atlas
+    };
     for (int kind = 0; kind < PARTS; ++kind) {
         r->materials[kind] = LoadMaterialDefault();
         if (!r->materials[kind].maps) { world_renderer_destroy(r); return NULL; }

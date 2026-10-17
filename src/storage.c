@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum { STATE_GLASS = 13 };
+
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
 int floor_mod16(int x) { int r = x % 16; return r < 0 ? r + 16 : r; }
 size_t section_index(BlockPos p)
@@ -20,6 +22,7 @@ static uint8_t expand_faces(unsigned value)
 bool state_encode(BlockState s, StateId *id)
 {
     if (s.id <= BLOCK_REDSTONE_BLOCK) { *id = s.id; return true; }
+    if (s.id == BLOCK_GLASS) { *id = STATE_GLASS; return true; }
     if (s.id == BLOCK_REDSTONE_TORCH) {
         unsigned face = s.data.torch.support_dir;
         if (face == DIR_DOWN) face = 4;
@@ -44,6 +47,7 @@ bool state_decode(StateId id, BlockState *s)
         s->data.torch.support_dir = (uint8_t)faces[(id - 3) / 2];
         s->data.torch.lit = ((id - 3) & 1u) != 0; return true;
     }
+    if (id == STATE_GLASS) { *s = block_default(BLOCK_GLASS); return true; }
     if (id < 16 || id > 8207) return false;
     unsigned v = id - 16;
     unsigned connections = (v >> 4) & 15u, up = (v >> 8) & 15u;

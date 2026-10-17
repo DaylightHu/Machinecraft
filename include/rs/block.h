@@ -5,8 +5,9 @@
 
 typedef struct { int x, y, z; } BlockPos;
 typedef enum {
-    BLOCK_AIR = 0, /* Empty storage cell, not a placeable fifth block. */
+    BLOCK_AIR = 0, /* Empty storage cell, never a placeable block. */
     BLOCK_IRON, BLOCK_REDSTONE_BLOCK, BLOCK_REDSTONE_WIRE, BLOCK_REDSTONE_TORCH,
+    BLOCK_GLASS,
     BLOCK_COUNT
 } BlockId;
 

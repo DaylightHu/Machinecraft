@@ -8,7 +8,12 @@ static const BlockDef air = { .name = "air" };
 const BlockDef *block_definition(BlockId id)
 {
     static const BlockDef *const definitions[BLOCK_COUNT] = {
-        &air, &rs_iron_def, &rs_redstone_block_def, &rs_wire_def, &rs_torch_def
+        [BLOCK_AIR] = &air,
+        [BLOCK_IRON] = &rs_iron_def,
+        [BLOCK_REDSTONE_BLOCK] = &rs_redstone_block_def,
+        [BLOCK_REDSTONE_WIRE] = &rs_wire_def,
+        [BLOCK_REDSTONE_TORCH] = &rs_torch_def,
+        [BLOCK_GLASS] = &rs_glass_def
     };
     return (unsigned)id < BLOCK_COUNT ? definitions[id] : &air;
 }

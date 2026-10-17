@@ -34,6 +34,7 @@ static const char *common_sources[] = {
     "src/save_file.c",
     "src/blocks/registry.c",
     "src/blocks/iron.c",
+    "src/blocks/glass.c", 
     "src/blocks/redstone_block.c",
     "src/blocks/wire.c",
     "src/blocks/torch.c",
