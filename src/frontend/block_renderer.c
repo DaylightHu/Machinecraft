@@ -20,7 +20,7 @@ enum {
 };
 
 static const float wire_offset = 0.002f;
-static const float repeater_offset = 0.003f;
+static const float repeater_height = 2.0f/16.0f;
 static const Direction wire_directions[] = {
     DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH
 };
@@ -576,7 +576,7 @@ void block_renderer_draw_torch(const BlockRenderer *renderer, BlockState state,
     rlSetTexture(0);
 }
 
-static void repeater_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
+static void repeater_top_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
 {
     int delay = state.data.repeater.delay;
     if (delay < 1 || delay > REPEATER_DELAYS) delay = 1;
@@ -599,19 +599,71 @@ static void repeater_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
         uv[vertex] = base[(vertex + turn) & 3];
 }
 
+static void repeater_side_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
+{
+    int delay = state.data.repeater.delay;
+    if (delay < 1 || delay > REPEATER_DELAYS) delay = 1;
+    int powered = state.data.repeater.powered ? 1 : 0;
+    float u0 = ((delay - 1)*TILE_SIZE + 0.5f)/atlas.width;
+    float u1 = (delay*TILE_SIZE - 0.5f)/atlas.width;
+    float v = (powered*TILE_SIZE + 0.5f)/atlas.height;
+
+    /* Stretch the uniform outermost pixel row into the two-pixel-high base. */
+    uv[0] = (Vector2){u0, v};
+    uv[1] = (Vector2){u1, v};
+    uv[2] = (Vector2){u1, v};
+    uv[3] = (Vector2){u0, v};
+}
+
+static void repeater_geometry(Vector3 center,
+                              Vector3 vertices[REPEATER_GEOMETRY_QUADS][4])
+{
+    float bottom = center.y - 0.5f;
+    float top = bottom + repeater_height;
+
+    for (int vertex = 0; vertex < 4; ++vertex) {
+        Vector3 point = cube_faces[4].vertices[vertex];
+        vertices[0][vertex] = (Vector3){
+            center.x + point.x, top, center.z + point.z
+        };
+    }
+    for (int face = 0; face < 4; ++face)
+        for (int vertex = 0; vertex < 4; ++vertex) {
+            Vector3 point = cube_faces[face].vertices[vertex];
+            vertices[face + 1][vertex] = (Vector3){
+                center.x + point.x,
+                point.y < 0.0f ? bottom : top,
+                center.z + point.z
+            };
+        }
+}
+
 void block_renderer_draw_repeater(const BlockRenderer *renderer,
                                   BlockState state, Vector3 center)
 {
     if (!renderer || !renderer->repeater_atlas.id ||
         state.id != BLOCK_REDSTONE_REPEATER) return;
-    Vector2 uv[4];
-    repeater_uv(renderer->repeater_atlas, state, uv);
-    rlCheckRenderBatchLimit(4);
+    Vector2 uv[REPEATER_GEOMETRY_QUADS][4];
+    Vector3 vertices[REPEATER_GEOMETRY_QUADS][4];
+    repeater_top_uv(renderer->repeater_atlas, state, uv[0]);
+    for (int face = 1; face < REPEATER_GEOMETRY_QUADS; ++face)
+        repeater_side_uv(renderer->repeater_atlas, state, uv[face]);
+    repeater_geometry(center, vertices);
+
+    rlCheckRenderBatchLimit(REPEATER_GEOMETRY_QUADS*4);
     rlSetTexture(renderer->repeater_atlas.id);
     rlBegin(RL_QUADS);
     rlColor4ub(255, 255, 255, 255);
-    Vector3 plane = {center.x, center.y - 1.0f + repeater_offset, center.z};
-    emit_wire_face(&cube_faces[4], plane, uv, false);
+    for (int face = 0; face < REPEATER_GEOMETRY_QUADS; ++face) {
+        Vector3 normal = face ? cube_faces[face - 1].normal : cube_faces[4].normal;
+        rlNormal3f(normal.x, normal.y, normal.z);
+        for (int vertex = 0; vertex < 4; ++vertex) {
+            rlTexCoord2f(uv[face][vertex].x, uv[face][vertex].y);
+            rlVertex3f(vertices[face][vertex].x,
+                       vertices[face][vertex].y,
+                       vertices[face][vertex].z);
+        }
+    }
     rlEnd();
     rlSetTexture(0);
 }
@@ -655,7 +707,9 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
             torch_uv(renderer->torch_atlas, lit, source, uv[count++]);
         }
     } else if (state.id == BLOCK_REDSTONE_REPEATER) {
-        repeater_uv(renderer->repeater_atlas, state, uv[count++]);
+        repeater_top_uv(renderer->repeater_atlas, state, uv[count++]);
+        for (int face = 1; face < REPEATER_GEOMETRY_QUADS; ++face)
+            repeater_side_uv(renderer->repeater_atlas, state, uv[count++]);
     }
     return count;
 }
@@ -708,13 +762,6 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
                 geometry->vertices[face][vertex] = (Vector3){transform.origin.x+p.x,transform.origin.y+p.y,transform.origin.z+p.z};
             }
     } else if (state.id == BLOCK_REDSTONE_REPEATER) {
-        for (int vertex = 0; vertex < 4; ++vertex) {
-            Vector3 p = cube_faces[4].vertices[vertex];
-            geometry->vertices[0][vertex] = (Vector3){
-                center.x + p.x,
-                center.y - 1.0f + repeater_offset + p.y,
-                center.z + p.z
-            };
-        }
+        repeater_geometry(center, geometry->vertices);
     }
 }

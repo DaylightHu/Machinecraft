@@ -180,7 +180,7 @@ static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
                                                            visible_glass_faces(r,p));
             quads += (int)bit_count(cell->solid_faces);
         } else if (kind == DUST) quads += 1+(int)bit_count(wire_sides(cell->state));
-        else if (kind == REPEATERS) quads += 1;
+        else if (kind == REPEATERS) quads += REPEATER_GEOMETRY_QUADS;
         else quads += 6;
     }
 

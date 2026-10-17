@@ -13,7 +13,10 @@ typedef struct{
     Shader cutout_shader;
 } BlockRenderer;
 
-enum { BLOCK_GEOMETRY_QUADS = 6 };
+enum {
+    BLOCK_GEOMETRY_QUADS = 6,
+    REPEATER_GEOMETRY_QUADS = 5
+};
 typedef struct {
     Vector3 vertices[BLOCK_GEOMETRY_QUADS][4];
     Vector2 uv[BLOCK_GEOMETRY_QUADS][4];
