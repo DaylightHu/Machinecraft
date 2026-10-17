@@ -55,6 +55,13 @@ static bool solve(World *world, WireWork *w, BlockPos root)
         BlockPos neighbors[MAX_WIRE_NEIGHBORS];
         size_t count = wire_neighbors(world, w->nodes[index].pos, neighbors);
         for (size_t i = 0; i < count; ++i) {
+            /* Keep the component graph undirected, but make power flow match
+             * Java Edition: dust supported by glass or another non-conductor
+             * cannot send power diagonally downward. It can still receive
+             * power from the lower dust, so the same glass step works upward. */
+            if (neighbors[i].y < w->nodes[index].pos.y &&
+                !block_is_conductor(world,
+                    block_offset(w->nodes[index].pos, DIR_DOWN))) continue;
             size_t next;
             if (!posmap_get(&w->visited, neighbors[i], &next)) return false;
             if (w->nodes[next].power >= level - 1) continue;

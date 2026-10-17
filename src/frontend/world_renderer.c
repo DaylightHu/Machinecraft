@@ -376,10 +376,15 @@ void world_renderer_draw(WorldRenderer *r)
     if (!r) return;
     rlDrawRenderBatchActive();
     Matrix identity = MatrixIdentity();
-    for (int kind = 0; kind < PARTS; ++kind)
+    for (int kind = 0; kind < PARTS; ++kind) {
+        /* Climbing dust is a surface quad. Keep its reverse side visible
+         * when it is viewed through a transparent glass block. */
+        if (kind == DUST) rlDisableBackfaceCulling();
         for (size_t region = 0; region < r->region_count; ++region) {
             Mesh mesh = r->regions[region]->parts[kind].mesh;
             if (!mesh.vertexCount) continue;
             DrawMesh(mesh,r->materials[kind],identity);
         }
+        if (kind == DUST) rlEnableBackfaceCulling();
+    }
 }
