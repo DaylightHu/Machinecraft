@@ -5,7 +5,9 @@
 enum {
     STATE_GLASS = 13,
     STATE_REPEATER_FIRST = 8208,
-    STATE_REPEATER_COUNT = 64
+    STATE_REPEATER_COUNT = 64,
+    STATE_COMPARATOR_FIRST = STATE_REPEATER_FIRST + STATE_REPEATER_COUNT,
+    STATE_COMPARATOR_COUNT = 128
 };
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -62,6 +64,15 @@ bool state_encode(BlockState s, StateId *id)
               (s.data.repeater.locked ? 32u : 0u));
         return true;
     }
+    if (s.id == BLOCK_REDSTONE_COMPARATOR) {
+        unsigned facing;
+        if (!horizontal_index(s.data.comparator.facing, &facing) ||
+            s.data.comparator.output > 15) return false;
+        *id = (StateId)(STATE_COMPARATOR_FIRST + facing +
+              (unsigned)s.data.comparator.output*4u +
+              (s.data.comparator.subtract ? 64u : 0u));
+        return true;
+    }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
         (s.data.wire.connections & ~0x33u) ||
         (s.data.wire.up_connections & ~s.data.wire.connections)) return false;
@@ -87,6 +98,15 @@ bool state_decode(StateId id, BlockState *s)
         s->data.repeater.delay = (uint8_t)(((value >> 2) & 3u) + 1u);
         s->data.repeater.powered = (value & 16u) != 0;
         s->data.repeater.locked = (value & 32u) != 0;
+        return true;
+    }
+    if (id >= STATE_COMPARATOR_FIRST &&
+        id < STATE_COMPARATOR_FIRST + STATE_COMPARATOR_COUNT) {
+        unsigned value = id - STATE_COMPARATOR_FIRST;
+        *s = block_default(BLOCK_REDSTONE_COMPARATOR);
+        s->data.comparator.facing = (uint8_t)horizontal_face(value);
+        s->data.comparator.output = (uint8_t)((value >> 2) & 15u);
+        s->data.comparator.subtract = (value & 64u) != 0;
         return true;
     }
     if (id < 16 || id > 8207) return false;

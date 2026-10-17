@@ -10,12 +10,13 @@ typedef struct{
     Texture2D wire_atlas;
     Texture2D torch_atlas;
     Texture2D repeater_atlas;
+    Texture2D comparator_atlas;
     Shader cutout_shader;
 } BlockRenderer;
 
 enum {
     BLOCK_GEOMETRY_QUADS = 6,
-    REPEATER_GEOMETRY_QUADS = 5
+    REDSTONE_GATE_GEOMETRY_QUADS = 5
 };
 typedef struct {
     Vector3 vertices[BLOCK_GEOMETRY_QUADS][4];
@@ -35,6 +36,8 @@ void block_renderer_draw_torch(const BlockRenderer *renderer, BlockState state,
                                Vector3 center);
 void block_renderer_draw_repeater(const BlockRenderer *renderer, BlockState state,
                                   Vector3 center);
+void block_renderer_draw_comparator(const BlockRenderer *renderer,
+                                    BlockState state, Vector3 center);
 void block_renderer_end_cutouts(void);
 
 /* CPU geometry for persistent meshes. Solid face bits follow the renderer's

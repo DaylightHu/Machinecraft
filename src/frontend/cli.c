@@ -12,7 +12,8 @@ enum { LINE_CAPACITY = 512, TOKEN_CAPACITY = 8 };
 
 typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
-    COMMAND_DOT, COMMAND_DELAY, COMMAND_TICK, COMMAND_STATS, COMMAND_QUIT
+    COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_TICK, COMMAND_STATS,
+    COMMAND_QUIT
 } CommandKind;
 
 typedef struct {
@@ -152,7 +153,9 @@ static bool parse_command(char *tokens[], int count, Command *command)
         bool valid = parse_position(tokens, &command->position) &&
                      parse_block(tokens[4], &command->block) &&
                      (count == 5 || parse_direction(tokens[5], &command->support));
-        if (valid && count == 5 && command->block == BLOCK_REDSTONE_REPEATER)
+        if (valid && count == 5 &&
+            (command->block == BLOCK_REDSTONE_REPEATER ||
+             command->block == BLOCK_REDSTONE_COMPARATOR))
             command->support = DIR_NORTH;
         return valid;
     } else if (count == 4) {
@@ -164,6 +167,8 @@ static bool parse_command(char *tokens[], int count, Command *command)
             command->kind = COMMAND_DOT;
         } else if (strcmp(name, "delay") == 0) {
             command->kind = COMMAND_DELAY;
+        } else if (strcmp(name, "mode") == 0) {
+            command->kind = COMMAND_MODE;
         } else {
             return false;
         }
@@ -178,12 +183,13 @@ static void print_help(FILE *output)
 {
     fputs("place X Y Z BLOCK [DIRECTION]\n"
           "remove X Y Z\nget X Y Z\ndot X Y Z\ndelay X Y Z\n"
+          "mode X Y Z\n"
           "tick [COUNT]\nstats\nhelp\nquit\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_COUNT; ++id) {
         fprintf(output, " %s", block_name(id));
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
-          "Repeater direction is its output: east/west/north/south; default north.\n",
+          "Repeater/comparator direction is output: east/west/north/south; default north.\n",
           output);
 }
 
@@ -211,6 +217,12 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 direction_names[state.data.repeater.facing],
                 (unsigned)state.data.repeater.delay,
                 state.data.repeater.locked ? "yes" : "no");
+        break;
+    case BLOCK_REDSTONE_COMPARATOR:
+        fprintf(output, " output=%u facing=%s mode=%s",
+                (unsigned)state.data.comparator.output,
+                direction_names[state.data.comparator.facing],
+                state.data.comparator.subtract ? "subtract" : "compare");
         break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);
@@ -272,6 +284,9 @@ static RsResult execute_command(World *world, const Command *command,
         break;
     case COMMAND_DELAY:
         result = world_cycle_repeater_delay(world, command->position);
+        break;
+    case COMMAND_MODE:
+        result = world_toggle_comparator_mode(world, command->position);
         break;
     default:
         return RS_INVALID_ARGUMENT;

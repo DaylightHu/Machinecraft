@@ -20,6 +20,10 @@ static bool connects(const World *world, BlockPos position, Direction face)
         Direction facing = (Direction)state.data.repeater.facing;
         return facing == face || facing == direction_opposite(face);
     }
+    if (state.id == BLOCK_REDSTONE_COMPARATOR) {
+        /* Comparators accept dust from the rear and from either side. */
+        return true;
+    }
     return state.id == BLOCK_REDSTONE_WIRE ||
            state.id == BLOCK_REDSTONE_TORCH ||
            state.id == BLOCK_REDSTONE_BLOCK;

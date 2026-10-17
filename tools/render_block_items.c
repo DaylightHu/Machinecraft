@@ -271,6 +271,11 @@ int main(int argc, char **argv)
             "res/textures/block/repeater4_1.png",
             "redstone_repeater.png",
             paint_isometric_redstone_gate
+        },
+        {
+            "res/textures/block/comparator1_0.png",
+            "redstone_comparator.png",
+            paint_isometric_redstone_gate
         }
     };
     const char *output_directory = "res/textures/item";

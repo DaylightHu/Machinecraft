@@ -205,19 +205,27 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
     if (id == BLOCK_REDSTONE_TORCH) {
         if (support != DIR_DOWN && !direction_horizontal(support)) return RS_INVALID_ARGUMENT;
         if (!torch_supported(w, p, support)) return RS_UNSUPPORTED;
-    } else if (id == BLOCK_REDSTONE_REPEATER) {
+    } else if (id == BLOCK_REDSTONE_REPEATER ||
+               id == BLOCK_REDSTONE_COMPARATOR) {
         if (!direction_horizontal(support)) return RS_INVALID_ARGUMENT;
-        if (!repeater_supported(w, p)) return RS_UNSUPPORTED;
+        if (id == BLOCK_REDSTONE_REPEATER && !repeater_supported(w, p))
+            return RS_UNSUPPORTED;
+        if (id == BLOCK_REDSTONE_COMPARATOR && !comparator_supported(w, p))
+            return RS_UNSUPPORTED;
     }
     BlockState previous = world_get(w, p);
     if (previous.id == id &&
         (id != BLOCK_REDSTONE_TORCH || previous.data.torch.support_dir == support) &&
-        (id != BLOCK_REDSTONE_REPEATER || previous.data.repeater.facing == support))
+        (id != BLOCK_REDSTONE_REPEATER || previous.data.repeater.facing == support) &&
+        (id != BLOCK_REDSTONE_COMPARATOR ||
+         previous.data.comparator.facing == support))
         return RS_UNCHANGED;
     if (id == BLOCK_REDSTONE_TORCH && sim_prepare_torch(w) != RS_OK) return RS_OUT_OF_MEMORY;
     BlockState state = block_default(id);
     if (id == BLOCK_REDSTONE_TORCH) state.data.torch.support_dir = (uint8_t)support;
     if (id == BLOCK_REDSTONE_REPEATER) state.data.repeater.facing = (uint8_t)support;
+    if (id == BLOCK_REDSTONE_COMPARATOR)
+        state.data.comparator.facing = (uint8_t)support;
     if (!world_write_derived(w, p, state)) return w->sim->error;
     sim_forget_cell(w, p);
     if (id == BLOCK_REDSTONE_TORCH && !sim_attach_torch(w, p)) { w->sim->error = RS_OUT_OF_MEMORY; return RS_OUT_OF_MEMORY; }
@@ -249,6 +257,17 @@ RsResult world_cycle_repeater_delay(World *w, BlockPos p)
     BlockState state = world_get(w, p);
     if (state.id != BLOCK_REDSTONE_REPEATER) return RS_INVALID_ARGUMENT;
     state.data.repeater.delay = (uint8_t)(state.data.repeater.delay % 4 + 1);
+    if (!world_write_derived(w, p, state)) return w->sim->error;
+    sim_mark_input(w, p); return w->sim->error;
+}
+RsResult world_toggle_comparator_mode(World *w, BlockPos p)
+{
+    if (!w) return RS_INVALID_ARGUMENT;
+    if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
+    RsResult result = sim_flush(w); if (result != RS_OK) return result;
+    BlockState state = world_get(w, p);
+    if (state.id != BLOCK_REDSTONE_COMPARATOR) return RS_INVALID_ARGUMENT;
+    state.data.comparator.subtract = !state.data.comparator.subtract;
     if (!world_write_derived(w, p, state)) return w->sim->error;
     sim_mark_input(w, p); return w->sim->error;
 }

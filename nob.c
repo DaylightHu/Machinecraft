@@ -39,6 +39,7 @@ static const char *common_sources[] = {
     "src/blocks/wire.c",
     "src/blocks/torch.c",
     "src/blocks/repeater.c",
+    "src/blocks/comparator.c",
 };
 
 static const char *cli_sources[] = {

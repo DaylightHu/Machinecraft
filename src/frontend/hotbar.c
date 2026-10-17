@@ -13,7 +13,8 @@ static const ItemTexture item_textures[] = {
     {BLOCK_REDSTONE_BLOCK, "res/textures/item/redstone_block.png"},
     {BLOCK_REDSTONE_WIRE, "res/textures/item/redstone_wire.png"},
     {BLOCK_REDSTONE_TORCH, "res/textures/item/redstone_torch.png"},
-    {BLOCK_REDSTONE_REPEATER, "res/textures/item/redstone_repeater.png"}
+    {BLOCK_REDSTONE_REPEATER, "res/textures/item/redstone_repeater.png"},
+    {BLOCK_REDSTONE_COMPARATOR, "res/textures/item/redstone_comparator.png"}
 };
 
 bool hotbar_init(Hotbar *hotbar)

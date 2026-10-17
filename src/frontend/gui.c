@@ -423,13 +423,15 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
             return;
         }
         if ((selected == BLOCK_REDSTONE_WIRE ||
-             selected == BLOCK_REDSTONE_REPEATER) && hit.face != DIR_UP) {
+             selected == BLOCK_REDSTONE_REPEATER ||
+             selected == BLOCK_REDSTONE_COMPARATOR) && hit.face != DIR_UP) {
             snprintf(app->message, sizeof(app->message),
                      "%s must be placed on a top face", block_name(selected));
             return;
         }
-        Direction placement = selected == BLOCK_REDSTONE_REPEATER ?
-                              facing : direction_opposite(hit.face);
+        bool directional = selected == BLOCK_REDSTONE_REPEATER ||
+                           selected == BLOCK_REDSTONE_COMPARATOR;
+        Direction placement = directional ? facing : direction_opposite(hit.face);
         result = world_place(world, target, selected, placement);
     } else {
         result = world_remove(world, hit.pos);
@@ -489,6 +491,13 @@ static VoxelHit update_world(GuiApp *app)
                 result = game_session_flush(app->session);
             snprintf(app->message, sizeof(app->message),
                      "Cycle repeater delay: %s", rs_result_name(result));
+        } else if (hit.hit &&
+                   world_get(world, hit.pos).id == BLOCK_REDSTONE_COMPARATOR) {
+            RsResult result = world_toggle_comparator_mode(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            snprintf(app->message, sizeof(app->message),
+                     "Toggle comparator mode: %s", rs_result_name(result));
         } else {
             apply_edit(app, hit, selected, true, facing);
         }

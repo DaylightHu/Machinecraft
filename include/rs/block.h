@@ -7,7 +7,7 @@ typedef struct { int x, y, z; } BlockPos;
 typedef enum {
     BLOCK_AIR = 0, /* Empty storage cell, never a placeable block. */
     BLOCK_IRON, BLOCK_REDSTONE_BLOCK, BLOCK_REDSTONE_WIRE, BLOCK_REDSTONE_TORCH,
-    BLOCK_GLASS, BLOCK_REDSTONE_REPEATER,
+    BLOCK_GLASS, BLOCK_REDSTONE_REPEATER, BLOCK_REDSTONE_COMPARATOR,
     BLOCK_COUNT
 } BlockId;
 
@@ -36,6 +36,11 @@ typedef struct {
             bool powered;
             bool locked;
         } repeater;
+        struct {
+            uint8_t facing;         /* Horizontal output direction. */
+            uint8_t output;         /* Stored analog output, 0..15. */
+            bool subtract;          /* false: compare, true: subtract. */
+        } comparator;
     } data;
 } BlockState;
 

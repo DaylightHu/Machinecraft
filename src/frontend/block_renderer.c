@@ -18,9 +18,15 @@ enum {
     REPEATER_COLUMNS = REPEATER_DELAYS,
     REPEATER_ROWS = REPEATER_STATES
 };
+enum {
+    COMPARATOR_MODES = 2,
+    COMPARATOR_STATES = 2,
+    COMPARATOR_COLUMNS = COMPARATOR_MODES,
+    COMPARATOR_ROWS = COMPARATOR_STATES
+};
 
 static const float wire_offset = 0.002f;
-static const float repeater_height = 2.0f/16.0f;
+static const float redstone_gate_height = 2.0f/16.0f;
 static const Direction wire_directions[] = {
     DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH
 };
@@ -249,6 +255,49 @@ cleanup:
     return atlas;
 }
 
+static Image create_comparator_atlas(void)
+{
+    static const char *const paths[COMPARATOR_STATES][COMPARATOR_MODES] = {
+        {
+            "res/textures/block/comparator1_0.png",
+            "res/textures/block/comparator2_0.png"
+        },
+        {
+            "res/textures/block/comparator1_1.png",
+            "res/textures/block/comparator2_1.png"
+        }
+    };
+    Image sources[COMPARATOR_STATES][COMPARATOR_MODES] = {0};
+    Image atlas = {0};
+    Rectangle full = {0, 0, TILE_SIZE, TILE_SIZE};
+
+    for (int powered = 0; powered < COMPARATOR_STATES; ++powered)
+        for (int mode = 0; mode < COMPARATOR_MODES; ++mode) {
+            sources[powered][mode] = load_tile(paths[powered][mode]);
+            if (!sources[powered][mode].data) goto cleanup;
+        }
+
+    atlas = GenImageColor(COMPARATOR_COLUMNS*TILE_SIZE,
+                          COMPARATOR_ROWS*TILE_SIZE, BLANK);
+    if (atlas.data)
+        for (int powered = 0; powered < COMPARATOR_STATES; ++powered)
+            for (int mode = 0; mode < COMPARATOR_MODES; ++mode) {
+                Rectangle destination = {
+                    mode*TILE_SIZE, powered*TILE_SIZE,
+                    TILE_SIZE, TILE_SIZE
+                };
+                ImageDraw(&atlas, sources[powered][mode], full,
+                          destination, WHITE);
+            }
+
+cleanup:
+    for (int powered = 0; powered < COMPARATOR_STATES; ++powered)
+        for (int mode = 0; mode < COMPARATOR_MODES; ++mode)
+            if (sources[powered][mode].data)
+                UnloadImage(sources[powered][mode]);
+    return atlas;
+}
+
 bool block_renderer_init(BlockRenderer *renderer)
 {
     if (!renderer) return false;
@@ -335,6 +384,19 @@ bool block_renderer_init(BlockRenderer *renderer)
     SetTextureFilter(renderer->repeater_atlas, TEXTURE_FILTER_POINT);
     SetTextureWrap(renderer->repeater_atlas, TEXTURE_WRAP_CLAMP);
 
+    Image comparator_atlas = create_comparator_atlas();
+    if (comparator_atlas.data) {
+        renderer->comparator_atlas = LoadTextureFromImage(comparator_atlas);
+        UnloadImage(comparator_atlas);
+    }
+    if (!renderer->comparator_atlas.id) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot create the comparator atlas");
+        block_renderer_unload(renderer);
+        return false;
+    }
+    SetTextureFilter(renderer->comparator_atlas, TEXTURE_FILTER_POINT);
+    SetTextureWrap(renderer->comparator_atlas, TEXTURE_WRAP_CLAMP);
+
     renderer->cutout_shader = LoadShaderFromMemory(NULL, cutout_fragment_shader);
     if (renderer->cutout_shader.id == rlGetShaderIdDefault()) {
         /* LoadShaderFromMemory allocates its own locations even on fallback. */
@@ -353,6 +415,7 @@ void block_renderer_unload(BlockRenderer *renderer)
 {
     if (!renderer) return;
     if (renderer->cutout_shader.id) UnloadShader(renderer->cutout_shader);
+    if (renderer->comparator_atlas.id) UnloadTexture(renderer->comparator_atlas);
     if (renderer->repeater_atlas.id) UnloadTexture(renderer->repeater_atlas);
     if (renderer->torch_atlas.id) UnloadTexture(renderer->torch_atlas);
     if (renderer->wire_atlas.id) UnloadTexture(renderer->wire_atlas);
@@ -576,20 +639,18 @@ void block_renderer_draw_torch(const BlockRenderer *renderer, BlockState state,
     rlSetTexture(0);
 }
 
-static void repeater_top_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
+static void redstone_gate_top_uv(Texture2D atlas, int column, int row,
+                                 Direction facing, Vector2 uv[4])
 {
-    int delay = state.data.repeater.delay;
-    if (delay < 1 || delay > REPEATER_DELAYS) delay = 1;
-    int powered = state.data.repeater.powered ? 1 : 0;
-    float u0 = ((delay - 1)*TILE_SIZE + 0.5f)/atlas.width;
-    float u1 = (delay*TILE_SIZE - 0.5f)/atlas.width;
-    float v0 = (powered*TILE_SIZE + 0.5f)/atlas.height;
-    float v1 = ((powered + 1)*TILE_SIZE - 0.5f)/atlas.height;
+    float u0 = (column*TILE_SIZE + 0.5f)/atlas.width;
+    float u1 = ((column + 1)*TILE_SIZE - 0.5f)/atlas.width;
+    float v0 = (row*TILE_SIZE + 0.5f)/atlas.height;
+    float v1 = ((row + 1)*TILE_SIZE - 0.5f)/atlas.height;
     const Vector2 base[4] = {{u0,v1},{u1,v1},{u1,v0},{u0,v0}};
 
-    /* The top edge of every source image is the repeater's output/front. */
+    /* The top edge of every gate source image is its output/front. */
     int turn = 0;
-    switch ((Direction)state.data.repeater.facing) {
+    switch (facing) {
     case DIR_EAST:  turn = 1; break;
     case DIR_SOUTH: turn = 2; break;
     case DIR_WEST:  turn = 3; break;
@@ -599,14 +660,12 @@ static void repeater_top_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
         uv[vertex] = base[(vertex + turn) & 3];
 }
 
-static void repeater_side_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
+static void redstone_gate_side_uv(Texture2D atlas, int column, int row,
+                                  Vector2 uv[4])
 {
-    int delay = state.data.repeater.delay;
-    if (delay < 1 || delay > REPEATER_DELAYS) delay = 1;
-    int powered = state.data.repeater.powered ? 1 : 0;
-    float u0 = ((delay - 1)*TILE_SIZE + 0.5f)/atlas.width;
-    float u1 = (delay*TILE_SIZE - 0.5f)/atlas.width;
-    float v = (powered*TILE_SIZE + 0.5f)/atlas.height;
+    float u0 = (column*TILE_SIZE + 0.5f)/atlas.width;
+    float u1 = ((column + 1)*TILE_SIZE - 0.5f)/atlas.width;
+    float v = (row*TILE_SIZE + 0.5f)/atlas.height;
 
     /* Stretch the uniform outermost pixel row into the two-pixel-high base. */
     uv[0] = (Vector2){u0, v};
@@ -615,11 +674,36 @@ static void repeater_side_uv(Texture2D atlas, BlockState state, Vector2 uv[4])
     uv[3] = (Vector2){u0, v};
 }
 
-static void repeater_geometry(Vector3 center,
-                              Vector3 vertices[REPEATER_GEOMETRY_QUADS][4])
+static void repeater_uv(Texture2D atlas, BlockState state,
+                        Vector2 uv[REDSTONE_GATE_GEOMETRY_QUADS][4])
+{
+    int delay = state.data.repeater.delay;
+    if (delay < 1 || delay > REPEATER_DELAYS) delay = 1;
+    int column = delay - 1;
+    int row = state.data.repeater.powered ? 1 : 0;
+    redstone_gate_top_uv(atlas, column, row,
+                         (Direction)state.data.repeater.facing, uv[0]);
+    for (int face = 1; face < REDSTONE_GATE_GEOMETRY_QUADS; ++face)
+        redstone_gate_side_uv(atlas, column, row, uv[face]);
+}
+
+static void comparator_uv(Texture2D atlas, BlockState state,
+                          Vector2 uv[REDSTONE_GATE_GEOMETRY_QUADS][4])
+{
+    int column = state.data.comparator.subtract ? 1 : 0;
+    int row = state.data.comparator.output > 0 ? 1 : 0;
+    redstone_gate_top_uv(atlas, column, row,
+                         (Direction)state.data.comparator.facing, uv[0]);
+    for (int face = 1; face < REDSTONE_GATE_GEOMETRY_QUADS; ++face)
+        redstone_gate_side_uv(atlas, column, row, uv[face]);
+}
+
+static void redstone_gate_geometry(
+    Vector3 center,
+    Vector3 vertices[REDSTONE_GATE_GEOMETRY_QUADS][4])
 {
     float bottom = center.y - 0.5f;
-    float top = bottom + repeater_height;
+    float top = bottom + redstone_gate_height;
 
     for (int vertex = 0; vertex < 4; ++vertex) {
         Vector3 point = cube_faces[4].vertices[vertex];
@@ -638,23 +722,19 @@ static void repeater_geometry(Vector3 center,
         }
 }
 
-void block_renderer_draw_repeater(const BlockRenderer *renderer,
-                                  BlockState state, Vector3 center)
+static void draw_redstone_gate(
+    Texture2D atlas,
+    Vector2 uv[REDSTONE_GATE_GEOMETRY_QUADS][4],
+    Vector3 center)
 {
-    if (!renderer || !renderer->repeater_atlas.id ||
-        state.id != BLOCK_REDSTONE_REPEATER) return;
-    Vector2 uv[REPEATER_GEOMETRY_QUADS][4];
-    Vector3 vertices[REPEATER_GEOMETRY_QUADS][4];
-    repeater_top_uv(renderer->repeater_atlas, state, uv[0]);
-    for (int face = 1; face < REPEATER_GEOMETRY_QUADS; ++face)
-        repeater_side_uv(renderer->repeater_atlas, state, uv[face]);
-    repeater_geometry(center, vertices);
+    Vector3 vertices[REDSTONE_GATE_GEOMETRY_QUADS][4];
+    redstone_gate_geometry(center, vertices);
 
-    rlCheckRenderBatchLimit(REPEATER_GEOMETRY_QUADS*4);
-    rlSetTexture(renderer->repeater_atlas.id);
+    rlCheckRenderBatchLimit(REDSTONE_GATE_GEOMETRY_QUADS*4);
+    rlSetTexture(atlas.id);
     rlBegin(RL_QUADS);
     rlColor4ub(255, 255, 255, 255);
-    for (int face = 0; face < REPEATER_GEOMETRY_QUADS; ++face) {
+    for (int face = 0; face < REDSTONE_GATE_GEOMETRY_QUADS; ++face) {
         Vector3 normal = face ? cube_faces[face - 1].normal : cube_faces[4].normal;
         rlNormal3f(normal.x, normal.y, normal.z);
         for (int vertex = 0; vertex < 4; ++vertex) {
@@ -666,6 +746,26 @@ void block_renderer_draw_repeater(const BlockRenderer *renderer,
     }
     rlEnd();
     rlSetTexture(0);
+}
+
+void block_renderer_draw_repeater(const BlockRenderer *renderer,
+                                  BlockState state, Vector3 center)
+{
+    if (!renderer || !renderer->repeater_atlas.id ||
+        state.id != BLOCK_REDSTONE_REPEATER) return;
+    Vector2 uv[REDSTONE_GATE_GEOMETRY_QUADS][4];
+    repeater_uv(renderer->repeater_atlas, state, uv);
+    draw_redstone_gate(renderer->repeater_atlas, uv, center);
+}
+
+void block_renderer_draw_comparator(const BlockRenderer *renderer,
+                                    BlockState state, Vector3 center)
+{
+    if (!renderer || !renderer->comparator_atlas.id ||
+        state.id != BLOCK_REDSTONE_COMPARATOR) return;
+    Vector2 uv[REDSTONE_GATE_GEOMETRY_QUADS][4];
+    comparator_uv(renderer->comparator_atlas, state, uv);
+    draw_redstone_gate(renderer->comparator_atlas, uv, center);
 }
 
 int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
@@ -707,9 +807,11 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
             torch_uv(renderer->torch_atlas, lit, source, uv[count++]);
         }
     } else if (state.id == BLOCK_REDSTONE_REPEATER) {
-        repeater_top_uv(renderer->repeater_atlas, state, uv[count++]);
-        for (int face = 1; face < REPEATER_GEOMETRY_QUADS; ++face)
-            repeater_side_uv(renderer->repeater_atlas, state, uv[count++]);
+        repeater_uv(renderer->repeater_atlas, state, uv);
+        count = REDSTONE_GATE_GEOMETRY_QUADS;
+    } else if (state.id == BLOCK_REDSTONE_COMPARATOR) {
+        comparator_uv(renderer->comparator_atlas, state, uv);
+        count = REDSTONE_GATE_GEOMETRY_QUADS;
     }
     return count;
 }
@@ -762,6 +864,8 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
                 geometry->vertices[face][vertex] = (Vector3){transform.origin.x+p.x,transform.origin.y+p.y,transform.origin.z+p.z};
             }
     } else if (state.id == BLOCK_REDSTONE_REPEATER) {
-        repeater_geometry(center, geometry->vertices);
+        redstone_gate_geometry(center, geometry->vertices);
+    } else if (state.id == BLOCK_REDSTONE_COMPARATOR) {
+        redstone_gate_geometry(center, geometry->vertices);
     }
 }

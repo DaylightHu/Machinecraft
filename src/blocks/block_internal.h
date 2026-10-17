@@ -16,7 +16,7 @@ typedef struct {
 } BlockDef;
 const BlockDef *block_definition(BlockId id);
 extern const BlockDef rs_iron_def, rs_redstone_block_def, rs_wire_def, rs_torch_def,
-                      rs_glass_def, rs_repeater_def;
+                      rs_glass_def, rs_repeater_def, rs_comparator_def;
 uint8_t power_signal(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_direct(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_received(const World *, BlockPos, SignalMode);
@@ -28,9 +28,11 @@ bool block_is_diode(const World *, BlockPos);
 bool wire_supported(const World *, BlockPos);
 bool torch_supported(const World *, BlockPos, Direction);
 bool repeater_supported(const World *, BlockPos);
+bool comparator_supported(const World *, BlockPos);
 size_t wire_neighbors(const World *, BlockPos, BlockPos out[12]);
 uint8_t wire_external_power(const World *, BlockPos);
 void wire_refresh_shape(World *, BlockPos);
 void torch_check_input(World *, BlockPos);
 void repeater_check_input(World *, BlockPos);
+void comparator_check_input(World *, BlockPos);
 #endif
