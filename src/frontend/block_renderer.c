@@ -229,6 +229,19 @@ bool block_renderer_init(BlockRenderer *renderer)
     SetTextureFilter(renderer->atlas, TEXTURE_FILTER_POINT);
     SetTextureWrap(renderer->atlas, TEXTURE_WRAP_CLAMP);
 
+    Image glass = load_tile("res/textures/block/glass.png");
+    if (glass.data) {
+        renderer->glass_texture = LoadTextureFromImage(glass);
+        UnloadImage(glass);
+    }
+    if (!renderer->glass_texture.id) {
+        TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot load the glass texture");
+        block_renderer_unload(renderer);
+        return false;
+    }
+    SetTextureFilter(renderer->glass_texture, TEXTURE_FILTER_POINT);
+    SetTextureWrap(renderer->glass_texture, TEXTURE_WRAP_CLAMP);
+
     Image wire_atlas = create_wire_atlas();
     if (wire_atlas.data) {
         renderer->wire_atlas = LoadTextureFromImage(wire_atlas);
@@ -275,6 +288,7 @@ void block_renderer_unload(BlockRenderer *renderer)
     if (renderer->cutout_shader.id) UnloadShader(renderer->cutout_shader);
     if (renderer->torch_atlas.id) UnloadTexture(renderer->torch_atlas);
     if (renderer->wire_atlas.id) UnloadTexture(renderer->wire_atlas);
+    if (renderer->glass_texture.id) UnloadTexture(renderer->glass_texture);
     if (renderer->atlas.id) UnloadTexture(renderer->atlas);
     *renderer = (BlockRenderer){0};
 }
@@ -284,23 +298,30 @@ void block_renderer_draw_cube(const BlockRenderer *renderer, BlockId id,
 {
     if (!renderer || !renderer->atlas.id) return;
 
-    int tile;
+    int tile = 0;
+    Texture2D texture = renderer->atlas;
     switch (id) {
     case BLOCK_IRON:           tile = 0; break;
     case BLOCK_REDSTONE_BLOCK: tile = 1; break;
+    case BLOCK_GLASS:
+        texture = renderer->glass_texture;
+        if (!texture.id) return;
+        break;
     default: return;
     }
 
     /* Inset by half a texel so tile edges cannot sample their neighbor.
      * Image row zero maps to v=0; bottom vertices use the larger v. */
-    float u0 = (tile*TILE_SIZE + 0.5f)/renderer->atlas.width;
-    float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/renderer->atlas.width;
-    float v0 = 0.5f/renderer->atlas.height;
-    float v1 = (TILE_SIZE - 0.5f)/renderer->atlas.height;
+    float u0 = (tile*TILE_SIZE + 0.5f)/texture.width;
+    float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/texture.width;
+    float v0 = 0.5f/texture.height;
+    float v1 = (TILE_SIZE - 0.5f)/texture.height;
     const Vector2 uv[4] = {{u0, v1}, {u1, v1}, {u1, v0}, {u0, v0}};
 
+    bool cutout = id == BLOCK_GLASS && renderer->cutout_shader.id;
+    if (cutout) BeginShaderMode(renderer->cutout_shader);
     rlCheckRenderBatchLimit(24);
-    rlSetTexture(renderer->atlas.id);
+    rlSetTexture(texture.id);
     rlBegin(RL_QUADS);
     /* White tint preserves the source colors instead of multiplying them
      * by the prototype's LIGHTGRAY/red block colors. */
@@ -317,6 +338,7 @@ void block_renderer_draw_cube(const BlockRenderer *renderer, BlockId id,
     }
     rlEnd();
     rlSetTexture(0);
+    if (cutout) EndShaderMode();
 }
 
 static void wire_uv(Texture2D atlas, int tile, Vector2 uv[4])
@@ -491,12 +513,15 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
                             Vector2 uv[BLOCK_GEOMETRY_QUADS][4])
 {
     int count = 0;
-    if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK) {
-        int tile = state.id == BLOCK_IRON ? 0 : 1;
-        float u0 = (tile*TILE_SIZE + 0.5f)/renderer->atlas.width;
-        float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/renderer->atlas.width;
-        float v0 = 0.5f/renderer->atlas.height;
-        float v1 = (TILE_SIZE - 0.5f)/renderer->atlas.height;
+    if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
+        state.id == BLOCK_GLASS) {
+        bool glass = state.id == BLOCK_GLASS;
+        Texture2D texture = glass ? renderer->glass_texture : renderer->atlas;
+        int tile = state.id == BLOCK_REDSTONE_BLOCK ? 1 : 0;
+        float u0 = (tile*TILE_SIZE + 0.5f)/texture.width;
+        float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/texture.width;
+        float v0 = 0.5f/texture.height;
+        float v1 = (TILE_SIZE - 0.5f)/texture.height;
         Vector2 face_uv[4] = {{u0,v1},{u1,v1},{u1,v0},{u0,v0}};
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
@@ -531,7 +556,8 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
 {
     geometry->quads = block_renderer_build_uv(renderer, state, solid_faces, geometry->uv);
     int count = 0;
-    if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK) {
+    if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
+        state.id == BLOCK_GLASS) {
         for (int face = 0; face < 6; ++face) {
             if (!(solid_faces & (1u << face))) continue;
             for (int vertex = 0; vertex < 4; ++vertex) {

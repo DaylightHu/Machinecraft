@@ -15,7 +15,8 @@ typedef struct {
     TickFn scheduled_tick;
 } BlockDef;
 const BlockDef *block_definition(BlockId id);
-extern const BlockDef rs_iron_def, rs_redstone_block_def, rs_wire_def, rs_torch_def;
+extern const BlockDef rs_iron_def, rs_redstone_block_def, rs_wire_def, rs_torch_def,
+                      rs_glass_def;
 uint8_t power_signal(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_direct(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_received(const World *, BlockPos, SignalMode);
