@@ -400,6 +400,16 @@ static Direction camera_horizontal_direction(const Camera3D *camera)
     return z >= 0.0f ? DIR_SOUTH : DIR_NORTH;
 }
 
+static Direction camera_direction(const Camera3D *camera)
+{
+    float x = camera->target.x - camera->position.x;
+    float y = camera->target.y - camera->position.y;
+    float z = camera->target.z - camera->position.z;
+    float ax = fabsf(x), ay = fabsf(y), az = fabsf(z);
+    if (ay > ax && ay > az) return y >= 0.0f ? DIR_UP : DIR_DOWN;
+    return camera_horizontal_direction(camera);
+}
+
 static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                        Direction facing)
 {
@@ -438,7 +448,10 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                            selected == BLOCK_REDSTONE_COMPARATOR ||
                            selected == BLOCK_POWERED_RAIL ||
                            selected == BLOCK_ACTIVATOR_RAIL;
-        Direction placement = directional ? facing : direction_opposite(hit.face);
+        Direction placement = selected == BLOCK_OBSERVER ?
+                              direction_opposite(
+                                  camera_direction(&app->camera)) :
+                              (directional ? facing : direction_opposite(hit.face));
         result = world_place(world, target, selected, placement);
     } else {
         result = world_remove(world, hit.pos);

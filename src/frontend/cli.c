@@ -157,7 +157,8 @@ static bool parse_command(char *tokens[], int count, Command *command)
             (command->block == BLOCK_REDSTONE_REPEATER ||
              command->block == BLOCK_REDSTONE_COMPARATOR ||
              command->block == BLOCK_POWERED_RAIL ||
-             command->block == BLOCK_ACTIVATOR_RAIL))
+             command->block == BLOCK_ACTIVATOR_RAIL ||
+             command->block == BLOCK_OBSERVER))
             command->support = DIR_NORTH;
         return valid;
     } else if (count == 4) {
@@ -191,8 +192,8 @@ static void print_help(FILE *output)
         fprintf(output, " %s", block_name(id));
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
-          "Repeater/comparator direction is output; rail direction is the texture top.\n"
-          "Directions: east/west/north/south; default north.\n",
+          "Repeater/comparator/observer direction is output; rail direction is the texture top.\n"
+          "Observer accepts all six directions; other directional blocks are horizontal. Default north.\n",
           output);
 }
 
@@ -233,6 +234,11 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 state.data.rail.powered ? "yes" : "no",
                 direction_names[state.data.rail.facing],
                 state.data.rail.ascending ? "ascending" : "flat");
+        break;
+    case BLOCK_OBSERVER:
+        fprintf(output, " powered=%s facing=%s",
+                state.data.observer.powered ? "yes" : "no",
+                direction_names[state.data.observer.facing]);
         break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);

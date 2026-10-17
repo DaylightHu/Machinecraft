@@ -51,7 +51,8 @@ struct WorldRenderer {
 static int part_for(unsigned id)
 {
     switch (id) {
-    case BLOCK_IRON: case BLOCK_REDSTONE_BLOCK: return SOLIDS;
+    case BLOCK_IRON: case BLOCK_REDSTONE_BLOCK: case BLOCK_OBSERVER:
+        return SOLIDS;
     case BLOCK_GLASS: return GLASS;
     case BLOCK_REDSTONE_WIRE: return DUST;
     case BLOCK_REDSTONE_REPEATER: return REPEATERS;
@@ -134,6 +135,10 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
                    before.data.rail.ascending != after.data.rail.ascending;
         visual = geometry ||
                  before.data.rail.powered != after.data.rail.powered;
+    } else if (old_part == new_part && new_part == SOLIDS &&
+               before.id == BLOCK_OBSERVER && after.id == BLOCK_OBSERVER) {
+        visual = before.data.observer.facing != after.data.observer.facing ||
+                 before.data.observer.powered != after.data.observer.powered;
     }
     cell->state = after;
     if (!visual && !geometry) return;

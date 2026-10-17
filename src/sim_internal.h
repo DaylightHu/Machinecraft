@@ -30,6 +30,7 @@ bool sim_attach_torch(World *, BlockPos);
 void sim_forget_cell(World *, BlockPos);
 void sim_notify_change(World *, BlockPos);
 void sim_notify_power(World *, BlockPos);
+void sim_notify_observers(World *, BlockPos);
 void sim_mark_wire(World *, BlockPos);
 void sim_mark_rail(World *, BlockPos);
 void sim_mark_input(World *, BlockPos);

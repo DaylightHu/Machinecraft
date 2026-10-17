@@ -83,6 +83,16 @@ static void notify(World *w, BlockPos p, bool topology)
 }
 void sim_notify_change(World *w, BlockPos p) { notify(w, p, true); }
 void sim_notify_power(World *w, BlockPos p) { notify(w, p, false); }
+void sim_notify_observers(World *w, BlockPos changed)
+{
+    for (Direction direction = 0; direction < DIR_COUNT; ++direction) {
+        BlockPos position = block_offset(changed, direction);
+        const BlockDef *definition = block_definition(
+            (BlockId)world_get(w, position).id);
+        if (definition->observed_changed)
+            definition->observed_changed(w, position, changed);
+    }
+}
 void sim_schedule(World *w, BlockPos p, uint32_t delay)
 {
     if (!delay || UINT64_MAX - w->tick < delay) { w->sim->error = RS_INTERNAL_ERROR; return; }

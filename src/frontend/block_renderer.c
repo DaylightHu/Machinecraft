@@ -4,7 +4,14 @@
 #include <stddef.h>
 #include <string.h>
 
-enum { TILE_SIZE = 32, TILE_COUNT = 2 };
+enum {
+    TILE_SIZE = 32,
+    OBSERVER_TEXTURES = 4,
+    OBSERVER_STATES = 2,
+    OBSERVER_TILE_FIRST = 2,
+    TILE_COUNT = OBSERVER_TILE_FIRST + OBSERVER_TEXTURES*OBSERVER_STATES
+};
+enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
     WIRE_SHAPES = 16, WIRE_STATES = 2,
     WIRE_SIDE_FIRST = WIRE_SHAPES*WIRE_STATES,
@@ -108,6 +115,43 @@ static Image load_tile(const char *path)
         return (Image){0};
     }
     return image;
+}
+
+static Image create_solid_atlas(void)
+{
+    static const char *const paths[TILE_COUNT] = {
+        "res/textures/block/iron_block.png",
+        "res/textures/block/redstone_block.png",
+        "res/textures/block/observer_back0.png",
+        "res/textures/block/observer_front0.png",
+        "res/textures/block/observer_side0.png",
+        "res/textures/block/observer_top0.png",
+        "res/textures/block/observer_back1.png",
+        "res/textures/block/observer_front1.png",
+        "res/textures/block/observer_side1.png",
+        "res/textures/block/observer_top1.png"
+    };
+    Image sources[TILE_COUNT] = {0};
+    Image atlas = {0};
+    Rectangle full = {0, 0, TILE_SIZE, TILE_SIZE};
+
+    for (int tile = 0; tile < TILE_COUNT; ++tile) {
+        sources[tile] = load_tile(paths[tile]);
+        if (!sources[tile].data) goto cleanup;
+    }
+    atlas = GenImageColor(TILE_COUNT*TILE_SIZE, TILE_SIZE, BLANK);
+    if (atlas.data)
+        for (int tile = 0; tile < TILE_COUNT; ++tile) {
+            Rectangle destination = {
+                tile*TILE_SIZE, 0, TILE_SIZE, TILE_SIZE
+            };
+            ImageDraw(&atlas, sources[tile], full, destination, WHITE);
+        }
+
+cleanup:
+    for (int tile = 0; tile < TILE_COUNT; ++tile)
+        if (sources[tile].data) UnloadImage(sources[tile]);
+    return atlas;
 }
 
 static Rectangle wire_tile_rectangle(int tile)
@@ -335,26 +379,11 @@ bool block_renderer_init(BlockRenderer *renderer)
     if (!renderer) return false;
     *renderer = (BlockRenderer){0};
 
-    Image iron = load_tile("res/textures/block/iron_block.png");
-    if (!iron.data) return false;
-
-    Image redstone = load_tile("res/textures/block/redstone_block.png");
-    if (!redstone.data) {
-        UnloadImage(iron);
-        return false;
-    }
-
-    Image atlas = GenImageColor(TILE_SIZE*TILE_COUNT, TILE_SIZE, BLANK);
+    Image atlas = create_solid_atlas();
     if (atlas.data) {
-        Rectangle tile = {0, 0, TILE_SIZE, TILE_SIZE};
-        ImageDraw(&atlas, iron, tile, tile, WHITE);
-        Rectangle right = {TILE_SIZE, 0, TILE_SIZE, TILE_SIZE};
-        ImageDraw(&atlas, redstone, tile, right, WHITE);
         renderer->atlas = LoadTextureFromImage(atlas);
         UnloadImage(atlas);
     }
-    UnloadImage(redstone);
-    UnloadImage(iron);
 
     if (!renderer->atlas.id) {
         TraceLog(LOG_ERROR, "BLOCK TEXTURE: Cannot create the block atlas");
@@ -549,6 +578,80 @@ static void wire_uv(Texture2D atlas, int tile, Vector2 uv[4])
     uv[1] = (Vector2){u1, v1};
     uv[2] = (Vector2){u1, v0};
     uv[3] = (Vector2){u0, v0};
+}
+
+static int direction_turns(Direction right, Direction down,
+                           Direction desired, bool source_points_down)
+{
+    if (source_points_down) {
+        if (desired == down) return 0;
+        if (desired == direction_opposite(right)) return 1;
+        if (desired == direction_opposite(down)) return 2;
+        if (desired == right) return 3;
+    } else {
+        if (desired == right) return 0;
+        if (desired == down) return 1;
+        if (desired == direction_opposite(right)) return 2;
+        if (desired == direction_opposite(down)) return 3;
+    }
+    return 0;
+}
+
+static void solid_tile_uv(Texture2D atlas, int tile, int turns,
+                          Vector2 uv[4])
+{
+    float u0 = (tile*TILE_SIZE + 0.5f)/atlas.width;
+    float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/atlas.width;
+    float v0 = 0.5f/atlas.height;
+    float v1 = (TILE_SIZE - 0.5f)/atlas.height;
+    const Vector2 base[4] = {{u0,v1},{u1,v1},{u1,v0},{u0,v0}};
+    for (int vertex = 0; vertex < 4; ++vertex)
+        uv[vertex] = base[(vertex + turns) & 3];
+}
+
+static void observer_face_uv(Texture2D atlas, BlockState state, int face,
+                             Vector2 uv[4])
+{
+    static const Direction directions[6] = {
+        DIR_SOUTH, DIR_NORTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN
+    };
+    static const Direction right[6] = {
+        DIR_EAST, DIR_WEST, DIR_NORTH, DIR_SOUTH, DIR_EAST, DIR_EAST
+    };
+    static const Direction down[6] = {
+        DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_SOUTH, DIR_NORTH
+    };
+    Direction output = (Direction)state.data.observer.facing;
+    Direction face_direction = directions[face];
+    int texture;
+    Direction desired;
+    bool points_down;
+
+    if (face_direction == output) {
+        texture = OBSERVER_BACK;
+        desired = output == DIR_UP ? DIR_NORTH :
+                  output == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
+        points_down = true;
+    } else if (face_direction == direction_opposite(output)) {
+        texture = OBSERVER_FRONT;
+        desired = output == DIR_UP ? DIR_NORTH :
+                  output == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
+        points_down = true;
+    } else {
+        bool top_face = direction_horizontal(output) ?
+                        (face_direction == DIR_UP || face_direction == DIR_DOWN) :
+                        (face_direction == DIR_NORTH || face_direction == DIR_SOUTH);
+        texture = top_face ? OBSERVER_TOP : OBSERVER_SIDE;
+        desired = top_face ? direction_opposite(output) : output;
+        points_down = top_face;
+    }
+
+    int powered = state.data.observer.powered ? 1 : 0;
+    int tile = OBSERVER_TILE_FIRST + powered*OBSERVER_TEXTURES + texture;
+    solid_tile_uv(atlas, tile,
+                  direction_turns(right[face], down[face], desired,
+                                  points_down),
+                  uv);
 }
 
 static void emit_wire_face(const CubeFace *face, Vector3 center,
@@ -917,6 +1020,10 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
                 memcpy(uv[count++], face_uv, sizeof(face_uv));
+    } else if (state.id == BLOCK_OBSERVER) {
+        for (int face = 0; face < 6; ++face)
+            if (solid_faces & (1u << face))
+                observer_face_uv(renderer->atlas, state, face, uv[count++]);
     } else if (state.id == BLOCK_REDSTONE_WIRE) {
         int mask = 0;
         for (int direction = 0; direction < 4; ++direction)
@@ -958,7 +1065,7 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
     geometry->quads = block_renderer_build_uv(renderer, state, solid_faces, geometry->uv);
     int count = 0;
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
-        state.id == BLOCK_GLASS) {
+        state.id == BLOCK_GLASS || state.id == BLOCK_OBSERVER) {
         for (int face = 0; face < 6; ++face) {
             if (!(solid_faces & (1u << face))) continue;
             for (int vertex = 0; vertex < 4; ++vertex) {
