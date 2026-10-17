@@ -133,24 +133,74 @@ static void paint_face(SourceImage source, Pixel *destination,
     }
 }
 
-static void paint_isometric_cube(SourceImage source, Pixel *destination)
+static void paint_isometric_prism(
+    SourceImage top_source,
+    SourceImage side_source,
+    Pixel *destination,
+    float height)
 {
-    /* The three visible faces share exact edges. Different brightness values
-     * make the 3D form readable without changing the original texture files. */
-    const FaceProjection left = {
-        {16.0f, 38.0f}, {48.0f, 26.0f}, {0.0f, 50.0f}, 0.76f
+    float side_height = 50.0f*height;
+
+    /* Vertically center prisms of different heights in the icon. */
+    float top_y = 63.0f - (52.0f + side_height)*0.5f;
+    float edge_y = top_y + 26.0f;
+
+    FaceProjection left = {
+        {16.0f, edge_y},
+        {48.0f, 26.0f},
+        {0.0f, side_height},
+        0.76f
     };
-    const FaceProjection right = {
-        {112.0f, 38.0f}, {-48.0f, 26.0f}, {0.0f, 50.0f}, 0.88f
+    FaceProjection right = {
+        {112.0f, edge_y},
+        {-48.0f, 26.0f},
+        {0.0f, side_height},
+        0.88f
     };
-    const FaceProjection top = {
-        {64.0f, 12.0f}, {48.0f, 26.0f}, {-48.0f, 26.0f}, 1.00f
+    FaceProjection top = {
+        {64.0f, top_y},
+        {48.0f, 26.0f},
+        {-48.0f, 26.0f},
+        1.00f
     };
 
-    paint_face(source, destination, left);
-    paint_face(source, destination, right);
-    paint_face(source, destination, top);
+    paint_face(side_source, destination, left);
+    paint_face(side_source, destination, right);
+    paint_face(top_source, destination, top);
 }
+
+static void paint_isometric_cube(
+    SourceImage source,
+    Pixel *destination)
+{
+    paint_isometric_prism(
+        source,
+        source,
+        destination,
+        1.0f
+    );
+}
+
+static void paint_isometric_redstone_gate(
+    SourceImage source,
+    Pixel *destination)
+{
+    /* The outermost texture row supplies the base's side color. */
+    SourceImage edge = {
+        source.width,
+        1,
+        source.pixels
+    };
+
+    paint_isometric_prism(
+        source,
+        edge,
+        destination,
+        2.0f/16.0f
+    );
+}
+
+
 
 static bool ensure_output_directory(const char *path)
 {
@@ -216,6 +266,11 @@ int main(int argc, char **argv)
             "res/textures/block/redstone_block.png",
             "redstone_block.png",
             paint_isometric_cube
+        },
+        {
+            "res/textures/block/repeater4_1.png",
+            "redstone_repeater.png",
+            paint_isometric_redstone_gate
         }
     };
     const char *output_directory = "res/textures/item";
