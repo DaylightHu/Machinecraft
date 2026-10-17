@@ -56,6 +56,7 @@ static const char *gui_sources[] = {
     "src/frontend/block_renderer.c",
     "src/frontend/world_renderer.c",
     "src/frontend/voxel_pick.c",
+    "src/frontend/inventory.c",
     "src/frontend/hotbar.c",
 };
 

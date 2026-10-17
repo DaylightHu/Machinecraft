@@ -181,34 +181,6 @@ static void paint_isometric_cube(
     );
 }
 
-static void paint_isometric_redstone_gate(
-    SourceImage source,
-    Pixel *destination)
-{
-    /* The outermost texture row supplies the base's side color. */
-    SourceImage edge = {
-        source.width,
-        1,
-        source.pixels
-    };
-
-    paint_isometric_prism(
-        source,
-        edge,
-        destination,
-        2.0f/16.0f
-    );
-}
-
-static void paint_isometric_surface(
-    SourceImage source,
-    Pixel *destination)
-{
-    paint_isometric_prism(source, source, destination, 0.0f);
-}
-
-
-
 static bool ensure_output_directory(const char *path)
 {
 #ifdef _WIN32
@@ -275,24 +247,9 @@ int main(int argc, char **argv)
             paint_isometric_cube
         },
         {
-            "res/textures/block/repeater4_1.png",
-            "redstone_repeater.png",
-            paint_isometric_redstone_gate
-        },
-        {
-            "res/textures/block/comparator1_0.png",
-            "redstone_comparator.png",
-            paint_isometric_redstone_gate
-        },
-        {
-            "res/textures/block/powered_rail0.png",
-            "powered_rail.png",
-            paint_isometric_surface
-        },
-        {
-            "res/textures/block/activator_rail0.png",
-            "activator_rail.png",
-            paint_isometric_surface
+            "res/textures/block/glass.png",
+            "glass.png",
+            paint_isometric_cube
         }
     };
     const char *output_directory = "res/textures/item";

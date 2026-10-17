@@ -1,42 +1,33 @@
 #include "hotbar.h"
 
-#include <stddef.h>
-
-typedef struct {
-    BlockId id;
-    const char *path;
-} ItemTexture;
-
-static const ItemTexture item_textures[] = {
-    {BLOCK_IRON, "res/textures/item/iron_block.png"},
-    {BLOCK_GLASS, "res/textures/item/glass.png"},
-    {BLOCK_REDSTONE_BLOCK, "res/textures/item/redstone_block.png"},
-    {BLOCK_REDSTONE_WIRE, "res/textures/item/redstone_wire.png"},
-    {BLOCK_REDSTONE_TORCH, "res/textures/item/redstone_torch.png"},
-    {BLOCK_REDSTONE_REPEATER, "res/textures/item/redstone_repeater.png"},
-    {BLOCK_REDSTONE_COMPARATOR, "res/textures/item/redstone_comparator.png"},
-    {BLOCK_POWERED_RAIL, "res/textures/item/powered_rail.png"},
-    {BLOCK_ACTIVATOR_RAIL, "res/textures/item/activator_rail.png"}
+enum {
+    HOTBAR_SLOT_SIZE = 48,
+    HOTBAR_PADDING = 4,
+    HOTBAR_BOTTOM_MARGIN = 12
 };
 
-bool hotbar_init(Hotbar *hotbar)
+static Rectangle hotbar_slot_rectangle(int index)
 {
-    if (!hotbar) return false;
-    *hotbar = (Hotbar){0};
+    int bar_width = HOTBAR_SLOT_COUNT*HOTBAR_SLOT_SIZE + 2*HOTBAR_PADDING;
+    int bar_x = (GetScreenWidth() - bar_width)/2;
+    int bar_y = GetScreenHeight() -
+                (HOTBAR_SLOT_SIZE + 2*HOTBAR_PADDING) - HOTBAR_BOTTOM_MARGIN;
+    return (Rectangle){
+        (float)(bar_x + HOTBAR_PADDING + index*HOTBAR_SLOT_SIZE),
+        (float)(bar_y + HOTBAR_PADDING),
+        HOTBAR_SLOT_SIZE,
+        HOTBAR_SLOT_SIZE
+    };
+}
 
-    for (size_t index = 0;
-         index < sizeof(item_textures)/sizeof(item_textures[0]); ++index) {
-        ItemTexture item = item_textures[index];
-        Texture2D texture = LoadTexture(item.path);
-        if (!texture.id) {
-            TraceLog(LOG_ERROR, "HOTBAR: Cannot load %s", item.path);
-            hotbar_unload(hotbar);
-            return false;
-        }
-        SetTextureFilter(texture, TEXTURE_FILTER_POINT);
-        hotbar->item_textures[item.id] = texture;
-        hotbar->slots[index] = item.id;
-    }
+bool hotbar_init(Hotbar *hotbar, const Inventory *inventory)
+{
+    if (!hotbar || !inventory) return false;
+    *hotbar = (Hotbar){0};
+    int count = inventory->count < HOTBAR_SLOT_COUNT ?
+                inventory->count : HOTBAR_SLOT_COUNT;
+    for (int index = 0; index < count; ++index)
+        hotbar->slots[index] = inventory->slots[index];
     hotbar->selected_slot = 0;
     return true;
 }
@@ -44,10 +35,6 @@ bool hotbar_init(Hotbar *hotbar)
 void hotbar_unload(Hotbar *hotbar)
 {
     if (!hotbar) return;
-    for (int id = 0; id < BLOCK_COUNT; ++id) {
-        if (hotbar->item_textures[id].id)
-            UnloadTexture(hotbar->item_textures[id]);
-    }
     *hotbar = (Hotbar){0};
 }
 
@@ -62,7 +49,17 @@ void hotbar_update(Hotbar *hotbar)
     for (int slot = 0; slot < HOTBAR_SLOT_COUNT; ++slot) {
         if (IsKeyPressed(number_keys[slot])) {
             hotbar->selected_slot = slot;
-            break;
+            return;
+        }
+    }
+
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        Vector2 mouse = GetMousePosition();
+        for (int slot = 0; slot < HOTBAR_SLOT_COUNT; ++slot) {
+            if (CheckCollisionPointRec(mouse, hotbar_slot_rectangle(slot))) {
+                hotbar->selected_slot = slot;
+                return;
+            }
         }
     }
 
@@ -84,53 +81,33 @@ BlockId hotbar_selected_block(const Hotbar *hotbar)
     return hotbar->slots[hotbar->selected_slot];
 }
 
-static void draw_item(Texture2D texture, Rectangle slot)
+bool hotbar_set_selected_block(Hotbar *hotbar, BlockId id)
 {
-    if (!texture.id) return;
-
-    const float padding = 5.0f;
-    float available = slot.width - 2.0f*padding;
-    float scale_x = available/(float)texture.width;
-    float scale_y = available/(float)texture.height;
-    float scale = scale_x < scale_y ? scale_x : scale_y;
-    float width = texture.width*scale;
-    float height = texture.height*scale;
-    Rectangle source = {0, 0, (float)texture.width, (float)texture.height};
-    Rectangle destination = {
-        slot.x + (slot.width - width)*0.5f,
-        slot.y + (slot.height - height)*0.5f,
-        width,
-        height
-    };
-    DrawTexturePro(texture, source, destination, (Vector2){0, 0}, 0.0f, WHITE);
+    if (!hotbar || hotbar->selected_slot < 0 ||
+        hotbar->selected_slot >= HOTBAR_SLOT_COUNT ||
+        id <= BLOCK_AIR || id >= BLOCK_COUNT) return false;
+    hotbar->slots[hotbar->selected_slot] = id;
+    return true;
 }
 
-void hotbar_draw(const Hotbar *hotbar)
+void hotbar_draw(const Hotbar *hotbar, const Inventory *inventory)
 {
-    if (!hotbar) return;
+    if (!hotbar || !inventory) return;
 
-    const int slot_size = 48;
-    const int bar_padding = 4;
-    const int bar_width = HOTBAR_SLOT_COUNT*slot_size + 2*bar_padding;
-    const int bar_height = slot_size + 2*bar_padding;
+    const int bar_width = HOTBAR_SLOT_COUNT*HOTBAR_SLOT_SIZE + 2*HOTBAR_PADDING;
+    const int bar_height = HOTBAR_SLOT_SIZE + 2*HOTBAR_PADDING;
     int bar_x = (GetScreenWidth() - bar_width)/2;
-    int bar_y = GetScreenHeight() - bar_height - 12;
+    int bar_y = GetScreenHeight() - bar_height - HOTBAR_BOTTOM_MARGIN;
 
     DrawRectangle(bar_x, bar_y, bar_width, bar_height,
                   (Color){20, 20, 20, 210});
 
     for (int slot_index = 0; slot_index < HOTBAR_SLOT_COUNT; ++slot_index) {
-        Rectangle slot = {
-            (float)(bar_x + bar_padding + slot_index*slot_size),
-            (float)(bar_y + bar_padding),
-            (float)slot_size,
-            (float)slot_size
-        };
+        Rectangle slot = hotbar_slot_rectangle(slot_index);
         DrawRectangleRec(slot, (Color){75, 75, 75, 190});
 
         BlockId id = hotbar->slots[slot_index];
-        if (id > BLOCK_AIR && id < BLOCK_COUNT)
-            draw_item(hotbar->item_textures[id], slot);
+        inventory_draw_icon(inventory, id, slot);
 
         DrawRectangleLinesEx(slot, 1.0f, (Color){145, 145, 145, 255});
         DrawText(TextFormat("%d", slot_index + 1),
