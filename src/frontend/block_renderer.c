@@ -11,12 +11,12 @@ enum {
     OBSERVER_TILE_FIRST = 2,
     PISTON_TILE_FIRST = OBSERVER_TILE_FIRST +
                         OBSERVER_TEXTURES*OBSERVER_STATES,
-    PISTON_TEXTURES = 6,
+    PISTON_TEXTURES = 5,
     TILE_COUNT = PISTON_TILE_FIRST + PISTON_TEXTURES
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
-    PISTON_BOTTOM0, PISTON_BOTTOM1, PISTON_INNER,
+    PISTON_BOTTOM0, PISTON_BOTTOM1,
     PISTON_SIDE0, PISTON_SIDE1, PISTON_TOP
 };
 enum {
@@ -139,7 +139,6 @@ static Image create_solid_atlas(void)
         "res/textures/block/observer_top1.png",
         "res/textures/block/piston_bottom0.png",
         "res/textures/block/piston_bottom1.png",
-        "res/textures/block/piston_inner.png",
         "res/textures/block/piston_side0.png",
         "res/textures/block/piston_side1.png",
         "res/textures/block/piston_top.png"
@@ -696,7 +695,8 @@ static void piston_face_uv(Texture2D atlas, BlockState state, int face,
     float region_x = 0.0f, region_width = TILE_SIZE;
 
     if (face_direction == facing) {
-        texture = state.data.piston.extended ? PISTON_INNER : PISTON_TOP;
+        texture = state.data.piston.extended ?
+                  (powered ? PISTON_BOTTOM1 : PISTON_BOTTOM0) : PISTON_TOP;
         desired = facing == DIR_UP ? DIR_NORTH :
                   facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
         points_down = true;
@@ -737,7 +737,7 @@ static int piston_head_uv(Texture2D atlas, BlockState state,
     Direction facing = (Direction)state.data.piston.facing;
     int side = PISTON_TILE_FIRST +
                (state.data.piston.powered ? PISTON_SIDE1 : PISTON_SIDE0);
-    int inner = PISTON_TILE_FIRST + PISTON_INNER;
+    int top = PISTON_TILE_FIRST + PISTON_TOP;
     int count = 0;
 
     for (int face = 0; face < 6; ++face) {
@@ -746,11 +746,16 @@ static int piston_head_uv(Texture2D atlas, BlockState state,
         if (face_direction == facing) {
             Direction upright = facing == DIR_UP ? DIR_NORTH :
                                 facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
-            solid_tile_uv(atlas, PISTON_TILE_FIRST + PISTON_TOP,
+            solid_tile_uv(atlas, top,
                           direction_turns(right[face], down[face], upright,
                                           true), uv[count]);
         } else if (face_direction == direction_opposite(facing)) {
-            solid_tile_uv(atlas, inner, 0, uv[count]);
+            /* Vanilla's moving plate is wooden on both broad faces. */
+            Direction upright = facing == DIR_UP ? DIR_NORTH :
+                                facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
+            solid_tile_uv(atlas, top,
+                          direction_turns(right[face], down[face], upright,
+                                          true), uv[count]);
         } else {
             int turns = direction_turns(right[face], down[face], facing,
                                         false);
@@ -764,7 +769,11 @@ static int piston_head_uv(Texture2D atlas, BlockState state,
         Direction face_direction = directions[face];
         if (face_direction == facing ||
             face_direction == direction_opposite(facing)) continue;
-        solid_tile_uv(atlas, inner, 0, uv[count++]);
+        /* Use a bolt-free strip of the wooden top texture for the narrow
+         * piston arm, with its long texture axis following the arm. */
+        int turns = direction_turns(right[face], down[face], facing, false);
+        solid_tile_region_uv(atlas, top, 5.0f, 4.0f, 6.0f, 24.0f,
+                             turns, uv[count++]);
     }
     return count;
 }
@@ -1217,32 +1226,34 @@ static void piston_head_bounds(Direction facing,
 {
     *plate_minimum = (Vector3){-0.5f, -0.5f, -0.5f};
     *plate_maximum = (Vector3){ 0.5f,  0.5f,  0.5f};
-    *rod_minimum = (Vector3){-0.125f, -0.125f, -0.125f};
-    *rod_maximum = (Vector3){ 0.125f,  0.125f,  0.125f};
+    /* A slim 3/16-wide wooden arm. It reaches 4/16 into the shortened base,
+     * so the head never appears detached from the piston body. */
+    *rod_minimum = (Vector3){-0.09375f, -0.09375f, -0.09375f};
+    *rod_maximum = (Vector3){ 0.09375f,  0.09375f,  0.09375f};
     switch (facing) {
     case DIR_EAST:
         plate_minimum->x = 0.25f;
-        rod_minimum->x = -0.5f; rod_maximum->x = 0.25f;
+        rod_minimum->x = -0.75f; rod_maximum->x = 0.25f;
         break;
     case DIR_WEST:
         plate_maximum->x = -0.25f;
-        rod_minimum->x = -0.25f; rod_maximum->x = 0.5f;
+        rod_minimum->x = -0.25f; rod_maximum->x = 0.75f;
         break;
     case DIR_UP:
         plate_minimum->y = 0.25f;
-        rod_minimum->y = -0.5f; rod_maximum->y = 0.25f;
+        rod_minimum->y = -0.75f; rod_maximum->y = 0.25f;
         break;
     case DIR_DOWN:
         plate_maximum->y = -0.25f;
-        rod_minimum->y = -0.25f; rod_maximum->y = 0.5f;
+        rod_minimum->y = -0.25f; rod_maximum->y = 0.75f;
         break;
     case DIR_SOUTH:
         plate_minimum->z = 0.25f;
-        rod_minimum->z = -0.5f; rod_maximum->z = 0.25f;
+        rod_minimum->z = -0.75f; rod_maximum->z = 0.25f;
         break;
     case DIR_NORTH:
         plate_maximum->z = -0.25f;
-        rod_minimum->z = -0.25f; rod_maximum->z = 0.5f;
+        rod_minimum->z = -0.25f; rod_maximum->z = 0.75f;
         break;
     default: break;
     }
