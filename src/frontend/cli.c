@@ -159,7 +159,7 @@ static bool parse_command(char *tokens[], int count, Command *command)
              command->block == BLOCK_POWERED_RAIL ||
              command->block == BLOCK_ACTIVATOR_RAIL ||
              command->block == BLOCK_OBSERVER ||
-             command->block == BLOCK_PISTON))
+             block_is_piston_base(command->block)))
             command->support = DIR_NORTH;
         return valid;
     } else if (count == 4) {
@@ -194,7 +194,7 @@ static void print_help(FILE *output)
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
           "Repeater/comparator/observer direction is output; piston direction is its front; rail direction is the texture top.\n"
-          "Observer and piston accept all six directions; other directional blocks are horizontal. Default north.\n",
+          "Observer and both piston types accept all six directions; other directional blocks are horizontal. Default north.\n",
           output);
 }
 
@@ -242,12 +242,14 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 direction_names[state.data.observer.facing]);
         break;
     case BLOCK_PISTON:
+    case BLOCK_STICKY_PISTON:
         fprintf(output, " powered=%s extended=%s facing=%s",
                 state.data.piston.powered ? "yes" : "no",
                 state.data.piston.extended ? "yes" : "no",
                 direction_names[state.data.piston.facing]);
         break;
     case BLOCK_PISTON_HEAD:
+    case BLOCK_STICKY_PISTON_HEAD:
         fprintf(output, " powered=%s facing=%s",
                 state.data.piston.powered ? "yes" : "no",
                 direction_names[state.data.piston.facing]);

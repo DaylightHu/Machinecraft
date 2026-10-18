@@ -20,7 +20,8 @@ const BlockDef *block_definition(BlockId id);
 extern const BlockDef rs_iron_def, rs_redstone_block_def, rs_wire_def, rs_torch_def,
                       rs_glass_def, rs_repeater_def, rs_comparator_def,
                       rs_powered_rail_def, rs_activator_rail_def,
-                      rs_observer_def, rs_piston_def, rs_piston_head_def;
+                      rs_observer_def, rs_piston_def, rs_sticky_piston_def,
+                      rs_piston_head_def, rs_sticky_piston_head_def;
 uint8_t power_signal(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_direct(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_received(const World *, BlockPos, SignalMode);

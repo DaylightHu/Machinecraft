@@ -365,10 +365,10 @@ int main(int argc, char **argv)
 {
     static const ItemSpec items[] = {
         {
-            "res/textures/block/piston_top.png",
-            "res/textures/block/piston_side0.png",
-            "res/textures/block/piston_side0.png",
-            "piston.png",
+            "res/textures/block/sticky_piston_top.png",
+            "res/textures/block/sticky_piston_side0.png",
+            "res/textures/block/sticky_piston_side0.png",
+            "sticky_piston.png",
             0, 1, 1
         }
     };

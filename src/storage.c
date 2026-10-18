@@ -16,7 +16,13 @@ enum {
     STATE_PISTON_FIRST = STATE_OBSERVER_FIRST + STATE_OBSERVER_COUNT,
     STATE_PISTON_COUNT = DIR_COUNT * 4,
     STATE_PISTON_HEAD_FIRST = STATE_PISTON_FIRST + STATE_PISTON_COUNT,
-    STATE_PISTON_HEAD_COUNT = DIR_COUNT * 2
+    STATE_PISTON_HEAD_COUNT = DIR_COUNT * 2,
+    STATE_STICKY_PISTON_FIRST =
+        STATE_PISTON_HEAD_FIRST + STATE_PISTON_HEAD_COUNT,
+    STATE_STICKY_PISTON_COUNT = DIR_COUNT * 4,
+    STATE_STICKY_PISTON_HEAD_FIRST =
+        STATE_STICKY_PISTON_FIRST + STATE_STICKY_PISTON_COUNT,
+    STATE_STICKY_PISTON_HEAD_COUNT = DIR_COUNT * 2
 };
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -98,17 +104,22 @@ bool state_encode(BlockState s, StateId *id)
               (s.data.observer.powered ? DIR_COUNT : 0));
         return true;
     }
-    if (s.id == BLOCK_PISTON) {
+    if (block_is_piston_base((BlockId)s.id)) {
         if (s.data.piston.facing >= DIR_COUNT) return false;
-        *id = (StateId)(STATE_PISTON_FIRST + s.data.piston.facing +
+        StateId first = s.id == BLOCK_STICKY_PISTON ?
+                        STATE_STICKY_PISTON_FIRST : STATE_PISTON_FIRST;
+        *id = (StateId)(first + s.data.piston.facing +
               (s.data.piston.powered ? DIR_COUNT : 0) +
               (s.data.piston.extended ? DIR_COUNT*2 : 0));
         return true;
     }
-    if (s.id == BLOCK_PISTON_HEAD) {
+    if (block_is_piston_head((BlockId)s.id)) {
         if (s.data.piston.facing >= DIR_COUNT || s.data.piston.extended)
             return false;
-        *id = (StateId)(STATE_PISTON_HEAD_FIRST + s.data.piston.facing +
+        StateId first = s.id == BLOCK_STICKY_PISTON_HEAD ?
+                        STATE_STICKY_PISTON_HEAD_FIRST :
+                        STATE_PISTON_HEAD_FIRST;
+        *id = (StateId)(first + s.data.piston.facing +
               (s.data.piston.powered ? DIR_COUNT : 0));
         return true;
     }
@@ -191,6 +202,24 @@ bool state_decode(StateId id, BlockState *s)
         id < STATE_PISTON_HEAD_FIRST + STATE_PISTON_HEAD_COUNT) {
         unsigned value = id - STATE_PISTON_HEAD_FIRST;
         *s = block_default(BLOCK_PISTON_HEAD);
+        s->data.piston.facing = (uint8_t)(value % DIR_COUNT);
+        s->data.piston.powered = value >= DIR_COUNT;
+        return true;
+    }
+    if (id >= STATE_STICKY_PISTON_FIRST &&
+        id < STATE_STICKY_PISTON_FIRST + STATE_STICKY_PISTON_COUNT) {
+        unsigned value = id - STATE_STICKY_PISTON_FIRST;
+        *s = block_default(BLOCK_STICKY_PISTON);
+        s->data.piston.facing = (uint8_t)(value % DIR_COUNT);
+        s->data.piston.powered = ((value / DIR_COUNT) & 1u) != 0;
+        s->data.piston.extended = value >= DIR_COUNT*2;
+        return true;
+    }
+    if (id >= STATE_STICKY_PISTON_HEAD_FIRST &&
+        id < STATE_STICKY_PISTON_HEAD_FIRST +
+             STATE_STICKY_PISTON_HEAD_COUNT) {
+        unsigned value = id - STATE_STICKY_PISTON_HEAD_FIRST;
+        *s = block_default(BLOCK_STICKY_PISTON_HEAD);
         s->data.piston.facing = (uint8_t)(value % DIR_COUNT);
         s->data.piston.powered = value >= DIR_COUNT;
         return true;

@@ -249,18 +249,21 @@ World *save_file_read(const char *path, GameSessionResult *result)
                     !comparator_supported(w, p)) goto fail;
                 if (block_is_rail((BlockId)state.id) && !rail_supported(w, p))
                     goto fail;
-                if (state.id == BLOCK_PISTON && state.data.piston.extended) {
+                if (block_is_piston_base((BlockId)state.id) &&
+                    state.data.piston.extended) {
                     Direction facing = (Direction)state.data.piston.facing;
                     BlockState head = world_get(w, block_offset(p, facing));
-                    if (head.id != BLOCK_PISTON_HEAD ||
+                    if (!block_piston_pair((BlockId)state.id,
+                                           (BlockId)head.id) ||
                         head.data.piston.facing != state.data.piston.facing)
                         goto fail;
                 }
-                if (state.id == BLOCK_PISTON_HEAD) {
+                if (block_is_piston_head((BlockId)state.id)) {
                     Direction facing = (Direction)state.data.piston.facing;
                     BlockState base = world_get(
                         w, block_offset(p, direction_opposite(facing)));
-                    if (base.id != BLOCK_PISTON ||
+                    if (!block_piston_pair((BlockId)base.id,
+                                           (BlockId)state.id) ||
                         !base.data.piston.extended ||
                         base.data.piston.facing != state.data.piston.facing)
                         goto fail;

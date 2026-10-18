@@ -20,7 +20,9 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_ACTIVATOR_RAIL] = &rs_activator_rail_def,
         [BLOCK_OBSERVER] = &rs_observer_def,
         [BLOCK_PISTON] = &rs_piston_def,
-        [BLOCK_PISTON_HEAD] = &rs_piston_head_def
+        [BLOCK_STICKY_PISTON] = &rs_sticky_piston_def,
+        [BLOCK_PISTON_HEAD] = &rs_piston_head_def,
+        [BLOCK_STICKY_PISTON_HEAD] = &rs_sticky_piston_head_def
     };
     return (unsigned)id < BLOCK_COUNT ? definitions[id] : &air;
 }
@@ -47,10 +49,27 @@ BlockState block_default(BlockId id)
         state.data.rail.facing = DIR_NORTH;
     } else if (id == BLOCK_OBSERVER) {
         state.data.observer.facing = DIR_NORTH;
-    } else if (id == BLOCK_PISTON || id == BLOCK_PISTON_HEAD) {
+    } else if (block_is_piston_base(id) || block_is_piston_head(id)) {
         state.data.piston.facing = DIR_NORTH;
     }
     return state;
+}
+
+bool block_is_piston_base(BlockId id)
+{
+    return id == BLOCK_PISTON || id == BLOCK_STICKY_PISTON;
+}
+
+bool block_is_piston_head(BlockId id)
+{
+    return id == BLOCK_PISTON_HEAD || id == BLOCK_STICKY_PISTON_HEAD;
+}
+
+bool block_piston_pair(BlockId base, BlockId head)
+{
+    return (base == BLOCK_PISTON && head == BLOCK_PISTON_HEAD) ||
+           (base == BLOCK_STICKY_PISTON &&
+            head == BLOCK_STICKY_PISTON_HEAD);
 }
 
 bool direction_horizontal(Direction direction)

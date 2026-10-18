@@ -48,6 +48,7 @@ static PistonReaction piston_reaction(BlockState state)
     case BLOCK_OBSERVER:
         return PISTON_MOVE;
     case BLOCK_PISTON:
+    case BLOCK_STICKY_PISTON:
         return state.data.piston.extended ? PISTON_BLOCK : PISTON_MOVE;
     case BLOCK_REDSTONE_WIRE:
     case BLOCK_REDSTONE_TORCH:
@@ -57,6 +58,7 @@ static PistonReaction piston_reaction(BlockState state)
     case BLOCK_ACTIVATOR_RAIL:
         return PISTON_DESTROY;
     case BLOCK_PISTON_HEAD:
+    case BLOCK_STICKY_PISTON_HEAD:
     default:
         return PISTON_BLOCK;
     }
@@ -67,7 +69,7 @@ static void piston_reinitialize_moved_block(World *world, BlockPos position,
 {
     if (state.id == BLOCK_OBSERVER && state.data.observer.powered)
         sim_schedule(world, position, 2);
-    if (state.id == BLOCK_PISTON)
+    if (block_is_piston_base((BlockId)state.id))
         sim_mark_input(world, position);
 }
 
@@ -124,10 +126,13 @@ static void piston_set_extended(World *world, BlockPos position,
 {
     Direction facing = (Direction)state.data.piston.facing;
     BlockPos head_position = block_offset(position, facing);
+    BlockId base_id = (BlockId)state.id;
+    BlockId head_id = base_id == BLOCK_STICKY_PISTON ?
+                      BLOCK_STICKY_PISTON_HEAD : BLOCK_PISTON_HEAD;
 
     if (extended) {
         if (!piston_push(world, position, facing)) return;
-        BlockState head = block_default(BLOCK_PISTON_HEAD);
+        BlockState head = block_default(head_id);
         head.data.piston.facing = state.data.piston.facing;
         head.data.piston.powered = state.data.piston.powered;
         if (!piston_write_cell(world, head_position, head)) return;
@@ -138,10 +143,24 @@ static void piston_set_extended(World *world, BlockPos position,
     }
 
     BlockState head = world_get(world, head_position);
-    if (head.id == BLOCK_PISTON_HEAD &&
-        head.data.piston.facing == state.data.piston.facing) {
+    bool had_head = block_piston_pair(base_id, (BlockId)head.id) &&
+                    head.data.piston.facing == state.data.piston.facing;
+    if (had_head) {
         if (!piston_write_cell(world, head_position,
                                block_default(BLOCK_AIR))) return;
+    }
+
+    if (base_id == BLOCK_STICKY_PISTON && had_head) {
+        BlockPos source = block_offset(head_position, facing);
+        if (world_in_bounds(world, source)) {
+            BlockState pulled = world_get(world, source);
+            if (piston_reaction(pulled) == PISTON_MOVE) {
+                if (!piston_write_cell(world, head_position, pulled)) return;
+                if (!piston_write_cell(world, source,
+                                       block_default(BLOCK_AIR))) return;
+                piston_reinitialize_moved_block(world, head_position, pulled);
+            }
+        }
     }
     state.data.piston.extended = false;
     if (!world_write_derived(world, position, state)) return;
@@ -151,7 +170,7 @@ static void piston_set_extended(World *world, BlockPos position,
 void piston_check_input(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
-    if (state.id != BLOCK_PISTON) return;
+    if (!block_is_piston_base((BlockId)state.id)) return;
     Direction facing = (Direction)state.data.piston.facing;
     bool powered = piston_input_powered(world, position, facing);
     bool changed = state.data.piston.powered != powered;
@@ -163,7 +182,7 @@ void piston_check_input(World *world, BlockPos position)
         if (state.data.piston.extended) {
             BlockPos head_position = block_offset(position, facing);
             BlockState head = world_get(world, head_position);
-            if (head.id == BLOCK_PISTON_HEAD &&
+            if (block_piston_pair((BlockId)state.id, (BlockId)head.id) &&
                 head.data.piston.facing == state.data.piston.facing &&
                 head.data.piston.powered != powered) {
                 head.data.piston.powered = powered;
@@ -186,12 +205,13 @@ static void piston_neighbor_changed(World *world, BlockPos position)
 static void piston_head_neighbor_changed(World *world, BlockPos position)
 {
     BlockState head = world_get(world, position);
-    if (head.id != BLOCK_PISTON_HEAD) return;
+    if (!block_is_piston_head((BlockId)head.id)) return;
     Direction facing = (Direction)head.data.piston.facing;
     BlockPos base_position = block_offset(position,
                                            direction_opposite(facing));
     BlockState base = world_get(world, base_position);
-    if (base.id != BLOCK_PISTON || !base.data.piston.extended ||
+    if (!block_piston_pair((BlockId)base.id, (BlockId)head.id) ||
+        !base.data.piston.extended ||
         base.data.piston.facing != head.data.piston.facing)
         world_remove_internal(world, position);
 }
@@ -200,7 +220,7 @@ static TickAction piston_tick(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
     TickAction action = {state, false, 0};
-    if (state.id != BLOCK_PISTON) return action;
+    if (!block_is_piston_base((BlockId)state.id)) return action;
 
     Direction facing = (Direction)state.data.piston.facing;
     bool powered = piston_input_powered(world, position, facing);
@@ -231,7 +251,23 @@ const BlockDef rs_piston_def = {
     .scheduled_tick = piston_tick
 };
 
+const BlockDef rs_sticky_piston_def = {
+    .name = "sticky_piston",
+    .full_cube = true,
+    .conductor = true,
+    .supports_wire = true,
+    .signal = piston_signal,
+    .neighbor_changed = piston_neighbor_changed,
+    .input_changed = piston_check_input,
+    .scheduled_tick = piston_tick
+};
+
 const BlockDef rs_piston_head_def = {
     .name = "piston_head",
+    .neighbor_changed = piston_head_neighbor_changed
+};
+
+const BlockDef rs_sticky_piston_head_def = {
+    .name = "sticky_piston_head",
     .neighbor_changed = piston_head_neighbor_changed
 };

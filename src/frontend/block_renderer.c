@@ -12,7 +12,8 @@ enum {
     PISTON_TILE_FIRST = OBSERVER_TILE_FIRST +
                         OBSERVER_TEXTURES*OBSERVER_STATES,
     PISTON_TEXTURES = 5,
-    TILE_COUNT = PISTON_TILE_FIRST + PISTON_TEXTURES
+    STICKY_PISTON_TILE_FIRST = PISTON_TILE_FIRST + PISTON_TEXTURES,
+    TILE_COUNT = STICKY_PISTON_TILE_FIRST + PISTON_TEXTURES
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
@@ -141,7 +142,12 @@ static Image create_solid_atlas(void)
         "res/textures/block/piston_bottom1.png",
         "res/textures/block/piston_side0.png",
         "res/textures/block/piston_side1.png",
-        "res/textures/block/piston_top.png"
+        "res/textures/block/piston_top.png",
+        "res/textures/block/sticky_piston_bottom0.png",
+        "res/textures/block/sticky_piston_bottom1.png",
+        "res/textures/block/sticky_piston_side0.png",
+        "res/textures/block/sticky_piston_side1.png",
+        "res/textures/block/sticky_piston_top.png"
     };
     Image sources[TILE_COUNT] = {0};
     Image atlas = {0};
@@ -674,6 +680,13 @@ static void observer_face_uv(Texture2D atlas, BlockState state, int face,
                   uv);
 }
 
+static int piston_tile_first(BlockId id)
+{
+    return id == BLOCK_STICKY_PISTON ||
+           id == BLOCK_STICKY_PISTON_HEAD ?
+           STICKY_PISTON_TILE_FIRST : PISTON_TILE_FIRST;
+}
+
 static void piston_face_uv(Texture2D atlas, BlockState state, int face,
                            Vector2 uv[4])
 {
@@ -714,7 +727,7 @@ static void piston_face_uv(Texture2D atlas, BlockState state, int face,
         if (state.data.piston.extended) region_width = 24.0f;
     }
 
-    int tile = PISTON_TILE_FIRST + texture;
+    int tile = piston_tile_first((BlockId)state.id) + texture;
     int turns = direction_turns(right[face], down[face], desired,
                                 points_down);
     solid_tile_region_uv(atlas, tile, region_x, 0.0f, region_width,
@@ -735,9 +748,10 @@ static int piston_head_uv(Texture2D atlas, BlockState state,
         DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_SOUTH, DIR_NORTH
     };
     Direction facing = (Direction)state.data.piston.facing;
-    int side = PISTON_TILE_FIRST +
+    int first = piston_tile_first((BlockId)state.id);
+    int side = first +
                (state.data.piston.powered ? PISTON_SIDE1 : PISTON_SIDE0);
-    int top = PISTON_TILE_FIRST + PISTON_TOP;
+    int top = first + PISTON_TOP;
     int count = 0;
 
     for (int face = 0; face < 6; ++face) {
@@ -1148,11 +1162,11 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
                 observer_face_uv(renderer->atlas, state, face, uv[count++]);
-    } else if (state.id == BLOCK_PISTON) {
+    } else if (block_is_piston_base((BlockId)state.id)) {
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
                 piston_face_uv(renderer->atlas, state, face, uv[count++]);
-    } else if (state.id == BLOCK_PISTON_HEAD) {
+    } else if (block_is_piston_head((BlockId)state.id)) {
         count = piston_head_uv(renderer->atlas, state, solid_faces, uv);
     } else if (state.id == BLOCK_REDSTONE_WIRE) {
         int mask = 0;
@@ -1275,7 +1289,7 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
             }
             ++count;
         }
-    } else if (state.id == BLOCK_PISTON) {
+    } else if (block_is_piston_base((BlockId)state.id)) {
         Vector3 minimum, maximum;
         piston_base_bounds(state, &minimum, &maximum);
         for (int face = 0; face < 6; ++face) {
@@ -1283,7 +1297,7 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
             box_face_vertices(center, minimum, maximum, face,
                               geometry->vertices[count++]);
         }
-    } else if (state.id == BLOCK_PISTON_HEAD) {
+    } else if (block_is_piston_head((BlockId)state.id)) {
         static const Direction directions[6] = {
             DIR_SOUTH, DIR_NORTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN
         };

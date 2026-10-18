@@ -9,9 +9,10 @@ typedef enum {
     BLOCK_IRON, BLOCK_REDSTONE_BLOCK, BLOCK_REDSTONE_WIRE, BLOCK_REDSTONE_TORCH,
     BLOCK_GLASS, BLOCK_REDSTONE_REPEATER, BLOCK_REDSTONE_COMPARATOR,
     BLOCK_POWERED_RAIL, BLOCK_ACTIVATOR_RAIL, BLOCK_OBSERVER,
-    BLOCK_PISTON,
+    BLOCK_PISTON, BLOCK_STICKY_PISTON,
     BLOCK_INTERNAL_FIRST,
     BLOCK_PISTON_HEAD = BLOCK_INTERNAL_FIRST,
+    BLOCK_STICKY_PISTON_HEAD,
     BLOCK_COUNT
 } BlockId;
 
@@ -67,4 +68,7 @@ const char *block_name(BlockId id);
 BlockPos block_offset(BlockPos pos, Direction direction);
 Direction direction_opposite(Direction direction);
 bool direction_horizontal(Direction direction);
+bool block_is_piston_base(BlockId id);
+bool block_is_piston_head(BlockId id);
+bool block_piston_pair(BlockId base, BlockId head);
 #endif
