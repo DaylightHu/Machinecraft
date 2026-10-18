@@ -99,7 +99,7 @@ static bool parse_position(char *tokens[], BlockPos *position)
 
 static bool parse_block(const char *name, BlockId *block)
 {
-    for (BlockId id = BLOCK_IRON; id < BLOCK_COUNT; ++id) {
+    for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         if (strcmp(name, block_name(id)) == 0) {
             *block = id;
             return true;
@@ -158,7 +158,8 @@ static bool parse_command(char *tokens[], int count, Command *command)
              command->block == BLOCK_REDSTONE_COMPARATOR ||
              command->block == BLOCK_POWERED_RAIL ||
              command->block == BLOCK_ACTIVATOR_RAIL ||
-             command->block == BLOCK_OBSERVER))
+             command->block == BLOCK_OBSERVER ||
+             command->block == BLOCK_PISTON))
             command->support = DIR_NORTH;
         return valid;
     } else if (count == 4) {
@@ -188,12 +189,12 @@ static void print_help(FILE *output)
           "remove X Y Z\nget X Y Z\ndot X Y Z\ndelay X Y Z\n"
           "mode X Y Z\n"
           "tick [COUNT]\nstats\nhelp\nquit\nBlocks:", output);
-    for (BlockId id = BLOCK_IRON; id < BLOCK_COUNT; ++id) {
+    for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         fprintf(output, " %s", block_name(id));
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
-          "Repeater/comparator/observer direction is output; rail direction is the texture top.\n"
-          "Observer accepts all six directions; other directional blocks are horizontal. Default north.\n",
+          "Repeater/comparator/observer direction is output; piston direction is its front; rail direction is the texture top.\n"
+          "Observer and piston accept all six directions; other directional blocks are horizontal. Default north.\n",
           output);
 }
 
@@ -239,6 +240,17 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
         fprintf(output, " powered=%s facing=%s",
                 state.data.observer.powered ? "yes" : "no",
                 direction_names[state.data.observer.facing]);
+        break;
+    case BLOCK_PISTON:
+        fprintf(output, " powered=%s extended=%s facing=%s",
+                state.data.piston.powered ? "yes" : "no",
+                state.data.piston.extended ? "yes" : "no",
+                direction_names[state.data.piston.facing]);
+        break;
+    case BLOCK_PISTON_HEAD:
+        fprintf(output, " powered=%s facing=%s",
+                state.data.piston.powered ? "yes" : "no",
+                direction_names[state.data.piston.facing]);
         break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);

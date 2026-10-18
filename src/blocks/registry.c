@@ -18,7 +18,9 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_REDSTONE_COMPARATOR] = &rs_comparator_def,
         [BLOCK_POWERED_RAIL] = &rs_powered_rail_def,
         [BLOCK_ACTIVATOR_RAIL] = &rs_activator_rail_def,
-        [BLOCK_OBSERVER] = &rs_observer_def
+        [BLOCK_OBSERVER] = &rs_observer_def,
+        [BLOCK_PISTON] = &rs_piston_def,
+        [BLOCK_PISTON_HEAD] = &rs_piston_head_def
     };
     return (unsigned)id < BLOCK_COUNT ? definitions[id] : &air;
 }
@@ -43,8 +45,10 @@ BlockState block_default(BlockId id)
         state.data.comparator.facing = DIR_NORTH;
     } else if (block_is_rail(id)) {
         state.data.rail.facing = DIR_NORTH;
-    } else if (id == BLOCK_OBSERVER){
+    } else if (id == BLOCK_OBSERVER) {
         state.data.observer.facing = DIR_NORTH;
+    } else if (id == BLOCK_PISTON || id == BLOCK_PISTON_HEAD) {
+        state.data.piston.facing = DIR_NORTH;
     }
     return state;
 }

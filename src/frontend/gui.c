@@ -448,7 +448,8 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                            selected == BLOCK_REDSTONE_COMPARATOR ||
                            selected == BLOCK_POWERED_RAIL ||
                            selected == BLOCK_ACTIVATOR_RAIL;
-        Direction placement = selected == BLOCK_OBSERVER ?
+        Direction placement = (selected == BLOCK_OBSERVER ||
+                               selected == BLOCK_PISTON) ?
                               direction_opposite(
                                   camera_direction(&app->camera)) :
                               (directional ? facing : direction_opposite(hit.face));

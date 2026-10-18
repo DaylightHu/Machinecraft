@@ -98,6 +98,7 @@ void sim_schedule(World *w, BlockPos p, uint32_t delay)
     if (!delay || UINT64_MAX - w->tick < delay) { w->sim->error = RS_INTERNAL_ERROR; return; }
     if (!scheduler_add(&w->sim->scheduler, p, w->tick + delay)) w->sim->error = RS_OUT_OF_MEMORY;
 }
+void sim_cancel(World *w, BlockPos p) { scheduler_cancel(&w->sim->scheduler, p); }
 RsResult sim_flush(World *w)
 {
     if (!w) return RS_INVALID_ARGUMENT;

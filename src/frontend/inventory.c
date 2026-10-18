@@ -33,7 +33,8 @@ static const ItemTexture item_textures[] = {
     {BLOCK_REDSTONE_COMPARATOR, "res/textures/item/redstone_comparator.png"},
     {BLOCK_POWERED_RAIL, "res/textures/item/powered_rail.png"},
     {BLOCK_ACTIVATOR_RAIL, "res/textures/item/activator_rail.png"},
-    {BLOCK_OBSERVER, "res/textures/item/observer.png"}
+    {BLOCK_OBSERVER, "res/textures/item/observer.png"},
+    {BLOCK_PISTON, "res/textures/item/piston.png"}
 };
 
 static InventoryLayout inventory_layout(void)

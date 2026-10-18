@@ -249,6 +249,22 @@ World *save_file_read(const char *path, GameSessionResult *result)
                     !comparator_supported(w, p)) goto fail;
                 if (block_is_rail((BlockId)state.id) && !rail_supported(w, p))
                     goto fail;
+                if (state.id == BLOCK_PISTON && state.data.piston.extended) {
+                    Direction facing = (Direction)state.data.piston.facing;
+                    BlockState head = world_get(w, block_offset(p, facing));
+                    if (head.id != BLOCK_PISTON_HEAD ||
+                        head.data.piston.facing != state.data.piston.facing)
+                        goto fail;
+                }
+                if (state.id == BLOCK_PISTON_HEAD) {
+                    Direction facing = (Direction)state.data.piston.facing;
+                    BlockState base = world_get(
+                        w, block_offset(p, direction_opposite(facing)));
+                    if (base.id != BLOCK_PISTON ||
+                        !base.data.piston.extended ||
+                        base.data.piston.facing != state.data.piston.facing)
+                        goto fail;
+                }
                 if (state.id == BLOCK_REDSTONE_TORCH) {
                     if (!torch_supported(w, p, (Direction)state.data.torch.support_dir)) goto fail;
                     ++actual_torches;

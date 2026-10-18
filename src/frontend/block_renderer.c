@@ -9,9 +9,16 @@ enum {
     OBSERVER_TEXTURES = 4,
     OBSERVER_STATES = 2,
     OBSERVER_TILE_FIRST = 2,
-    TILE_COUNT = OBSERVER_TILE_FIRST + OBSERVER_TEXTURES*OBSERVER_STATES
+    PISTON_TILE_FIRST = OBSERVER_TILE_FIRST +
+                        OBSERVER_TEXTURES*OBSERVER_STATES,
+    PISTON_TEXTURES = 6,
+    TILE_COUNT = PISTON_TILE_FIRST + PISTON_TEXTURES
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
+enum {
+    PISTON_BOTTOM0, PISTON_BOTTOM1, PISTON_INNER,
+    PISTON_SIDE0, PISTON_SIDE1, PISTON_TOP
+};
 enum {
     WIRE_SHAPES = 16, WIRE_STATES = 2,
     WIRE_SIDE_FIRST = WIRE_SHAPES*WIRE_STATES,
@@ -129,7 +136,13 @@ static Image create_solid_atlas(void)
         "res/textures/block/observer_back1.png",
         "res/textures/block/observer_front1.png",
         "res/textures/block/observer_side1.png",
-        "res/textures/block/observer_top1.png"
+        "res/textures/block/observer_top1.png",
+        "res/textures/block/piston_bottom0.png",
+        "res/textures/block/piston_bottom1.png",
+        "res/textures/block/piston_inner.png",
+        "res/textures/block/piston_side0.png",
+        "res/textures/block/piston_side1.png",
+        "res/textures/block/piston_top.png"
     };
     Image sources[TILE_COUNT] = {0};
     Image atlas = {0};
@@ -597,16 +610,24 @@ static int direction_turns(Direction right, Direction down,
     return 0;
 }
 
-static void solid_tile_uv(Texture2D atlas, int tile, int turns,
-                          Vector2 uv[4])
+static void solid_tile_region_uv(Texture2D atlas, int tile,
+                                 float x, float y, float width, float height,
+                                 int turns, Vector2 uv[4])
 {
-    float u0 = (tile*TILE_SIZE + 0.5f)/atlas.width;
-    float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/atlas.width;
-    float v0 = 0.5f/atlas.height;
-    float v1 = (TILE_SIZE - 0.5f)/atlas.height;
+    float u0 = (tile*TILE_SIZE + x + 0.5f)/atlas.width;
+    float u1 = (tile*TILE_SIZE + x + width - 0.5f)/atlas.width;
+    float v0 = (y + 0.5f)/atlas.height;
+    float v1 = (y + height - 0.5f)/atlas.height;
     const Vector2 base[4] = {{u0,v1},{u1,v1},{u1,v0},{u0,v0}};
     for (int vertex = 0; vertex < 4; ++vertex)
         uv[vertex] = base[(vertex + turns) & 3];
+}
+
+static void solid_tile_uv(Texture2D atlas, int tile, int turns,
+                          Vector2 uv[4])
+{
+    solid_tile_region_uv(atlas, tile, 0.0f, 0.0f,
+                         TILE_SIZE, TILE_SIZE, turns, uv);
 }
 
 static void observer_face_uv(Texture2D atlas, BlockState state, int face,
@@ -652,6 +673,100 @@ static void observer_face_uv(Texture2D atlas, BlockState state, int face,
                   direction_turns(right[face], down[face], desired,
                                   points_down),
                   uv);
+}
+
+static void piston_face_uv(Texture2D atlas, BlockState state, int face,
+                           Vector2 uv[4])
+{
+    static const Direction directions[6] = {
+        DIR_SOUTH, DIR_NORTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN
+    };
+    static const Direction right[6] = {
+        DIR_EAST, DIR_WEST, DIR_NORTH, DIR_SOUTH, DIR_EAST, DIR_EAST
+    };
+    static const Direction down[6] = {
+        DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_SOUTH, DIR_NORTH
+    };
+    Direction facing = (Direction)state.data.piston.facing;
+    Direction face_direction = directions[face];
+    bool powered = state.data.piston.powered;
+    int texture;
+    Direction desired;
+    bool points_down;
+    float region_x = 0.0f, region_width = TILE_SIZE;
+
+    if (face_direction == facing) {
+        texture = state.data.piston.extended ? PISTON_INNER : PISTON_TOP;
+        desired = facing == DIR_UP ? DIR_NORTH :
+                  facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
+        points_down = true;
+    } else if (face_direction == direction_opposite(facing)) {
+        texture = powered ? PISTON_BOTTOM1 : PISTON_BOTTOM0;
+        desired = facing == DIR_UP ? DIR_NORTH :
+                  facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
+        points_down = true;
+    } else {
+        texture = powered ? PISTON_SIDE1 : PISTON_SIDE0;
+        desired = facing;
+        points_down = false;
+        /* The rightmost eight source pixels are the wooden head. Once the
+         * piston extends, only the 12/16-deep stone body remains here. */
+        if (state.data.piston.extended) region_width = 24.0f;
+    }
+
+    int tile = PISTON_TILE_FIRST + texture;
+    int turns = direction_turns(right[face], down[face], desired,
+                                points_down);
+    solid_tile_region_uv(atlas, tile, region_x, 0.0f, region_width,
+                         TILE_SIZE, turns, uv);
+}
+
+static int piston_head_uv(Texture2D atlas, BlockState state,
+                          unsigned solid_faces,
+                          Vector2 uv[BLOCK_GEOMETRY_QUADS][4])
+{
+    static const Direction directions[6] = {
+        DIR_SOUTH, DIR_NORTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN
+    };
+    static const Direction right[6] = {
+        DIR_EAST, DIR_WEST, DIR_NORTH, DIR_SOUTH, DIR_EAST, DIR_EAST
+    };
+    static const Direction down[6] = {
+        DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_SOUTH, DIR_NORTH
+    };
+    Direction facing = (Direction)state.data.piston.facing;
+    int side = PISTON_TILE_FIRST +
+               (state.data.piston.powered ? PISTON_SIDE1 : PISTON_SIDE0);
+    int inner = PISTON_TILE_FIRST + PISTON_INNER;
+    int count = 0;
+
+    for (int face = 0; face < 6; ++face) {
+        if (!(solid_faces & (1u << face))) continue;
+        Direction face_direction = directions[face];
+        if (face_direction == facing) {
+            Direction upright = facing == DIR_UP ? DIR_NORTH :
+                                facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
+            solid_tile_uv(atlas, PISTON_TILE_FIRST + PISTON_TOP,
+                          direction_turns(right[face], down[face], upright,
+                                          true), uv[count]);
+        } else if (face_direction == direction_opposite(facing)) {
+            solid_tile_uv(atlas, inner, 0, uv[count]);
+        } else {
+            int turns = direction_turns(right[face], down[face], facing,
+                                        false);
+            solid_tile_region_uv(atlas, side, 24.0f, 0.0f, 8.0f,
+                                 TILE_SIZE, turns, uv[count]);
+        }
+        ++count;
+    }
+
+    for (int face = 0; face < 6; ++face) {
+        Direction face_direction = directions[face];
+        if (face_direction == facing ||
+            face_direction == direction_opposite(facing)) continue;
+        solid_tile_uv(atlas, inner, 0, uv[count++]);
+    }
+    return count;
 }
 
 static void emit_wire_face(const CubeFace *face, Vector3 center,
@@ -1024,6 +1139,12 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
                 observer_face_uv(renderer->atlas, state, face, uv[count++]);
+    } else if (state.id == BLOCK_PISTON) {
+        for (int face = 0; face < 6; ++face)
+            if (solid_faces & (1u << face))
+                piston_face_uv(renderer->atlas, state, face, uv[count++]);
+    } else if (state.id == BLOCK_PISTON_HEAD) {
+        count = piston_head_uv(renderer->atlas, state, solid_faces, uv);
     } else if (state.id == BLOCK_REDSTONE_WIRE) {
         int mask = 0;
         for (int direction = 0; direction < 4; ++direction)
@@ -1058,6 +1179,75 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
     return count;
 }
 
+static void box_face_vertices(Vector3 center, Vector3 minimum,
+                              Vector3 maximum, int face, Vector3 output[4])
+{
+    for (int vertex = 0; vertex < 4; ++vertex) {
+        Vector3 point = cube_faces[face].vertices[vertex];
+        output[vertex] = (Vector3){
+            center.x + (point.x < 0.0f ? minimum.x : maximum.x),
+            center.y + (point.y < 0.0f ? minimum.y : maximum.y),
+            center.z + (point.z < 0.0f ? minimum.z : maximum.z)
+        };
+    }
+}
+
+static void piston_base_bounds(BlockState state, Vector3 *minimum,
+                               Vector3 *maximum)
+{
+    *minimum = (Vector3){-0.5f, -0.5f, -0.5f};
+    *maximum = (Vector3){ 0.5f,  0.5f,  0.5f};
+    if (!state.data.piston.extended) return;
+    switch ((Direction)state.data.piston.facing) {
+    case DIR_EAST:  maximum->x =  0.25f; break;
+    case DIR_WEST:  minimum->x = -0.25f; break;
+    case DIR_UP:    maximum->y =  0.25f; break;
+    case DIR_DOWN:  minimum->y = -0.25f; break;
+    case DIR_SOUTH: maximum->z =  0.25f; break;
+    case DIR_NORTH: minimum->z = -0.25f; break;
+    default: break;
+    }
+}
+
+static void piston_head_bounds(Direction facing,
+                               Vector3 *plate_minimum,
+                               Vector3 *plate_maximum,
+                               Vector3 *rod_minimum,
+                               Vector3 *rod_maximum)
+{
+    *plate_minimum = (Vector3){-0.5f, -0.5f, -0.5f};
+    *plate_maximum = (Vector3){ 0.5f,  0.5f,  0.5f};
+    *rod_minimum = (Vector3){-0.125f, -0.125f, -0.125f};
+    *rod_maximum = (Vector3){ 0.125f,  0.125f,  0.125f};
+    switch (facing) {
+    case DIR_EAST:
+        plate_minimum->x = 0.25f;
+        rod_minimum->x = -0.5f; rod_maximum->x = 0.25f;
+        break;
+    case DIR_WEST:
+        plate_maximum->x = -0.25f;
+        rod_minimum->x = -0.25f; rod_maximum->x = 0.5f;
+        break;
+    case DIR_UP:
+        plate_minimum->y = 0.25f;
+        rod_minimum->y = -0.5f; rod_maximum->y = 0.25f;
+        break;
+    case DIR_DOWN:
+        plate_maximum->y = -0.25f;
+        rod_minimum->y = -0.25f; rod_maximum->y = 0.5f;
+        break;
+    case DIR_SOUTH:
+        plate_minimum->z = 0.25f;
+        rod_minimum->z = -0.5f; rod_maximum->z = 0.25f;
+        break;
+    case DIR_NORTH:
+        plate_maximum->z = -0.25f;
+        rod_minimum->z = -0.25f; rod_maximum->z = 0.5f;
+        break;
+    default: break;
+    }
+}
+
 void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState state,
                                    Vector3 center, unsigned solid_faces,
                                    BlockGeometry *geometry)
@@ -1073,6 +1263,34 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
                 geometry->vertices[count][vertex] = (Vector3){center.x+p.x,center.y+p.y,center.z+p.z};
             }
             ++count;
+        }
+    } else if (state.id == BLOCK_PISTON) {
+        Vector3 minimum, maximum;
+        piston_base_bounds(state, &minimum, &maximum);
+        for (int face = 0; face < 6; ++face) {
+            if (!(solid_faces & (1u << face))) continue;
+            box_face_vertices(center, minimum, maximum, face,
+                              geometry->vertices[count++]);
+        }
+    } else if (state.id == BLOCK_PISTON_HEAD) {
+        static const Direction directions[6] = {
+            DIR_SOUTH, DIR_NORTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN
+        };
+        Direction facing = (Direction)state.data.piston.facing;
+        Vector3 plate_minimum, plate_maximum, rod_minimum, rod_maximum;
+        piston_head_bounds(facing, &plate_minimum, &plate_maximum,
+                           &rod_minimum, &rod_maximum);
+        for (int face = 0; face < 6; ++face) {
+            if (!(solid_faces & (1u << face))) continue;
+            box_face_vertices(center, plate_minimum, plate_maximum, face,
+                              geometry->vertices[count++]);
+        }
+        for (int face = 0; face < 6; ++face) {
+            Direction face_direction = directions[face];
+            if (face_direction == facing ||
+                face_direction == direction_opposite(facing)) continue;
+            box_face_vertices(center, rod_minimum, rod_maximum, face,
+                              geometry->vertices[count++]);
         }
     } else if (state.id == BLOCK_REDSTONE_WIRE) {
         for (int vertex = 0; vertex < 4; ++vertex) {

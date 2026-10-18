@@ -35,6 +35,7 @@ void sim_mark_wire(World *, BlockPos);
 void sim_mark_rail(World *, BlockPos);
 void sim_mark_input(World *, BlockPos);
 void sim_schedule(World *, BlockPos, uint32_t delay);
+void sim_cancel(World *, BlockPos);
 TorchRuntime *sim_torch_runtime(const World *, BlockPos);
 bool sim_chunk_pinned(const World *, BlockPos chunk);
 #endif
