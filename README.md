@@ -32,4 +32,3 @@ Just find ways by yourself.
 
 After the first bootstrap, use `./nob` or `.\nob.exe` to build both the GUI and CLI. Run `help` to see the other commands. Outputs are written to
 `build/macos/` or `build/windows/`.
-

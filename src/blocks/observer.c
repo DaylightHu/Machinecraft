@@ -41,8 +41,9 @@ static TickAction observer_tick(World *world, BlockPos position)
 const BlockDef rs_observer_def = {
     .name = "observer",
     .full_cube = true,
-    .conductor = true,
     .supports_wire = true,
+    .signal_source = true,
+    .push_reaction = PUSH_NORMAL,
     .signal = observer_signal,
     .direct_signal = observer_signal,
     .observed_changed = observer_observed_changed,

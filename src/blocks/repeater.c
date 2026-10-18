@@ -46,6 +46,22 @@ static bool repeater_side_locked(const World *world, BlockPos position,
     return false;
 }
 
+static bool repeater_should_prioritize(const World *world, BlockPos position,
+                                       BlockState state)
+{
+    Direction output = (Direction)state.data.repeater.facing;
+    BlockState next = world_get(world, block_offset(position, output));
+    Direction next_output;
+    if (next.id == BLOCK_REDSTONE_REPEATER) {
+        next_output = (Direction)next.data.repeater.facing;
+    } else if (next.id == BLOCK_REDSTONE_COMPARATOR) {
+        next_output = (Direction)next.data.comparator.facing;
+    } else {
+        return false;
+    }
+    return next_output != direction_opposite(output);
+}
+
 static uint8_t repeater_signal(const World *world, BlockPos position,
                                Direction face, SignalMode mode)
 {
@@ -69,8 +85,15 @@ void repeater_check_input(World *world, BlockPos position)
 
     bool should_be_powered = repeater_input_powered(world, position, state);
     if (state.data.repeater.powered != should_be_powered) {
-        sim_schedule(world, position,
-                     (uint32_t)state.data.repeater.delay*REPEATER_DELAY_SCALE);
+        TickPriority priority = TICK_HIGH;
+        if (repeater_should_prioritize(world, position, state))
+            priority = TICK_EXTREMELY_HIGH;
+        else if (state.data.repeater.powered)
+            priority = TICK_VERY_HIGH;
+        sim_schedule_priority(
+            world, position,
+            (uint32_t)state.data.repeater.delay*REPEATER_DELAY_SCALE,
+            priority);
     }
 }
 
@@ -105,8 +128,10 @@ static TickAction repeater_tick(World *world, BlockPos position)
         action.state.data.repeater.powered = true;
         action.changed = true;
         if (!input) {
-            action.next_delay =
-                (uint32_t)state.data.repeater.delay*REPEATER_DELAY_SCALE;
+            sim_schedule_priority(
+                world, position,
+                (uint32_t)state.data.repeater.delay*REPEATER_DELAY_SCALE,
+                TICK_VERY_HIGH);
         }
     }
     return action;
@@ -114,7 +139,9 @@ static TickAction repeater_tick(World *world, BlockPos position)
 
 const BlockDef rs_repeater_def = {
     .name = "redstone_repeater",
+    .signal_source = true,
     .diode = true,
+    .push_reaction = PUSH_DESTROY,
     .signal = repeater_signal,
     .direct_signal = repeater_signal,
     .neighbor_changed = repeater_neighbor,

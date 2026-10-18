@@ -14,8 +14,9 @@ typedef struct {
 } SolidPower;
 
 /* Edits mark work; flush performs zero-delay work without advancing time.
- * step flushes edits, advances ONE game tick, applies due events as a batch,
- * then flushes their consequences. Torch delay = 2 game ticks (100 ms at 20 TPS). */
+ * step flushes edits, advances ONE game tick, then runs due events in
+ * Java-style priority/insertion order. Each event's consequences settle
+ * before the next event runs. Torch delay = 2 game ticks (100 ms at 20 TPS). */
 RsResult sim_flush(World *world);
 RsResult sim_step(World *world);
 SimStats sim_stats(const World *world);

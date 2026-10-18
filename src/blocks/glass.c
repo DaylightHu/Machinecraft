@@ -6,5 +6,6 @@
 const BlockDef rs_glass_def = {
     .name = "glass",
     .full_cube = true,
-    .supports_wire = true
+    .supports_wire = true,
+    .push_reaction = PUSH_NORMAL
 };

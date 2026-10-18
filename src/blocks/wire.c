@@ -24,14 +24,11 @@ static bool connects(const World *world, BlockPos position, Direction face)
         /* Comparators accept dust from the rear and from either side. */
         return true;
     }
-    if (block_is_rail((BlockId)state.id)) return true;
-
-    if (state.id == BLOCK_OBSERVER) 
+    if (state.id == BLOCK_OBSERVER)
         return state.data.observer.facing == direction_opposite(face);
 
     return state.id == BLOCK_REDSTONE_WIRE ||
-           state.id == BLOCK_REDSTONE_TORCH ||
-           state.id == BLOCK_REDSTONE_BLOCK;
+           block_is_signal_source(world, position);
 }
 
 bool wire_supported(const World *world, BlockPos position)
@@ -132,6 +129,8 @@ static void wire_neighbor(World *world, BlockPos position)
 /* Both query forms are suppressed in SIGNAL_WITHOUT_WIRE mode. */
 const BlockDef rs_wire_def = {
     .name = "redstone_wire",
+    .signal_source = true,
+    .push_reaction = PUSH_DESTROY,
     .signal = wire_signal,
     .direct_signal = wire_signal,
     .neighbor_changed = wire_neighbor

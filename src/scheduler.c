@@ -5,7 +5,10 @@
 
 static bool before(ScheduledEvent first, ScheduledEvent second)
 {
-    return first.due < second.due || (first.due == second.due && pos_compare(first.pos, second.pos) < 0);
+    if (first.due != second.due) return first.due < second.due;
+    if (first.priority != second.priority)
+        return first.priority < second.priority;
+    return first.sequence < second.sequence;
 }
 
 static void swap(Scheduler *scheduler, size_t first, size_t second)
@@ -85,14 +88,27 @@ bool scheduler_pending(const Scheduler *s, BlockPos pos)
 
 bool scheduler_add(Scheduler *s, BlockPos pos, uint64_t due)
 {
+    return scheduler_add_priority(s, pos, due, TICK_NORMAL);
+}
+
+bool scheduler_add_priority(Scheduler *s, BlockPos pos, uint64_t due,
+                            TickPriority priority)
+{
     if (scheduler_pending(s, pos)) return true;
+    if ((unsigned)priority > TICK_EXTREMELY_LOW ||
+        s->next_sequence == UINT64_MAX) return false;
     if (s->count == s->capacity) {
         size_t capacity = s->capacity ? s->capacity * 2 : 8;
         if (capacity < s->capacity || !scheduler_reserve(s, capacity)) return false;
     }
     if (!posmap_set(&s->slots, pos, s->count)) return false;
     size_t slot = s->count++;
-    s->heap[slot] = (ScheduledEvent){due, pos};
+    s->heap[slot] = (ScheduledEvent){
+        .due = due,
+        .sequence = s->next_sequence++,
+        .pos = pos,
+        .priority = priority
+    };
     sift_up(s, slot); return true;
 }
 

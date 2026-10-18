@@ -1,14 +1,7 @@
 #include "block_internal.h"
 #include "sim_internal.h"
 
-enum { PISTON_DELAY = 2, PISTON_PUSH_LIMIT = 12 };
-
-typedef enum {
-    PISTON_AIR,
-    PISTON_MOVE,
-    PISTON_DESTROY,
-    PISTON_BLOCK
-} PistonReaction;
+enum { PISTON_MOTION_TICKS = 2, PISTON_PUSH_LIMIT = 12 };
 
 static bool piston_input_powered(const World *world, BlockPos position,
                                  Direction facing)
@@ -37,31 +30,13 @@ static bool piston_input_powered(const World *world, BlockPos position,
     return false;
 }
 
-static PistonReaction piston_reaction(BlockState state)
+static PushReaction piston_reaction(BlockState state)
 {
-    switch ((BlockId)state.id) {
-    case BLOCK_AIR:
-        return PISTON_AIR;
-    case BLOCK_IRON:
-    case BLOCK_REDSTONE_BLOCK:
-    case BLOCK_GLASS:
-    case BLOCK_OBSERVER:
-        return PISTON_MOVE;
-    case BLOCK_PISTON:
-    case BLOCK_STICKY_PISTON:
-        return state.data.piston.extended ? PISTON_BLOCK : PISTON_MOVE;
-    case BLOCK_REDSTONE_WIRE:
-    case BLOCK_REDSTONE_TORCH:
-    case BLOCK_REDSTONE_REPEATER:
-    case BLOCK_REDSTONE_COMPARATOR:
-    case BLOCK_POWERED_RAIL:
-    case BLOCK_ACTIVATOR_RAIL:
-        return PISTON_DESTROY;
-    case BLOCK_PISTON_HEAD:
-    case BLOCK_STICKY_PISTON_HEAD:
-    default:
-        return PISTON_BLOCK;
-    }
+    BlockId id = (BlockId)state.id;
+    if (id == BLOCK_AIR) return PUSH_IGNORE;
+    if (block_is_piston_base(id) && state.data.piston.extended)
+        return PUSH_BLOCK;
+    return block_definition(id)->push_reaction;
 }
 
 static void piston_reinitialize_moved_block(World *world, BlockPos position,
@@ -94,10 +69,10 @@ static bool piston_push(World *world, BlockPos position, Direction facing)
         cursor = block_offset(cursor, facing);
         if (!world_in_bounds(world, cursor)) return false;
         BlockState state = world_get(world, cursor);
-        PistonReaction reaction = piston_reaction(state);
-        if (reaction == PISTON_AIR) break;
-        if (reaction == PISTON_BLOCK) return false;
-        if (reaction == PISTON_DESTROY) {
+        PushReaction reaction = piston_reaction(state);
+        if (state.id == BLOCK_AIR || reaction == PUSH_IGNORE) break;
+        if (reaction == PUSH_BLOCK) return false;
+        if (reaction == PUSH_DESTROY) {
             destroyed = cursor;
             destroys = true;
             break;
@@ -121,8 +96,9 @@ static bool piston_push(World *world, BlockPos position, Direction facing)
     return true;
 }
 
-static void piston_set_extended(World *world, BlockPos position,
-                                BlockState state, bool extended)
+static bool piston_set_extended(World *world, BlockPos position,
+                                BlockState state, bool extended,
+                                bool pull_block)
 {
     Direction facing = (Direction)state.data.piston.facing;
     BlockPos head_position = block_offset(position, facing);
@@ -131,15 +107,15 @@ static void piston_set_extended(World *world, BlockPos position,
                       BLOCK_STICKY_PISTON_HEAD : BLOCK_PISTON_HEAD;
 
     if (extended) {
-        if (!piston_push(world, position, facing)) return;
+        if (!piston_push(world, position, facing)) return false;
         BlockState head = block_default(head_id);
         head.data.piston.facing = state.data.piston.facing;
         head.data.piston.powered = state.data.piston.powered;
-        if (!piston_write_cell(world, head_position, head)) return;
+        if (!piston_write_cell(world, head_position, head)) return false;
         state.data.piston.extended = true;
-        if (!world_write_derived(world, position, state)) return;
+        if (!world_write_derived(world, position, state)) return false;
         sim_notify_change(world, position);
-        return;
+        return true;
     }
 
     BlockState head = world_get(world, head_position);
@@ -147,24 +123,26 @@ static void piston_set_extended(World *world, BlockPos position,
                     head.data.piston.facing == state.data.piston.facing;
     if (had_head) {
         if (!piston_write_cell(world, head_position,
-                               block_default(BLOCK_AIR))) return;
+                               block_default(BLOCK_AIR))) return false;
     }
 
-    if (base_id == BLOCK_STICKY_PISTON && had_head) {
+    if (base_id == BLOCK_STICKY_PISTON && had_head && pull_block) {
         BlockPos source = block_offset(head_position, facing);
         if (world_in_bounds(world, source)) {
             BlockState pulled = world_get(world, source);
-            if (piston_reaction(pulled) == PISTON_MOVE) {
-                if (!piston_write_cell(world, head_position, pulled)) return;
+            if (piston_reaction(pulled) == PUSH_NORMAL) {
+                if (!piston_write_cell(world, head_position, pulled))
+                    return false;
                 if (!piston_write_cell(world, source,
-                                       block_default(BLOCK_AIR))) return;
+                                       block_default(BLOCK_AIR))) return false;
                 piston_reinitialize_moved_block(world, head_position, pulled);
             }
         }
     }
     state.data.piston.extended = false;
-    if (!world_write_derived(world, position, state)) return;
+    if (!world_write_derived(world, position, state)) return false;
     sim_notify_change(world, position);
+    return true;
 }
 
 void piston_check_input(World *world, BlockPos position)
@@ -189,12 +167,20 @@ void piston_check_input(World *world, BlockPos position)
                 if (!world_write_visual(world, head_position, head)) return;
             }
         }
-        sim_cancel(world, position);
     }
 
-    if (powered != state.data.piston.extended &&
-        !scheduler_pending(&world->sim->scheduler, position))
-        sim_schedule(world, position, PISTON_DELAY);
+    if (powered && !state.data.piston.extended) {
+        if (piston_set_extended(world, position, state, true, false))
+            sim_schedule(world, position, PISTON_MOTION_TICKS);
+    } else if (!powered && state.data.piston.extended) {
+        /* A retraction requested while extension is still moving is event 2
+         * in Java 1.16.2. Sticky pistons retract but leave the moved block. */
+        bool extension_in_progress =
+            scheduler_pending(&world->sim->scheduler, position);
+        sim_cancel(world, position);
+        (void)piston_set_extended(world, position, state, false,
+                                  !extension_in_progress);
+    }
 }
 
 static void piston_neighbor_changed(World *world, BlockPos position)
@@ -216,58 +202,44 @@ static void piston_head_neighbor_changed(World *world, BlockPos position)
         world_remove_internal(world, position);
 }
 
-static TickAction piston_tick(World *world, BlockPos position)
+static TickAction piston_motion_tick(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
     TickAction action = {state, false, 0};
-    if (!block_is_piston_base((BlockId)state.id)) return action;
-
-    Direction facing = (Direction)state.data.piston.facing;
-    bool powered = piston_input_powered(world, position, facing);
-    if (state.data.piston.powered != powered) {
-        state.data.piston.powered = powered;
-        if (!world_write_visual(world, position, state)) return action;
-    }
-    if (powered != state.data.piston.extended)
-        piston_set_extended(world, position, state, powered);
+    /* The event marks the end of the two-game-tick movement interval. The
+     * compact renderer has no moving block entity, so no state write is
+     * needed here; absence of the pending event is the completed state. */
     return action;
-}
-
-static uint8_t piston_signal(const World *world, BlockPos position,
-                             Direction face, SignalMode mode)
-{
-    (void)face;
-    return power_conducted(world, position, mode);
 }
 
 const BlockDef rs_piston_def = {
     .name = "piston",
     .full_cube = true,
-    .conductor = true,
     .supports_wire = true,
-    .signal = piston_signal,
+    .push_reaction = PUSH_NORMAL,
     .neighbor_changed = piston_neighbor_changed,
     .input_changed = piston_check_input,
-    .scheduled_tick = piston_tick
+    .scheduled_tick = piston_motion_tick
 };
 
 const BlockDef rs_sticky_piston_def = {
     .name = "sticky_piston",
     .full_cube = true,
-    .conductor = true,
     .supports_wire = true,
-    .signal = piston_signal,
+    .push_reaction = PUSH_NORMAL,
     .neighbor_changed = piston_neighbor_changed,
     .input_changed = piston_check_input,
-    .scheduled_tick = piston_tick
+    .scheduled_tick = piston_motion_tick
 };
 
 const BlockDef rs_piston_head_def = {
     .name = "piston_head",
+    .push_reaction = PUSH_BLOCK,
     .neighbor_changed = piston_head_neighbor_changed
 };
 
 const BlockDef rs_sticky_piston_head_def = {
     .name = "sticky_piston_head",
+    .push_reaction = PUSH_BLOCK,
     .neighbor_changed = piston_head_neighbor_changed
 };

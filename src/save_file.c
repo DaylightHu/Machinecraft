@@ -13,7 +13,12 @@
 #include <unistd.h>
 #endif
 
-enum { SAVE_VERSION = 2, SAVE_HEADER_SIZE = 40, SAVE_CRC_OFFSET = 36 };
+enum {
+    SAVE_VERSION = 3,
+    SAVE_VERSION_LEGACY = 2,
+    SAVE_HEADER_SIZE = 40,
+    SAVE_CRC_OFFSET = 36
+};
 static const unsigned char save_magic[8] = {'M','C','W','O','R','L','D',0};
 static uint32_t crc32_update(uint32_t crc, const unsigned char *bytes, size_t size)
 {
@@ -65,7 +70,14 @@ static int compare_torches(const void *a, const void *b)
 }
 static int compare_events(const void *a, const void *b)
 {
-    return pos_compare(((const ScheduledEvent *)a)->pos, ((const ScheduledEvent *)b)->pos);
+    const ScheduledEvent *first = a, *second = b;
+    if (first->due != second->due)
+        return first->due < second->due ? -1 : 1;
+    if (first->priority != second->priority)
+        return first->priority < second->priority ? -1 : 1;
+    if (first->sequence != second->sequence)
+        return first->sequence < second->sequence ? -1 : 1;
+    return 0;
 }
 static bool runtime_valid(const World *w, const TorchRuntime *t)
 {
@@ -119,10 +131,14 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     }
     for (size_t i = 0; i < s->scheduler.count; ++i) {
         ScheduledEvent e = events[i];
-        if (e.due <= w->tick || !block_definition((BlockId)world_get(w, e.pos).id)->scheduled_tick) {
+        if (e.due <= w->tick ||
+            (unsigned)e.priority > TICK_EXTREMELY_LOW ||
+            !block_definition((BlockId)world_get(w, e.pos).id)->scheduled_tick) {
             result = GAME_SESSION_SIMULATION_ERROR; goto cleanup;
         }
-        bytes_pos(&b, e.pos); bytes_u64(&b, e.due - w->tick);
+        bytes_pos(&b, e.pos);
+        bytes_u64(&b, e.due - w->tick);
+        bytes_u8(&b, (uint8_t)e.priority);
     }
     if (!b.ok) { result = GAME_SESSION_OUT_OF_MEMORY; goto cleanup; }
     uint32_t crc = crc32_bytes(b.data, b.size);
@@ -211,14 +227,20 @@ World *save_file_read(const char *path, GameSessionResult *result)
     if (b.size < 12 || memcmp(b.data, save_magic, 8)) goto fail;
     b.cursor = 8;
     unsigned version = bytes_read16(&b), header = bytes_read16(&b);
-    if (version != SAVE_VERSION) { *result = GAME_SESSION_UNSUPPORTED_SAVE; goto fail; }
+    if (version != SAVE_VERSION && version != SAVE_VERSION_LEGACY) {
+        *result = GAME_SESSION_UNSUPPORTED_SAVE;
+        goto fail;
+    }
     if (header != SAVE_HEADER_SIZE || b.size < SAVE_HEADER_SIZE) goto fail;
     uint32_t ground = bytes_read32(&b); uint64_t tick = bytes_read64(&b);
     uint32_t chunk_count = bytes_read32(&b), torch_count = bytes_read32(&b), event_count = bytes_read32(&b);
     uint32_t crc = bytes_read32(&b);
     memset(b.data + SAVE_CRC_OFFSET, 0, 4);
+    uint64_t event_size = version >= 3 ? 21 : 20;
     if (crc32_bytes(b.data, b.size) != crc || ground > 65 ||
-        (uint64_t)chunk_count * 20 + (uint64_t)torch_count * 86 + (uint64_t)event_count * 20 > b.size - SAVE_HEADER_SIZE) goto fail;
+        (uint64_t)chunk_count * 20 + (uint64_t)torch_count * 86 +
+        (uint64_t)event_count * event_size > b.size - SAVE_HEADER_SIZE)
+        goto fail;
     w = world_create((WorldConfig){(int)ground});
     if (!w) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
     w->tick = tick;
@@ -288,9 +310,26 @@ World *save_file_read(const char *path, GameSessionResult *result)
     }
     for (uint32_t i = 0; i < event_count; ++i) {
         BlockPos p = bytes_read_pos(&b); uint64_t remaining = bytes_read64(&b);
+        TickPriority priority = version >= 3 ?
+            (TickPriority)bytes_read8(&b) : TICK_NORMAL;
+        BlockId event_block = (BlockId)world_get(w, p).id;
         if (!b.ok || !remaining || remaining > UINT64_MAX - tick ||
-            !block_definition((BlockId)world_get(w, p).id)->scheduled_tick || scheduler_pending(&w->sim->scheduler, p)) goto fail;
-        if (!scheduler_add(&w->sim->scheduler, p, tick + remaining)) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
+            (unsigned)priority > TICK_EXTREMELY_LOW ||
+            !block_definition(event_block)->scheduled_tick ||
+            scheduler_pending(&w->sim->scheduler, p)) goto fail;
+        if (version == SAVE_VERSION_LEGACY &&
+            block_is_piston_base(event_block)) {
+            /* Version 2 used a scheduled event to delay the entire piston
+             * action. Re-evaluate it under the version 3 immediate-event
+             * model instead of mistaking it for motion completion. */
+            sim_mark_input(w, p);
+            continue;
+        }
+        if (!scheduler_add_priority(&w->sim->scheduler, p,
+                                    tick + remaining, priority)) {
+            *result = GAME_SESSION_OUT_OF_MEMORY;
+            goto fail;
+        }
     }
     if (!b.ok || b.cursor != b.size || w->sim->error != RS_OK) goto fail;
     /* Keep only regions with pending simulation work resident until a view is set. */

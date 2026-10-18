@@ -12,14 +12,12 @@ typedef struct {
     size_t next_free;
     bool used;
 } TorchRuntime;
-typedef struct { BlockPos pos; TickAction action; } DueAction;
 struct Simulator {
     PositionQueue dirty, wire_roots, rail_roots, input_roots;
     Scheduler scheduler;
     PosMap torch_slots;
     TorchRuntime *torches;
-    DueAction *due_actions;
-    size_t torch_used, torch_capacity, due_capacity, free_torch;
+    size_t torch_used, torch_capacity, free_torch;
     SimStats stats;
     RsResult error;
 };
@@ -35,6 +33,8 @@ void sim_mark_wire(World *, BlockPos);
 void sim_mark_rail(World *, BlockPos);
 void sim_mark_input(World *, BlockPos);
 void sim_schedule(World *, BlockPos, uint32_t delay);
+void sim_schedule_priority(World *, BlockPos, uint32_t delay,
+                           TickPriority priority);
 void sim_cancel(World *, BlockPos);
 TorchRuntime *sim_torch_runtime(const World *, BlockPos);
 bool sim_chunk_pinned(const World *, BlockPos chunk);

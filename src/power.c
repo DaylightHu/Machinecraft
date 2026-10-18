@@ -64,6 +64,12 @@ bool block_is_diode(const World *world, BlockPos position)
     return block_definition((BlockId)world_get(world, position).id)->diode;
 }
 
+bool block_is_signal_source(const World *world, BlockPos position)
+{
+    return block_definition((BlockId)world_get(world, position).id)
+        ->signal_source;
+}
+
 SolidPower redstone_solid_power(const World *world, BlockPos position)
 {
     if (!world || !block_is_conductor(world, position)) {

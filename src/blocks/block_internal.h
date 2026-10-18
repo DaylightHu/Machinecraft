@@ -2,6 +2,13 @@
 #define RS_BLOCK_INTERNAL_H
 #include "world_internal.h"
 typedef enum { SIGNAL_ALL, SIGNAL_WITHOUT_WIRE } SignalMode;
+typedef enum {
+    PUSH_BLOCK = 0,
+    PUSH_NORMAL,
+    PUSH_DESTROY,
+    PUSH_IGNORE,
+    PUSH_ONLY
+} PushReaction;
 typedef struct { BlockState state; bool changed; uint32_t next_delay; } TickAction;
 typedef uint8_t (*SignalFn)(const World *, BlockPos, Direction, SignalMode);
 typedef void (*NeighborFn)(World *, BlockPos);
@@ -9,7 +16,8 @@ typedef void (*ObservedFn)(World *, BlockPos, BlockPos);
 typedef TickAction (*TickFn)(World *, BlockPos);
 typedef struct {
     const char *name;
-    bool full_cube, conductor, supports_wire, diode;
+    bool full_cube, conductor, supports_wire, signal_source, diode;
+    PushReaction push_reaction;
     SignalFn signal, direct_signal;
     NeighborFn neighbor_changed;
     ObservedFn observed_changed; /* A cell changed directly in the watched neighborhood. */
@@ -30,6 +38,7 @@ bool block_is_conductor(const World *, BlockPos);
 bool block_supports_wire(const World *, BlockPos);
 bool block_supports_torch(const World *, BlockPos);
 bool block_is_diode(const World *, BlockPos);
+bool block_is_signal_source(const World *, BlockPos);
 bool wire_supported(const World *, BlockPos);
 bool torch_supported(const World *, BlockPos, Direction);
 bool repeater_supported(const World *, BlockPos);

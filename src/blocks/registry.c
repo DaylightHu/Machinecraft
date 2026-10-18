@@ -3,7 +3,10 @@
 #include <string.h>
 #include <limits.h>
 
-static const BlockDef air = { .name = "air" };
+static const BlockDef air = {
+    .name = "air",
+    .push_reaction = PUSH_IGNORE
+};
 
 const BlockDef *block_definition(BlockId id)
 {

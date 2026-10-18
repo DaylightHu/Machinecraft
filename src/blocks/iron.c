@@ -13,5 +13,6 @@ const BlockDef rs_iron_def = {
     .full_cube = true,
     .conductor = true,
     .supports_wire = true,
+    .push_reaction = PUSH_NORMAL,
     .signal = iron_signal
 };
