@@ -44,6 +44,7 @@ static const char *common_sources[] = {
     "src/blocks/rail.c",
     "src/blocks/observer.c",
     "src/blocks/piston.c",
+    "src/blocks/barrel.c",
 };
 
 static const char *cli_sources[] = {

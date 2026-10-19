@@ -28,6 +28,7 @@ typedef enum {
     GUI_TITLE,
     GUI_WORLD,
     GUI_INVENTORY,
+    GUI_BARREL,
     GUI_PAUSE,
     GUI_SAVE_ERROR
 } GuiScreen;
@@ -54,12 +55,26 @@ typedef struct {
     char world_name[GAME_SESSION_NAME_CAPACITY];
     size_t world_name_length;
     char message[MESSAGE_CAPACITY];
+    BlockPos barrel_pos;
     double accumulator;
     bool mouse_captured;
     bool close_latched;
     bool running;
     bool fatal_error;
 } GuiApp;
+
+typedef struct {
+    Rectangle panel;
+    float grid_x;
+    float grid_y;
+} BarrelPaletteLayout;
+
+enum {
+    BARREL_COLUMNS = 5,
+    BARREL_ROWS = 3,
+    BARREL_SLOT_SIZE = 54,
+    BARREL_SLOT_GAP = 8
+};
 
 static bool point_in(Rectangle rectangle)
 {
@@ -144,6 +159,60 @@ static void capture_mouse(GuiApp *app)
     app->mouse_captured = true;
 }
 
+static BarrelPaletteLayout barrel_palette_layout(void)
+{
+    const int grid_width = BARREL_COLUMNS*BARREL_SLOT_SIZE +
+                           (BARREL_COLUMNS - 1)*BARREL_SLOT_GAP;
+    const int grid_height = BARREL_ROWS*BARREL_SLOT_SIZE +
+                            (BARREL_ROWS - 1)*BARREL_SLOT_GAP;
+    const int panel_width = grid_width + 40;
+    const int panel_height = grid_height + 142;
+    BarrelPaletteLayout layout = {
+        {
+            (GetScreenWidth() - panel_width)*0.5f,
+            (GetScreenHeight() - panel_height)*0.5f,
+            (float)panel_width,
+            (float)panel_height
+        },
+        0.0f,
+        0.0f
+    };
+    layout.grid_x = layout.panel.x + 20.0f;
+    layout.grid_y = layout.panel.y + 76.0f;
+    return layout;
+}
+
+static Rectangle barrel_slot_rectangle(BarrelPaletteLayout layout, int level)
+{
+    int index = level - 1;
+    int column = index % BARREL_COLUMNS;
+    int row = index / BARREL_COLUMNS;
+    return (Rectangle){
+        layout.grid_x + column*(BARREL_SLOT_SIZE + BARREL_SLOT_GAP),
+        layout.grid_y + row*(BARREL_SLOT_SIZE + BARREL_SLOT_GAP),
+        BARREL_SLOT_SIZE,
+        BARREL_SLOT_SIZE
+    };
+}
+
+static void open_barrel_palette(GuiApp *app, BlockPos pos)
+{
+    app->barrel_pos = pos;
+    world_renderer_set_barrel_open(app->world_renderer, pos, true);
+    release_mouse(app);
+    app->screen = GUI_BARREL;
+    snprintf(app->message, sizeof(app->message),
+             "Barrel: choose comparator output 1-15");
+}
+
+static void close_barrel_palette(GuiApp *app)
+{
+    world_renderer_set_barrel_open(app->world_renderer,
+                                   app->barrel_pos, false);
+    app->screen = GUI_WORLD;
+    capture_mouse(app);
+}
+
 static void close_world(GuiApp *app)
 {
     release_mouse(app);
@@ -180,7 +249,7 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->accumulator = 0.0;
     app->screen = GUI_WORLD;
     snprintf(app->message, sizeof(app->message),
-             "LMB remove | RMB place | MMB wire dot | E inventory | ESC menu");
+             "LMB remove | RMB use/place | Shift+RMB place | E inventory | ESC menu");
     capture_mouse(app);
     return true;
 }
@@ -449,6 +518,7 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                            selected == BLOCK_POWERED_RAIL ||
                            selected == BLOCK_ACTIVATOR_RAIL;
         Direction placement = (selected == BLOCK_OBSERVER ||
+                               selected == BLOCK_BARREL ||
                                block_is_piston_base(selected)) ?
                               direction_opposite(
                                   camera_direction(&app->camera)) :
@@ -531,7 +601,13 @@ static VoxelHit update_world(GuiApp *app)
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
         apply_edit(app, hit, selected, false, facing);
     if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-        if (hit.hit && world_get(world, hit.pos).id == BLOCK_REDSTONE_REPEATER) {
+        bool shift = IsKeyDown(KEY_LEFT_SHIFT) ||
+                     IsKeyDown(KEY_RIGHT_SHIFT);
+        if (hit.hit && !shift &&
+            world_get(world, hit.pos).id == BLOCK_BARREL) {
+            open_barrel_palette(app, hit.pos);
+        } else if (hit.hit &&
+                   world_get(world, hit.pos).id == BLOCK_REDSTONE_REPEATER) {
             RsResult result = world_cycle_repeater_delay(world, hit.pos);
             if (result == RS_OK || result == RS_UNCHANGED)
                 result = game_session_flush(app->session);
@@ -578,6 +654,86 @@ static void update_inventory(GuiApp *app)
     }
 
     advance_simulation(app);
+}
+
+static void update_barrel_palette(GuiApp *app)
+{
+    World *world = game_session_world(app->session);
+    BlockState state = world_get(world, app->barrel_pos);
+    if (state.id != BLOCK_BARREL) {
+        close_barrel_palette(app);
+        snprintf(app->message, sizeof(app->message),
+                 "Barrel is no longer available");
+        return;
+    }
+    if (IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ESCAPE)) {
+        close_barrel_palette(app);
+        snprintf(app->message, sizeof(app->message),
+                 "Barrel capacity unchanged: %u",
+                 (unsigned)state.data.barrel.level);
+        return;
+    }
+
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        BarrelPaletteLayout layout = barrel_palette_layout();
+        Vector2 mouse = GetMousePosition();
+        for (int level = 1; level <= 15; ++level) {
+            if (!CheckCollisionPointRec(
+                    mouse, barrel_slot_rectangle(layout, level))) continue;
+            RsResult result = world_set_barrel_level(
+                world, app->barrel_pos, (uint8_t)level);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            close_barrel_palette(app);
+            snprintf(app->message, sizeof(app->message),
+                     "Barrel capacity %d: %s", level,
+                     rs_result_name(result));
+            return;
+        }
+    }
+
+    advance_simulation(app);
+}
+
+static void draw_barrel_palette(const GuiApp *app)
+{
+    BarrelPaletteLayout layout = barrel_palette_layout();
+    BlockState state = world_get(game_session_world(app->session),
+                                 app->barrel_pos);
+    int selected = state.id == BLOCK_BARREL ? state.data.barrel.level : 0;
+    Vector2 mouse = GetMousePosition();
+
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+                  (Color){10, 18, 20, 155});
+    DrawRectangleRec(layout.panel, (Color){226, 218, 196, 250});
+    DrawRectangleLinesEx(layout.panel, 3.0f, (Color){73, 48, 24, 255});
+    draw_centered("BARREL CAPACITY", (int)layout.panel.y + 18, 26,
+                  (Color){73, 48, 24, 255});
+    draw_centered(TextFormat("Comparator output: %d", selected),
+                  (int)layout.panel.y + 49, 17,
+                  (Color){100, 71, 36, 255});
+
+    for (int level = 1; level <= 15; ++level) {
+        Rectangle slot = barrel_slot_rectangle(layout, level);
+        bool hovered = CheckCollisionPointRec(mouse, slot);
+        unsigned red = (unsigned)(55 + level*9);
+        Color fill = hovered ? (Color){(unsigned char)(red + 20), 72, 48, 255}
+                             : (Color){(unsigned char)red, 48, 35, 245};
+        DrawRectangleRec(slot, fill);
+        DrawRectangleLinesEx(slot, level == selected ? 4.0f : 2.0f,
+                             level == selected ? (Color){244, 190, 88, 255}
+                                               : (Color){142, 119, 86, 255});
+        const char *label = TextFormat("%d", level);
+        int font_size = 24;
+        DrawText(label,
+                 (int)(slot.x + (slot.width - MeasureText(label, font_size))*0.5f),
+                 (int)(slot.y + (slot.height - font_size)*0.5f),
+                 font_size, RAYWHITE);
+    }
+
+    draw_centered("Click: set capacity   E/ESC: close",
+                  (int)(layout.panel.y + layout.panel.height - 34), 15,
+                  (Color){83, 69, 50, 255});
 }
 
 static void draw_world(GuiApp *app, VoxelHit hit)
@@ -753,6 +909,11 @@ int gui_run(void)
         if (close_requested && !app.close_latched &&
             app.screen != GUI_SAVE_ERROR) {
             app.close_latched = true;
+            if (app.screen == GUI_BARREL) {
+                world_renderer_set_barrel_open(app.world_renderer,
+                                               app.barrel_pos, false);
+                app.screen = GUI_WORLD;
+            }
             if (app.session && game_session_dirty(app.session))
                 request_save_action(&app, AFTER_SAVE_EXIT);
             else
@@ -764,6 +925,7 @@ int gui_run(void)
         if (app.screen == GUI_TITLE) update_title(&app);
         else if (app.screen == GUI_WORLD) hit = update_world(&app);
         else if (app.screen == GUI_INVENTORY) update_inventory(&app);
+        else if (app.screen == GUI_BARREL) update_barrel_palette(&app);
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
@@ -783,6 +945,7 @@ int gui_run(void)
                                hotbar_selected_block(&app.hotbar));
                 hotbar_draw(&app.hotbar, &app.inventory);
             }
+            if (app.screen == GUI_BARREL) draw_barrel_palette(&app);
             if (app.screen == GUI_PAUSE) draw_pause(&app);
         }
         EndDrawing();

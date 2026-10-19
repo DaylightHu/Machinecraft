@@ -9,7 +9,7 @@ typedef enum {
     BLOCK_IRON, BLOCK_REDSTONE_BLOCK, BLOCK_REDSTONE_WIRE, BLOCK_REDSTONE_TORCH,
     BLOCK_GLASS, BLOCK_REDSTONE_REPEATER, BLOCK_REDSTONE_COMPARATOR,
     BLOCK_POWERED_RAIL, BLOCK_ACTIVATOR_RAIL, BLOCK_OBSERVER,
-    BLOCK_PISTON, BLOCK_STICKY_PISTON,
+    BLOCK_PISTON, BLOCK_STICKY_PISTON, BLOCK_BARREL,
     BLOCK_INTERNAL_FIRST,
     BLOCK_PISTON_HEAD = BLOCK_INTERNAL_FIRST,
     BLOCK_STICKY_PISTON_HEAD,
@@ -60,6 +60,11 @@ typedef struct {
             bool powered;
             bool extended;
         } piston;
+        struct {
+            uint8_t facing;         /* Direction of the configurable lid. */
+            uint8_t level;          /* Comparator output, 1..15. */
+            bool open;              /* Renderer-only; never stored in World. */
+        } barrel;
     } data;
 } BlockState;
 

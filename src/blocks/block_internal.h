@@ -11,6 +11,7 @@ typedef enum {
 } PushReaction;
 typedef struct { BlockState state; bool changed; uint32_t next_delay; } TickAction;
 typedef uint8_t (*SignalFn)(const World *, BlockPos, Direction, SignalMode);
+typedef uint8_t (*AnalogFn)(const World *, BlockPos);
 typedef void (*NeighborFn)(World *, BlockPos);
 typedef void (*ObservedFn)(World *, BlockPos, BlockPos);
 typedef TickAction (*TickFn)(World *, BlockPos);
@@ -19,6 +20,7 @@ typedef struct {
     bool full_cube, conductor, supports_wire, signal_source, diode;
     PushReaction push_reaction;
     SignalFn signal, direct_signal;
+    AnalogFn analog_output;
     NeighborFn neighbor_changed;
     ObservedFn observed_changed; /* A cell changed directly in the watched neighborhood. */
     NeighborFn input_changed; /* Called after the zero-delay network settles. */
@@ -29,7 +31,8 @@ extern const BlockDef rs_iron_def, rs_redstone_block_def, rs_wire_def, rs_torch_
                       rs_glass_def, rs_repeater_def, rs_comparator_def,
                       rs_powered_rail_def, rs_activator_rail_def,
                       rs_observer_def, rs_piston_def, rs_sticky_piston_def,
-                      rs_piston_head_def, rs_sticky_piston_head_def;
+                      rs_piston_head_def, rs_sticky_piston_head_def,
+                      rs_barrel_def;
 uint8_t power_signal(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_direct(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_received(const World *, BlockPos, SignalMode);
@@ -39,6 +42,8 @@ bool block_supports_wire(const World *, BlockPos);
 bool block_supports_torch(const World *, BlockPos);
 bool block_is_diode(const World *, BlockPos);
 bool block_is_signal_source(const World *, BlockPos);
+bool block_has_analog_output(const World *, BlockPos);
+uint8_t block_analog_output(const World *, BlockPos);
 bool wire_supported(const World *, BlockPos);
 bool torch_supported(const World *, BlockPos, Direction);
 bool repeater_supported(const World *, BlockPos);

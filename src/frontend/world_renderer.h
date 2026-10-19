@@ -13,5 +13,8 @@ WorldRenderer *world_renderer_create(World *world,
 void world_renderer_destroy(WorldRenderer *renderer);
 bool world_renderer_sync(WorldRenderer *renderer);
 void world_renderer_draw(WorldRenderer *renderer);
+/* Local visual override for the one barrel whose palette is open. */
+void world_renderer_set_barrel_open(WorldRenderer *renderer, BlockPos pos,
+                                    bool open);
 
 #endif

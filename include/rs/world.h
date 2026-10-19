@@ -24,12 +24,14 @@ void world_destroy(World *world);
 bool world_in_bounds(const World *world, BlockPos pos);
 BlockState world_get(const World *world, BlockPos pos); /* Outside vertical/coordinate limits = air; reads may restore archived chunks. */
 /* direction is the supporting block relative to a torch; the output direction
- * for a repeater/comparator/observer; the push direction for a piston; and the texture-top direction for a rail. */
+ * for a repeater/comparator/observer; the push direction for a piston; the lid
+ * direction for a barrel; and the texture-top direction for a rail. */
 RsResult world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
 RsResult world_remove(World *world, BlockPos pos);
 RsResult world_toggle_wire_dot(World *world, BlockPos pos);
 RsResult world_cycle_repeater_delay(World *world, BlockPos pos);
 RsResult world_toggle_comparator_mode(World *world, BlockPos pos);
+RsResult world_set_barrel_level(World *world, BlockPos pos, uint8_t level);
 uint64_t world_tick(const World *world);
 uint64_t world_revision(const World *world);
 /* Loaded block capacity, not the extent of the horizontal world. */

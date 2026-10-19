@@ -18,8 +18,21 @@ static uint8_t comparator_rear_input(const World *world, BlockPos position,
 {
     Direction facing = (Direction)state.data.comparator.facing;
     if (!valid_facing(facing)) return 0;
-    BlockPos source = block_offset(position, direction_opposite(facing));
-    return power_signal(world, source, facing, SIGNAL_ALL);
+    Direction rear = direction_opposite(facing);
+    BlockPos source = block_offset(position, rear);
+    uint8_t signal = power_signal(world, source, facing, SIGNAL_ALL);
+
+    if (block_has_analog_output(world, source))
+        return block_analog_output(world, source);
+
+    /* Vanilla comparators can read a container through one conducting block,
+     * provided the direct rear signal has not already reached 15. */
+    if (signal < 15 && block_is_conductor(world, source)) {
+        BlockPos second = block_offset(source, rear);
+        if (block_has_analog_output(world, second))
+            return block_analog_output(world, second);
+    }
+    return signal;
 }
 
 static uint8_t comparator_side_input(const World *world, BlockPos position,

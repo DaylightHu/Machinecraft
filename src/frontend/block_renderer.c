@@ -13,13 +13,16 @@ enum {
                         OBSERVER_TEXTURES*OBSERVER_STATES,
     PISTON_TEXTURES = 5,
     STICKY_PISTON_TILE_FIRST = PISTON_TILE_FIRST + PISTON_TEXTURES,
-    TILE_COUNT = STICKY_PISTON_TILE_FIRST + PISTON_TEXTURES
+    BARREL_TILE_FIRST = STICKY_PISTON_TILE_FIRST + PISTON_TEXTURES,
+    BARREL_TEXTURES = 3,
+    TILE_COUNT = BARREL_TILE_FIRST + BARREL_TEXTURES
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
     PISTON_BOTTOM0, PISTON_BOTTOM1,
     PISTON_SIDE0, PISTON_SIDE1, PISTON_TOP
 };
+enum { BARREL_SIDE, BARREL_TOP, BARREL_TOP_OPEN };
 enum {
     WIRE_SHAPES = 16, WIRE_STATES = 2,
     WIRE_SIDE_FIRST = WIRE_SHAPES*WIRE_STATES,
@@ -147,7 +150,10 @@ static Image create_solid_atlas(void)
         "res/textures/block/sticky_piston_bottom1.png",
         "res/textures/block/sticky_piston_side0.png",
         "res/textures/block/sticky_piston_side1.png",
-        "res/textures/block/sticky_piston_top.png"
+        "res/textures/block/sticky_piston_top.png",
+        "res/textures/block/barrel_side.png",
+        "res/textures/block/barrel_top.png",
+        "res/textures/block/barrel_top_open.png"
     };
     Image sources[TILE_COUNT] = {0};
     Image atlas = {0};
@@ -680,6 +686,47 @@ static void observer_face_uv(Texture2D atlas, BlockState state, int face,
                   uv);
 }
 
+static void barrel_face_uv(Texture2D atlas, BlockState state, int face,
+                           Vector2 uv[4])
+{
+    static const Direction directions[6] = {
+        DIR_SOUTH, DIR_NORTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN
+    };
+    static const Direction right[6] = {
+        DIR_EAST, DIR_WEST, DIR_NORTH, DIR_SOUTH, DIR_EAST, DIR_EAST
+    };
+    static const Direction down[6] = {
+        DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_SOUTH, DIR_NORTH
+    };
+    Direction facing = (Direction)state.data.barrel.facing;
+    if ((unsigned)facing >= DIR_COUNT) facing = DIR_NORTH;
+    Direction face_direction = directions[face];
+    int texture;
+    Direction desired;
+    bool source_points_down = true;
+
+    if (face_direction == facing) {
+        texture = state.data.barrel.open ? BARREL_TOP_OPEN : BARREL_TOP;
+        desired = facing == DIR_UP ? DIR_NORTH :
+                  facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
+    } else if (face_direction == direction_opposite(facing)) {
+        /* This project intentionally reuses the closed lid as the bottom. */
+        texture = BARREL_TOP;
+        desired = facing == DIR_UP ? DIR_NORTH :
+                  facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN;
+    } else {
+        texture = BARREL_SIDE;
+        /* The source image's horizontal axis follows the barrel axis. */
+        desired = direction_opposite(facing);
+        source_points_down = false;
+    }
+
+    solid_tile_uv(atlas, BARREL_TILE_FIRST + texture,
+                  direction_turns(right[face], down[face], desired,
+                                  source_points_down),
+                  uv);
+}
+
 static int piston_tile_first(BlockId id)
 {
     return id == BLOCK_STICKY_PISTON ||
@@ -1162,6 +1209,10 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
                 observer_face_uv(renderer->atlas, state, face, uv[count++]);
+    } else if (state.id == BLOCK_BARREL) {
+        for (int face = 0; face < 6; ++face)
+            if (solid_faces & (1u << face))
+                barrel_face_uv(renderer->atlas, state, face, uv[count++]);
     } else if (block_is_piston_base((BlockId)state.id)) {
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
@@ -1280,7 +1331,8 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
     geometry->quads = block_renderer_build_uv(renderer, state, solid_faces, geometry->uv);
     int count = 0;
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
-        state.id == BLOCK_GLASS || state.id == BLOCK_OBSERVER) {
+        state.id == BLOCK_GLASS || state.id == BLOCK_OBSERVER ||
+        state.id == BLOCK_BARREL) {
         for (int face = 0; face < 6; ++face) {
             if (!(solid_faces & (1u << face))) continue;
             for (int vertex = 0; vertex < 4; ++vertex) {

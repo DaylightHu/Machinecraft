@@ -24,6 +24,7 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_OBSERVER] = &rs_observer_def,
         [BLOCK_PISTON] = &rs_piston_def,
         [BLOCK_STICKY_PISTON] = &rs_sticky_piston_def,
+        [BLOCK_BARREL] = &rs_barrel_def,
         [BLOCK_PISTON_HEAD] = &rs_piston_head_def,
         [BLOCK_STICKY_PISTON_HEAD] = &rs_sticky_piston_head_def
     };
@@ -54,6 +55,9 @@ BlockState block_default(BlockId id)
         state.data.observer.facing = DIR_NORTH;
     } else if (block_is_piston_base(id) || block_is_piston_head(id)) {
         state.data.piston.facing = DIR_NORTH;
+    } else if (id == BLOCK_BARREL) {
+        state.data.barrel.facing = DIR_NORTH;
+        state.data.barrel.level = 1;
     }
     return state;
 }

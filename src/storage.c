@@ -22,7 +22,10 @@ enum {
     STATE_STICKY_PISTON_COUNT = DIR_COUNT * 4,
     STATE_STICKY_PISTON_HEAD_FIRST =
         STATE_STICKY_PISTON_FIRST + STATE_STICKY_PISTON_COUNT,
-    STATE_STICKY_PISTON_HEAD_COUNT = DIR_COUNT * 2
+    STATE_STICKY_PISTON_HEAD_COUNT = DIR_COUNT * 2,
+    STATE_BARREL_FIRST =
+        STATE_STICKY_PISTON_HEAD_FIRST + STATE_STICKY_PISTON_HEAD_COUNT,
+    STATE_BARREL_COUNT = DIR_COUNT * 15
 };
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -121,6 +124,14 @@ bool state_encode(BlockState s, StateId *id)
                         STATE_PISTON_HEAD_FIRST;
         *id = (StateId)(first + s.data.piston.facing +
               (s.data.piston.powered ? DIR_COUNT : 0));
+        return true;
+    }
+    if (s.id == BLOCK_BARREL) {
+        if (s.data.barrel.facing >= DIR_COUNT ||
+            s.data.barrel.level < 1 || s.data.barrel.level > 15 ||
+            s.data.barrel.open) return false;
+        *id = (StateId)(STATE_BARREL_FIRST + s.data.barrel.facing +
+              (unsigned)(s.data.barrel.level - 1)*DIR_COUNT);
         return true;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
@@ -222,6 +233,14 @@ bool state_decode(StateId id, BlockState *s)
         *s = block_default(BLOCK_STICKY_PISTON_HEAD);
         s->data.piston.facing = (uint8_t)(value % DIR_COUNT);
         s->data.piston.powered = value >= DIR_COUNT;
+        return true;
+    }
+    if (id >= STATE_BARREL_FIRST &&
+        id < STATE_BARREL_FIRST + STATE_BARREL_COUNT) {
+        unsigned value = id - STATE_BARREL_FIRST;
+        *s = block_default(BLOCK_BARREL);
+        s->data.barrel.facing = (uint8_t)(value % DIR_COUNT);
+        s->data.barrel.level = (uint8_t)(value / DIR_COUNT + 1);
         return true;
     }
     if (id < 16 || id > 8207) return false;

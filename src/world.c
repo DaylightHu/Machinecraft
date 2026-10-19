@@ -244,11 +244,14 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         if (!torch_supported(w, p, support)) return RS_UNSUPPORTED;
     } else if (id == BLOCK_REDSTONE_REPEATER ||
                id == BLOCK_REDSTONE_COMPARATOR || block_is_rail(id) ||
-               id == BLOCK_OBSERVER || block_is_piston_base(id)) {
-        if (id != BLOCK_OBSERVER && !block_is_piston_base(id) &&
+               id == BLOCK_OBSERVER || block_is_piston_base(id) ||
+               id == BLOCK_BARREL) {
+        if (id != BLOCK_OBSERVER && id != BLOCK_BARREL &&
+            !block_is_piston_base(id) &&
             !direction_horizontal(support))
             return RS_INVALID_ARGUMENT;
-        if ((id == BLOCK_OBSERVER || block_is_piston_base(id)) &&
+        if ((id == BLOCK_OBSERVER || block_is_piston_base(id) ||
+             id == BLOCK_BARREL) &&
             (unsigned)support >= DIR_COUNT)
             return RS_INVALID_ARGUMENT;
         if (id == BLOCK_REDSTONE_REPEATER && !repeater_supported(w, p))
@@ -268,7 +271,8 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         (id != BLOCK_OBSERVER ||
          previous.data.observer.facing == support) &&
         (!block_is_piston_base(id) ||
-         previous.data.piston.facing == support))
+         previous.data.piston.facing == support) &&
+        (id != BLOCK_BARREL || previous.data.barrel.facing == support))
         return RS_UNCHANGED;
     if (id == BLOCK_REDSTONE_TORCH && sim_prepare_torch(w) != RS_OK) return RS_OUT_OF_MEMORY;
     BlockState state = block_default(id);
@@ -281,6 +285,8 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         state.data.observer.facing = (uint8_t)support;
     if (block_is_piston_base(id))
         state.data.piston.facing = (uint8_t)support;
+    if (id == BLOCK_BARREL)
+        state.data.barrel.facing = (uint8_t)support;
     if ((block_is_piston_base((BlockId)previous.id) &&
          previous.data.piston.extended) ||
         block_is_piston_head((BlockId)previous.id)) {
@@ -331,6 +337,20 @@ RsResult world_toggle_comparator_mode(World *w, BlockPos p)
     state.data.comparator.subtract = !state.data.comparator.subtract;
     if (!world_write_derived(w, p, state)) return w->sim->error;
     sim_mark_input(w, p); return w->sim->error;
+}
+RsResult world_set_barrel_level(World *w, BlockPos p, uint8_t level)
+{
+    if (!w || level < 1 || level > 15) return RS_INVALID_ARGUMENT;
+    if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
+    RsResult result = sim_flush(w); if (result != RS_OK) return result;
+    BlockState state = world_get(w, p);
+    if (state.id != BLOCK_BARREL) return RS_INVALID_ARGUMENT;
+    if (state.data.barrel.level == level) return RS_UNCHANGED;
+    state.data.barrel.level = level;
+    /* Capacity is container data, not an observable block-state transition. */
+    if (!world_write_visual(w, p, state)) return w->sim->error;
+    sim_notify_power(w, p);
+    return w->sim->error;
 }
 static bool in_view(const World *w, BlockPos key)
 {
