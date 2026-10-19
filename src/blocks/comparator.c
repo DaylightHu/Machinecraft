@@ -18,8 +18,21 @@ static uint8_t comparator_rear_input(const World *world, BlockPos position,
 {
     Direction facing = (Direction)state.data.comparator.facing;
     if (!valid_facing(facing)) return 0;
-    BlockPos source = block_offset(position, direction_opposite(facing));
-    return power_signal(world, source, facing, SIGNAL_ALL);
+    Direction rear = direction_opposite(facing);
+    BlockPos source = block_offset(position, rear);
+    uint8_t signal = power_signal(world, source, facing, SIGNAL_ALL);
+
+    if (block_has_analog_output(world, source))
+        return block_analog_output(world, source);
+
+    /* Vanilla comparators can read a container through one conducting block,
+     * provided the direct rear signal has not already reached 15. */
+    if (signal < 15 && block_is_conductor(world, source)) {
+        BlockPos second = block_offset(source, rear);
+        if (block_has_analog_output(world, second))
+            return block_analog_output(world, second);
+    }
+    return signal;
 }
 
 static uint8_t comparator_side_input(const World *world, BlockPos position,
@@ -37,15 +50,19 @@ static uint8_t comparator_side_input(const World *world, BlockPos position,
     for (int index = 0; index < 2; ++index) {
         Direction side = sides[index];
         BlockPos source = block_offset(position, side);
-        BlockId source_id = (BlockId)world_get(world, source).id;
-        /* Vanilla side inputs are deliberately narrower than rear input:
-         * dust, a redstone block, or a diode aimed into this comparator. */
-        if (source_id != BLOCK_REDSTONE_WIRE &&
-            source_id != BLOCK_REDSTONE_BLOCK &&
-            source_id != BLOCK_REDSTONE_REPEATER &&
-            source_id != BLOCK_REDSTONE_COMPARATOR) continue;
-        uint8_t signal = power_signal(world, source,
-                                      direction_opposite(side), SIGNAL_ALL);
+        BlockState source_state = world_get(world, source);
+        BlockId source_id = (BlockId)source_state.id;
+        uint8_t signal = 0;
+        if (source_id == BLOCK_REDSTONE_BLOCK) {
+            signal = 15;
+        } else if (source_id == BLOCK_REDSTONE_WIRE) {
+            /* Diode side input reads the dust level, independent of its
+             * rendered connection shape. */
+            signal = source_state.data.wire.power;
+        } else if (block_is_signal_source(world, source)) {
+            signal = power_direct(world, source,
+                                  direction_opposite(side), SIGNAL_ALL);
+        }
         if (signal > best) best = signal;
     }
     return best;
@@ -70,13 +87,32 @@ static uint8_t comparator_signal(const World *world, BlockPos position,
            state.data.comparator.output : 0;
 }
 
+static bool comparator_should_prioritize(const World *world,
+                                         BlockPos position, BlockState state)
+{
+    Direction output = (Direction)state.data.comparator.facing;
+    BlockState next = world_get(world, block_offset(position, output));
+    Direction next_output;
+    if (next.id == BLOCK_REDSTONE_REPEATER) {
+        next_output = (Direction)next.data.repeater.facing;
+    } else if (next.id == BLOCK_REDSTONE_COMPARATOR) {
+        next_output = (Direction)next.data.comparator.facing;
+    } else {
+        return false;
+    }
+    return next_output != direction_opposite(output);
+}
+
 void comparator_check_input(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
     if (state.id != BLOCK_REDSTONE_COMPARATOR) return;
     if (state.data.comparator.output !=
-        comparator_desired_output(world, position, state))
-        sim_schedule(world, position, COMPARATOR_DELAY);
+        comparator_desired_output(world, position, state)) {
+        TickPriority priority = comparator_should_prioritize(
+            world, position, state) ? TICK_HIGH : TICK_NORMAL;
+        sim_schedule_priority(world, position, COMPARATOR_DELAY, priority);
+    }
 }
 
 static void comparator_neighbor(World *world, BlockPos position)
@@ -102,7 +138,9 @@ static TickAction comparator_tick(World *world, BlockPos position)
 
 const BlockDef rs_comparator_def = {
     .name = "redstone_comparator",
+    .signal_source = true,
     .diode = true,
+    .push_reaction = PUSH_DESTROY,
     .signal = comparator_signal,
     .direct_signal = comparator_signal,
     .neighbor_changed = comparator_neighbor,

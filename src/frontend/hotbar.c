@@ -85,7 +85,7 @@ bool hotbar_set_selected_block(Hotbar *hotbar, BlockId id)
 {
     if (!hotbar || hotbar->selected_slot < 0 ||
         hotbar->selected_slot >= HOTBAR_SLOT_COUNT ||
-        id <= BLOCK_AIR || id >= BLOCK_COUNT) return false;
+        id <= BLOCK_AIR || id >= BLOCK_INTERNAL_FIRST) return false;
     hotbar->slots[hotbar->selected_slot] = id;
     return true;
 }

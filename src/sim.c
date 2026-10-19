@@ -19,7 +19,7 @@ void sim_destroy_internal(World *w)
     queue_destroy(&s->dirty); queue_destroy(&s->wire_roots);
     queue_destroy(&s->rail_roots); queue_destroy(&s->input_roots);
     scheduler_destroy(&s->scheduler); posmap_destroy(&s->torch_slots);
-    free(s->torches); free(s->due_actions); free(s); w->sim = NULL;
+    free(s->torches); free(s); w->sim = NULL;
 }
 RsResult sim_prepare_torch(World *w)
 {
@@ -95,9 +95,18 @@ void sim_notify_observers(World *w, BlockPos changed)
 }
 void sim_schedule(World *w, BlockPos p, uint32_t delay)
 {
-    if (!delay || UINT64_MAX - w->tick < delay) { w->sim->error = RS_INTERNAL_ERROR; return; }
-    if (!scheduler_add(&w->sim->scheduler, p, w->tick + delay)) w->sim->error = RS_OUT_OF_MEMORY;
+    sim_schedule_priority(w, p, delay, TICK_NORMAL);
 }
+
+void sim_schedule_priority(World *w, BlockPos p, uint32_t delay,
+                           TickPriority priority)
+{
+    if (!delay || UINT64_MAX - w->tick < delay) { w->sim->error = RS_INTERNAL_ERROR; return; }
+    if (!scheduler_add_priority(&w->sim->scheduler, p, w->tick + delay,
+                                priority))
+        w->sim->error = RS_OUT_OF_MEMORY;
+}
+void sim_cancel(World *w, BlockPos p) { scheduler_cancel(&w->sim->scheduler, p); }
 RsResult sim_flush(World *w)
 {
     if (!w) return RS_INVALID_ARGUMENT;
@@ -125,27 +134,21 @@ RsResult sim_step(World *w)
     if (result != RS_OK) return result;
     if (w->tick == UINT64_MAX) return RS_INTERNAL_ERROR;
     Simulator *s = w->sim;
-    /* Reserve before popping any events: a failure leaves the pending heap intact. */
-    if (s->scheduler.count > s->due_capacity) {
-        if (s->scheduler.count > SIZE_MAX / sizeof(DueAction)) return RS_OUT_OF_MEMORY;
-        DueAction *next = realloc(s->due_actions, s->scheduler.count * sizeof(DueAction));
-        if (!next) return RS_OUT_OF_MEMORY;
-        s->due_actions = next; s->due_capacity = s->scheduler.count;
-    }
     ++w->tick;
-    size_t count = 0; ScheduledEvent event;
+    ScheduledEvent event;
     while (scheduler_pop_due(&s->scheduler, w->tick, &event)) {
         const BlockDef *d = block_definition((BlockId)world_get(w, event.pos).id);
         if (!d->scheduled_tick) continue;
         TickAction action = d->scheduled_tick(w, event.pos);
-        s->due_actions[count++] = (DueAction){event.pos, action}; ++s->stats.events_processed;
+        ++s->stats.events_processed;
+        if (action.changed && world_write_derived(w, event.pos, action.state))
+            sim_notify_change(w, event.pos);
+        if (action.next_delay)
+            sim_schedule(w, event.pos, action.next_delay);
+        result = sim_flush(w);
+        if (result != RS_OK) return result;
     }
-    for (size_t i = 0; i < count; ++i) {
-        DueAction a = s->due_actions[i];
-        if (a.action.changed && world_write_derived(w, a.pos, a.action.state)) sim_notify_change(w, a.pos);
-        if (a.action.next_delay) sim_schedule(w, a.pos, a.action.next_delay);
-    }
-    return sim_flush(w);
+    return RS_OK;
 }
 SimStats sim_stats(const World *w)
 {

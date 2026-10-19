@@ -12,7 +12,8 @@ enum { LINE_CAPACITY = 512, TOKEN_CAPACITY = 8 };
 
 typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
-    COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_TICK, COMMAND_STATS,
+    COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_CAPACITY,
+    COMMAND_TICK, COMMAND_STATS,
     COMMAND_QUIT
 } CommandKind;
 
@@ -99,7 +100,7 @@ static bool parse_position(char *tokens[], BlockPos *position)
 
 static bool parse_block(const char *name, BlockId *block)
 {
-    for (BlockId id = BLOCK_IRON; id < BLOCK_COUNT; ++id) {
+    for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         if (strcmp(name, block_name(id)) == 0) {
             *block = id;
             return true;
@@ -134,6 +135,11 @@ static bool parse_ticks(const char *text, uint32_t *ticks)
     return true;
 }
 
+static bool parse_barrel_level(const char *text, uint32_t *level)
+{
+    return parse_ticks(text, level) && *level >= 1 && *level <= 15;
+}
+
 static bool parse_command(char *tokens[], int count, Command *command)
 {
     *command = (Command){ .support = DIR_DOWN, .ticks = 1 };
@@ -158,9 +164,15 @@ static bool parse_command(char *tokens[], int count, Command *command)
              command->block == BLOCK_REDSTONE_COMPARATOR ||
              command->block == BLOCK_POWERED_RAIL ||
              command->block == BLOCK_ACTIVATOR_RAIL ||
-             command->block == BLOCK_OBSERVER))
+             command->block == BLOCK_OBSERVER ||
+             command->block == BLOCK_BARREL ||
+             block_is_piston_base(command->block)))
             command->support = DIR_NORTH;
         return valid;
+    } else if (strcmp(name, "capacity") == 0 && count == 5) {
+        command->kind = COMMAND_CAPACITY;
+        return parse_position(tokens, &command->position) &&
+               parse_barrel_level(tokens[4], &command->ticks);
     } else if (count == 4) {
         if (strcmp(name, "remove") == 0) {
             command->kind = COMMAND_REMOVE;
@@ -186,14 +198,14 @@ static void print_help(FILE *output)
 {
     fputs("place X Y Z BLOCK [DIRECTION]\n"
           "remove X Y Z\nget X Y Z\ndot X Y Z\ndelay X Y Z\n"
-          "mode X Y Z\n"
+          "mode X Y Z\ncapacity X Y Z LEVEL\n"
           "tick [COUNT]\nstats\nhelp\nquit\nBlocks:", output);
-    for (BlockId id = BLOCK_IRON; id < BLOCK_COUNT; ++id) {
+    for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         fprintf(output, " %s", block_name(id));
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
-          "Repeater/comparator/observer direction is output; rail direction is the texture top.\n"
-          "Observer accepts all six directions; other directional blocks are horizontal. Default north.\n",
+          "Repeater/comparator/observer direction is output; piston direction is its front; barrel direction is its lid; rail direction is the texture top.\n"
+          "Observer, barrel and both piston types accept all six directions; other directional blocks are horizontal. Default north.\n",
           output);
 }
 
@@ -239,6 +251,24 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
         fprintf(output, " powered=%s facing=%s",
                 state.data.observer.powered ? "yes" : "no",
                 direction_names[state.data.observer.facing]);
+        break;
+    case BLOCK_PISTON:
+    case BLOCK_STICKY_PISTON:
+        fprintf(output, " powered=%s extended=%s facing=%s",
+                state.data.piston.powered ? "yes" : "no",
+                state.data.piston.extended ? "yes" : "no",
+                direction_names[state.data.piston.facing]);
+        break;
+    case BLOCK_PISTON_HEAD:
+    case BLOCK_STICKY_PISTON_HEAD:
+        fprintf(output, " powered=%s facing=%s",
+                state.data.piston.powered ? "yes" : "no",
+                direction_names[state.data.piston.facing]);
+        break;
+    case BLOCK_BARREL:
+        fprintf(output, " capacity=%u facing=%s",
+                (unsigned)state.data.barrel.level,
+                direction_names[state.data.barrel.facing]);
         break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);
@@ -307,6 +337,10 @@ static RsResult execute_command(World *world, const Command *command,
         break;
     case COMMAND_MODE:
         result = world_toggle_comparator_mode(world, command->position);
+        break;
+    case COMMAND_CAPACITY:
+        result = world_set_barrel_level(
+            world, command->position, (uint8_t)command->ticks);
         break;
     default:
         return RS_INVALID_ARGUMENT;

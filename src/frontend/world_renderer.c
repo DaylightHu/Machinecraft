@@ -44,6 +44,8 @@ struct WorldRenderer {
     size_t region_count, region_capacity;
     RenderRegion **regions;
     uint64_t topology_revision;
+    BlockPos open_barrel;
+    bool barrel_open;
     bool failed;
     Material materials[PARTS];
 };
@@ -52,6 +54,8 @@ static int part_for(unsigned id)
 {
     switch (id) {
     case BLOCK_IRON: case BLOCK_REDSTONE_BLOCK: case BLOCK_OBSERVER:
+    case BLOCK_PISTON: case BLOCK_STICKY_PISTON: case BLOCK_BARREL:
+    case BLOCK_PISTON_HEAD: case BLOCK_STICKY_PISTON_HEAD:
         return SOLIDS;
     case BLOCK_GLASS: return GLASS;
     case BLOCK_REDSTONE_WIRE: return DUST;
@@ -62,6 +66,19 @@ static int part_for(unsigned id)
     case BLOCK_REDSTONE_TORCH: return TORCHES;
     default: return -1;
     }
+}
+
+static bool state_solid(BlockState state)
+{
+    if (part_for(state.id) != SOLIDS) return false;
+    if (block_is_piston_head((BlockId)state.id)) return false;
+    return !block_is_piston_base((BlockId)state.id) ||
+           !state.data.piston.extended;
+}
+
+static bool state_cube(BlockState state)
+{
+    return state_solid(state) || state.id == BLOCK_GLASS;
 }
 
 static BlockPos region_origin_for(BlockPos p)
@@ -75,13 +92,12 @@ static RenderRegion *find_region(const WorldRenderer *r, BlockPos p)
 }
 static bool solid_at(const WorldRenderer *r, BlockPos p)
 {
-    return part_for(world_get(r->world, p).id) == SOLIDS;
+    return state_solid(world_get(r->world, p));
 }
 
 static bool cube_at(const WorldRenderer *r, BlockPos p)
 {
-    int part = part_for(world_get(r->world, p).id);
-    return part == SOLIDS || part == GLASS;
+    return state_cube(world_get(r->world, p));
 }
 
 static unsigned wire_sides(BlockState state)
@@ -98,9 +114,8 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
     RenderRegion *region = find_region(r,p);
     int old_part = part_for(before.id), new_part = part_for(after.id);
     /* New sections are discovered during sync, even if no cache exists yet. */
-    bool solid_changed = (old_part == SOLIDS) != (new_part == SOLIDS);
-    bool cube_changed = (old_part == SOLIDS || old_part == GLASS) !=
-                        (new_part == SOLIDS || new_part == GLASS);
+    bool solid_changed = state_solid(before) != state_solid(after);
+    bool cube_changed = state_cube(before) != state_cube(after);
     if (solid_changed || cube_changed) {
         for (Direction face = 0; face < DIR_COUNT; ++face) {
             RenderRegion *neighbor = find_region(r,block_offset(p,face));
@@ -139,6 +154,22 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
                before.id == BLOCK_OBSERVER && after.id == BLOCK_OBSERVER) {
         visual = before.data.observer.facing != after.data.observer.facing ||
                  before.data.observer.powered != after.data.observer.powered;
+    } else if (old_part == new_part && new_part == SOLIDS &&
+               before.id == after.id &&
+               block_is_piston_base((BlockId)before.id)) {
+        geometry = before.data.piston.facing != after.data.piston.facing ||
+                   before.data.piston.extended != after.data.piston.extended;
+        visual = geometry ||
+                 before.data.piston.powered != after.data.piston.powered;
+    } else if (old_part == new_part && new_part == SOLIDS &&
+               before.id == after.id &&
+               block_is_piston_head((BlockId)before.id)) {
+        geometry = before.data.piston.facing != after.data.piston.facing;
+        visual = geometry ||
+                 before.data.piston.powered != after.data.piston.powered;
+    } else if (old_part == new_part && new_part == SOLIDS &&
+               before.id == BLOCK_BARREL && after.id == BLOCK_BARREL) {
+        visual = before.data.barrel.facing != after.data.barrel.facing;
     }
     cell->state = after;
     if (!visual && !geometry) return;
@@ -184,6 +215,24 @@ static unsigned bit_count(unsigned bits)
     return count;
 }
 
+static BlockPos cell_position(const RenderRegion *region, size_t index)
+{
+    return (BlockPos){
+        region->origin.x + (int)(index & 15),
+        region->origin.y + (int)(index >> 8),
+        region->origin.z + (int)((index >> 4) & 15)
+    };
+}
+
+static BlockState render_state(const WorldRenderer *renderer, BlockPos pos,
+                               BlockState state)
+{
+    if (state.id == BLOCK_BARREL && renderer->barrel_open &&
+        pos_equal(pos, renderer->open_barrel))
+        state.data.barrel.open = true;
+    return state;
+}
+
 static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
 {
     RenderRegion *region = r->regions[region_id];
@@ -201,6 +250,7 @@ static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
             cell->solid_faces = (uint8_t)(kind == SOLIDS ? visible_faces(r,p) :
                                                            visible_glass_faces(r,p));
             quads += (int)bit_count(cell->solid_faces);
+            if (block_is_piston_head((BlockId)cell->state.id)) quads += 4;
         } else if (kind == DUST) quads += 1+(int)bit_count(wire_sides(cell->state));
         else if (kind == REPEATERS || kind == COMPARATORS)
             quads += REDSTONE_GATE_GEOMETRY_QUADS;
@@ -232,7 +282,8 @@ static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
             RenderCell *cell = &region->cells[section_index(p)];
             if (part_for(cell->state.id) != kind) continue;
             BlockGeometry geometry;
-            block_renderer_build_geometry(r->blocks,cell->state,(Vector3){(float)x,(float)y,(float)z},cell->solid_faces,&geometry);
+            BlockState state = render_state(r, p, cell->state);
+            block_renderer_build_geometry(r->blocks,state,(Vector3){(float)x,(float)y,(float)z},cell->solid_faces,&geometry);
             cell->first_vertex = (uint32_t)next;
             for (int face = 0; face < geometry.quads; ++face) {
                 if (stride == 4)
@@ -279,7 +330,9 @@ static void patch_uv(WorldRenderer *r, RenderRegion *region, uint16_t index)
     RegionPart *part = &region->parts[kind];
     if (part->rebuilt || !part->mesh.texcoords) return;
     Vector2 uv[BLOCK_GEOMETRY_QUADS][4];
-    int quads = block_renderer_build_uv(r->blocks,cell->state,cell->solid_faces,uv);
+    BlockPos pos = cell_position(region, index);
+    BlockState state = render_state(r, pos, cell->state);
+    int quads = block_renderer_build_uv(r->blocks,state,cell->solid_faces,uv);
     unsigned first = cell->first_vertex;
     unsigned end = first+(unsigned)(quads*part->vertices_per_quad);
     static const int triangles[] = {0,1,2,0,2,3};
@@ -423,4 +476,26 @@ void world_renderer_draw(WorldRenderer *r)
         }
         if (two_sided) rlEnableBackfaceCulling();
     }
+}
+
+static void queue_barrel_visual(WorldRenderer *renderer, BlockPos pos)
+{
+    RenderRegion *region = find_region(renderer, pos);
+    if (!region) return;
+    size_t index = section_index(pos);
+    RenderCell *cell = &region->cells[index];
+    if (cell->state.id != BLOCK_BARREL || cell->pending) return;
+    cell->pending = true;
+    region->pending[region->pending_count++] = (uint16_t)index;
+}
+
+void world_renderer_set_barrel_open(WorldRenderer *renderer, BlockPos pos,
+                                    bool open)
+{
+    if (!renderer) return;
+    if (renderer->barrel_open)
+        queue_barrel_visual(renderer, renderer->open_barrel);
+    renderer->barrel_open = open;
+    renderer->open_barrel = pos;
+    if (open) queue_barrel_visual(renderer, pos);
 }

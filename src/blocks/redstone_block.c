@@ -15,5 +15,7 @@ const BlockDef rs_redstone_block_def = {
     .name = "redstone_block",
     .full_cube = true,
     .supports_wire = true,
+    .signal_source = true,
+    .push_reaction = PUSH_NORMAL,
     .signal = source_signal
 };

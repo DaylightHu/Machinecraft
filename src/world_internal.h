@@ -18,6 +18,9 @@ struct World {
     void *observer_context;
 };
 bool world_write_derived(World *world, BlockPos pos, BlockState state);
+/* Writes a stored/rendered state which does not exist in vanilla's observable
+ * block state. Used for cosmetic input indicators without firing observers. */
+bool world_write_visual(World *world, BlockPos pos, BlockState state);
 void world_remove_internal(World *world, BlockPos pos);
 Chunk *world_find_chunk(const World *world, BlockPos key);
 Chunk *world_ensure_chunk(World *world, BlockPos key);

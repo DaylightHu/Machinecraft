@@ -109,12 +109,14 @@ static void rail_neighbor_changed(World *world, BlockPos position)
 
 const BlockDef rs_powered_rail_def = {
     .name = "powered_rail",
+    .push_reaction = PUSH_NORMAL,
     .neighbor_changed = rail_neighbor_changed,
     .input_changed = rail_check_input
 };
 
 const BlockDef rs_activator_rail_def = {
     .name = "activator_rail",
+    .push_reaction = PUSH_NORMAL,
     .neighbor_changed = rail_neighbor_changed,
     .input_changed = rail_check_input
 };

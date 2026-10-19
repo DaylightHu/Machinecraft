@@ -64,6 +64,26 @@ bool block_is_diode(const World *world, BlockPos position)
     return block_definition((BlockId)world_get(world, position).id)->diode;
 }
 
+bool block_is_signal_source(const World *world, BlockPos position)
+{
+    return block_definition((BlockId)world_get(world, position).id)
+        ->signal_source;
+}
+
+bool block_has_analog_output(const World *world, BlockPos position)
+{
+    return block_definition((BlockId)world_get(world, position).id)
+        ->analog_output != NULL;
+}
+
+uint8_t block_analog_output(const World *world, BlockPos position)
+{
+    const BlockDef *definition = block_definition(
+        (BlockId)world_get(world, position).id);
+    return definition->analog_output ?
+           definition->analog_output(world, position) : 0;
+}
+
 SolidPower redstone_solid_power(const World *world, BlockPos position)
 {
     if (!world || !block_is_conductor(world, position)) {

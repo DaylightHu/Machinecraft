@@ -120,6 +120,8 @@ bool redstone_torch_burned_out(const World *world, BlockPos position)
 
 const BlockDef rs_torch_def = {
     .name = "redstone_torch",
+    .signal_source = true,
+    .push_reaction = PUSH_DESTROY,
     .signal = torch_signal,
     .direct_signal = torch_direct,
     .neighbor_changed = torch_neighbor,
