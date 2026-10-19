@@ -57,13 +57,15 @@ static bool piston_write_cell(World *world, BlockPos position,
     return true;
 }
 
-static bool piston_push(World *world, BlockPos position, Direction facing)
+static bool piston_push(World *world, BlockPos position, Direction facing, bool *pushed_block)
 {
     BlockPos moving[PISTON_PUSH_LIMIT];
     size_t moving_count = 0;
     BlockPos destroyed = {0};
     bool destroys = false;
     BlockPos cursor = position;
+
+    if (pushed_block) *pushed_block = false;
 
     for (;;) {
         cursor = block_offset(cursor, facing);
@@ -93,12 +95,14 @@ static bool piston_push(World *world, BlockPos position, Direction facing)
             return false;
         piston_reinitialize_moved_block(world, destination, state);
     }
+
+    if (pushed_block) *pushed_block = moving_count != 0;
     return true;
 }
 
 static bool piston_set_extended(World *world, BlockPos position,
                                 BlockState state, bool extended,
-                                bool pull_block)
+                                bool pull_block, bool *pushed_block)
 {
     Direction facing = (Direction)state.data.piston.facing;
     BlockPos head_position = block_offset(position, facing);
@@ -106,8 +110,11 @@ static bool piston_set_extended(World *world, BlockPos position,
     BlockId head_id = base_id == BLOCK_STICKY_PISTON ?
                       BLOCK_STICKY_PISTON_HEAD : BLOCK_PISTON_HEAD;
 
+    if (pushed_block) *pushed_block = false;
+
     if (extended) {
-        if (!piston_push(world, position, facing)) return false;
+        bool moved_block = false;
+        if (!piston_push(world, position, facing, &moved_block)) return false;
         BlockState head = block_default(head_id);
         head.data.piston.facing = state.data.piston.facing;
         head.data.piston.powered = state.data.piston.powered;
@@ -115,6 +122,7 @@ static bool piston_set_extended(World *world, BlockPos position,
         state.data.piston.extended = true;
         if (!world_write_derived(world, position, state)) return false;
         sim_notify_change(world, position);
+        if (pushed_block) *pushed_block = moved_block;
         return true;
     }
 
@@ -170,7 +178,8 @@ void piston_check_input(World *world, BlockPos position)
     }
 
     if (powered && !state.data.piston.extended) {
-        if (piston_set_extended(world, position, state, true, false))
+        bool pushed_block = false;
+        if (piston_set_extended(world, position, state, true, false, &pushed_block) && pushed_block)
             sim_schedule(world, position, PISTON_MOTION_TICKS);
     } else if (!powered && state.data.piston.extended) {
         /* A retraction requested while extension is still moving is event 2
@@ -178,8 +187,7 @@ void piston_check_input(World *world, BlockPos position)
         bool extension_in_progress =
             scheduler_pending(&world->sim->scheduler, position);
         sim_cancel(world, position);
-        (void)piston_set_extended(world, position, state, false,
-                                  !extension_in_progress);
+        (void)piston_set_extended(world, position, state, false, !extension_in_progress, NULL);
     }
 }
 
