@@ -10,7 +10,7 @@ typedef enum {
     BLOCK_GLASS, BLOCK_REDSTONE_REPEATER, BLOCK_REDSTONE_COMPARATOR,
     BLOCK_POWERED_RAIL, BLOCK_ACTIVATOR_RAIL, BLOCK_OBSERVER,
     BLOCK_PISTON, BLOCK_STICKY_PISTON, BLOCK_BARREL, BLOCK_SLIME,
-    BLOCK_NOTE_BLOCK, BLOCK_HONEY,
+    BLOCK_NOTE_BLOCK, BLOCK_HONEY, BLOCK_TARGET,
     BLOCK_INTERNAL_FIRST,
     BLOCK_PISTON_HEAD = BLOCK_INTERNAL_FIRST,
     BLOCK_STICKY_PISTON_HEAD,
@@ -69,6 +69,9 @@ typedef struct {
         struct {
             bool powered;           /* Stored edge state; no note or instrument. */
         } note_block;
+        struct {
+            uint8_t power;          /* Own projectile pulse, 0..15; not conducted power. */
+        } target;
     } data;
 } BlockState;
 

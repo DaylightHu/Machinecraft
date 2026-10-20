@@ -29,7 +29,10 @@ enum {
         STATE_STICKY_PISTON_HEAD_FIRST + STATE_STICKY_PISTON_HEAD_COUNT,
     STATE_BARREL_COUNT = DIR_COUNT * 15,
     STATE_NOTE_BLOCK_FIRST = STATE_BARREL_FIRST + STATE_BARREL_COUNT,
-    STATE_NOTE_BLOCK_COUNT = 2
+    STATE_NOTE_BLOCK_COUNT = 2,
+    /* Append state ranges so existing .mcw palettes retain their meaning. */
+    STATE_TARGET_FIRST = STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT,
+    STATE_TARGET_COUNT = 16
 };
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -143,6 +146,11 @@ bool state_encode(BlockState s, StateId *id)
     if (s.id == BLOCK_NOTE_BLOCK) {
         *id = (StateId)(STATE_NOTE_BLOCK_FIRST +
                         (s.data.note_block.powered ? 1u : 0u));
+        return true;
+    }
+    if (s.id == BLOCK_TARGET) {
+        if (s.data.target.power > 15) return false;
+        *id = (StateId)(STATE_TARGET_FIRST + s.data.target.power);
         return true;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
@@ -260,6 +268,11 @@ bool state_decode(StateId id, BlockState *s)
         id < STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT) {
         *s = block_default(BLOCK_NOTE_BLOCK);
         s->data.note_block.powered = id != STATE_NOTE_BLOCK_FIRST;
+        return true;
+    }
+    if (id >= STATE_TARGET_FIRST && id < STATE_TARGET_FIRST + STATE_TARGET_COUNT) {
+        *s = block_default(BLOCK_TARGET);
+        s->data.target.power = (uint8_t)(id - STATE_TARGET_FIRST);
         return true;
     }
     if (id < 16 || id > 8207) return false;

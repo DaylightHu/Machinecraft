@@ -13,7 +13,7 @@ enum { LINE_CAPACITY = 512, TOKEN_CAPACITY = 8 };
 typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
     COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_CAPACITY,
-    COMMAND_TICK, COMMAND_STATS,
+    COMMAND_HIT, COMMAND_TICK, COMMAND_STATS,
     COMMAND_QUIT
 } CommandKind;
 
@@ -23,6 +23,8 @@ typedef struct {
     BlockId block;
     Direction support;
     uint32_t ticks;
+    double hit_u, hit_v;
+    bool persistent_projectile;
 } Command;
 
 static const char *const direction_names[DIR_COUNT] = {
@@ -140,6 +142,17 @@ static bool parse_barrel_level(const char *text, uint32_t *level)
     return parse_ticks(text, level) && *level >= 1 && *level <= 15;
 }
 
+static bool parse_hit_coordinate(const char *text, double *value)
+{
+    errno = 0;
+    char *end = NULL;
+    double parsed = strtod(text, &end);
+    if (errno == ERANGE || end == text || *end ||
+        !(parsed >= 0.0 && parsed <= 1.0)) return false;
+    *value = parsed;
+    return true;
+}
+
 static bool parse_command(char *tokens[], int count, Command *command)
 {
     *command = (Command){ .support = DIR_DOWN, .ticks = 1 };
@@ -173,6 +186,14 @@ static bool parse_command(char *tokens[], int count, Command *command)
         command->kind = COMMAND_CAPACITY;
         return parse_position(tokens, &command->position) &&
                parse_barrel_level(tokens[4], &command->ticks);
+    } else if (strcmp(name, "hit") == 0 && count == 7) {
+        command->kind = COMMAND_HIT;
+        command->persistent_projectile = strcmp(tokens[6], "arrow") == 0 ||
+                                         strcmp(tokens[6], "trident") == 0;
+        return parse_position(tokens, &command->position) &&
+               parse_hit_coordinate(tokens[4], &command->hit_u) &&
+               parse_hit_coordinate(tokens[5], &command->hit_v) &&
+               (command->persistent_projectile || strcmp(tokens[6], "other") == 0);
     } else if (count == 4) {
         if (strcmp(name, "remove") == 0) {
             command->kind = COMMAND_REMOVE;
@@ -199,6 +220,7 @@ static void print_help(FILE *output)
     fputs("place X Y Z BLOCK [DIRECTION]\n"
           "remove X Y Z\nget X Y Z\ndot X Y Z\ndelay X Y Z\n"
           "mode X Y Z\ncapacity X Y Z LEVEL\n"
+          "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
           "tick [COUNT]\nstats\nhelp\nquit\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         fprintf(output, " %s", block_name(id));
@@ -274,6 +296,9 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
         fprintf(output, " powered=%s",
                 state.data.note_block.powered ? "yes" : "no");
         break;
+    case BLOCK_TARGET:
+        fprintf(output, " power=%u", (unsigned)state.data.target.power);
+        break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);
         fprintf(output, " received=%u strong=%u", (unsigned)power.received,
@@ -345,6 +370,11 @@ static RsResult execute_command(World *world, const Command *command,
     case COMMAND_CAPACITY:
         result = world_set_barrel_level(
             world, command->position, (uint8_t)command->ticks);
+        break;
+    case COMMAND_HIT:
+        result = world_hit_target(world, command->position,
+                                  command->hit_u, command->hit_v,
+                                  command->persistent_projectile);
         break;
     default:
         return RS_INVALID_ARGUMENT;

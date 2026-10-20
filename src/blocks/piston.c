@@ -306,6 +306,9 @@ static bool piston_move_blocks(World *world, BlockPos position,
         BlockPos destination = block_offset(source,
                                             resolver.push_direction);
         BlockState state = moving[index - 1];
+        /* A moved target has no reset tick at its new position. Java 1.16.2
+         * clears its projectile output when placing it there. */
+        if (state.id == BLOCK_TARGET) state.data.target.power = 0;
         if (!piston_write_cell(world, destination, state)) return false;
         if (!piston_write_cell(world, source, block_default(BLOCK_AIR)))
             return false;

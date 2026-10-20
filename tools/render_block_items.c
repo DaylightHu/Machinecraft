@@ -384,6 +384,13 @@ int main(int argc, char **argv)
             "res/textures/block/honey_block.png",
             "honey_block.png",
             0, 0, 0
+        },
+        {
+            "res/textures/block/target_block.png",
+            "res/textures/block/target_block.png",
+            "res/textures/block/target_block.png",
+            "target_block.png",
+            0, 0, 0
         }
     };
     const char *output_directory = "res/textures/item";

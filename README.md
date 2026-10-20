@@ -6,6 +6,7 @@ Machinecraft is a small, independent environment for building, observing, and te
 entities, random terrain, and lighting simulation so the project can focus on
 redstone behavior, predictable timing, and performance.
 
+
 ## Build
 This repository includes the raylib 6.0 source files required by Machinecraft. You do not need to install raylib, CMake, Make, Ninja, or a package manager.
 The only prerequisite is a C11-capable toolchain for your platform.
