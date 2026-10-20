@@ -4,6 +4,7 @@
 
 enum {
     STATE_GLASS = 13,
+    STATE_HONEY = 14,
     STATE_SLIME = 15,
     STATE_REPEATER_FIRST = 8208,
     STATE_REPEATER_COUNT = 64,
@@ -67,6 +68,7 @@ bool state_encode(BlockState s, StateId *id)
 {
     if (s.id <= BLOCK_REDSTONE_BLOCK) { *id = s.id; return true; }
     if (s.id == BLOCK_GLASS) { *id = STATE_GLASS; return true; }
+    if (s.id == BLOCK_HONEY) { *id = STATE_HONEY; return true; }
     if (s.id == BLOCK_SLIME) { *id = STATE_SLIME; return true; }
     if (s.id == BLOCK_REDSTONE_TORCH) {
         unsigned face = s.data.torch.support_dir;
@@ -160,6 +162,7 @@ bool state_decode(StateId id, BlockState *s)
         s->data.torch.lit = ((id - 3) & 1u) != 0; return true;
     }
     if (id == STATE_GLASS) { *s = block_default(BLOCK_GLASS); return true; }
+    if (id == STATE_HONEY) { *s = block_default(BLOCK_HONEY); return true; }
     if (id == STATE_SLIME) { *s = block_default(BLOCK_SLIME); return true; }
     if (id >= STATE_REPEATER_FIRST &&
         id < STATE_REPEATER_FIRST + STATE_REPEATER_COUNT) {

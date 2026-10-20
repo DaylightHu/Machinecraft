@@ -91,12 +91,14 @@ static BlockPos piston_offset(BlockPos position, Direction direction,
 
 static bool piston_is_sticky(BlockState state)
 {
-    return state.id == BLOCK_SLIME;
+    return state.id == BLOCK_SLIME || state.id == BLOCK_HONEY;
 }
 
 static bool piston_blocks_stick(BlockState first, BlockState second)
 {
-    /* Honey is not implemented yet, so every contact involving slime sticks. */
+    if ((first.id == BLOCK_SLIME && second.id == BLOCK_HONEY) ||
+        (first.id == BLOCK_HONEY && second.id == BLOCK_SLIME))
+        return false;
     return piston_is_sticky(first) || piston_is_sticky(second);
 }
 
