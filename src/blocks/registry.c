@@ -25,6 +25,7 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_PISTON] = &rs_piston_def,
         [BLOCK_STICKY_PISTON] = &rs_sticky_piston_def,
         [BLOCK_BARREL] = &rs_barrel_def,
+        [BLOCK_SLIME] = &rs_slime_def,
         [BLOCK_PISTON_HEAD] = &rs_piston_head_def,
         [BLOCK_STICKY_PISTON_HEAD] = &rs_sticky_piston_head_def
     };

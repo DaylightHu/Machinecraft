@@ -15,7 +15,8 @@ enum {
     STICKY_PISTON_TILE_FIRST = PISTON_TILE_FIRST + PISTON_TEXTURES,
     BARREL_TILE_FIRST = STICKY_PISTON_TILE_FIRST + PISTON_TEXTURES,
     BARREL_TEXTURES = 3,
-    TILE_COUNT = BARREL_TILE_FIRST + BARREL_TEXTURES
+    SLIME_TILE = BARREL_TILE_FIRST + BARREL_TEXTURES,
+    TILE_COUNT = SLIME_TILE + 1
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
@@ -153,7 +154,8 @@ static Image create_solid_atlas(void)
         "res/textures/block/sticky_piston_top.png",
         "res/textures/block/barrel_side.png",
         "res/textures/block/barrel_top.png",
-        "res/textures/block/barrel_top_open.png"
+        "res/textures/block/barrel_top_open.png",
+        "res/textures/block/slime_block.png"
     };
     Image sources[TILE_COUNT] = {0};
     Image atlas = {0};
@@ -553,6 +555,7 @@ void block_renderer_draw_cube(const BlockRenderer *renderer, BlockId id,
     switch (id) {
     case BLOCK_IRON:           tile = 0; break;
     case BLOCK_REDSTONE_BLOCK: tile = 1; break;
+    case BLOCK_SLIME:          tile = SLIME_TILE; break;
     case BLOCK_GLASS:
         texture = renderer->glass_texture;
         if (!texture.id) return;
@@ -1193,10 +1196,11 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
 {
     int count = 0;
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
-        state.id == BLOCK_GLASS) {
+        state.id == BLOCK_GLASS || state.id == BLOCK_SLIME) {
         bool glass = state.id == BLOCK_GLASS;
         Texture2D texture = glass ? renderer->glass_texture : renderer->atlas;
-        int tile = state.id == BLOCK_REDSTONE_BLOCK ? 1 : 0;
+        int tile = state.id == BLOCK_REDSTONE_BLOCK ? 1 :
+                   state.id == BLOCK_SLIME ? SLIME_TILE : 0;
         float u0 = (tile*TILE_SIZE + 0.5f)/texture.width;
         float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/texture.width;
         float v0 = 0.5f/texture.height;
@@ -1332,7 +1336,7 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
     int count = 0;
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
         state.id == BLOCK_GLASS || state.id == BLOCK_OBSERVER ||
-        state.id == BLOCK_BARREL) {
+        state.id == BLOCK_BARREL || state.id == BLOCK_SLIME) {
         for (int face = 0; face < 6; ++face) {
             if (!(solid_faces & (1u << face))) continue;
             for (int vertex = 0; vertex < 4; ++vertex) {

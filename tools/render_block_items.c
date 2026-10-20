@@ -365,11 +365,11 @@ int main(int argc, char **argv)
 {
     static const ItemSpec items[] = {
         {
-            "res/textures/block/barrel_top.png",
-            "res/textures/block/barrel_side.png",
-            "res/textures/block/barrel_side.png",
-            "barrel.png",
-            0, 1, 1
+            "res/textures/block/slime_block.png",
+            "res/textures/block/slime_block.png",
+            "res/textures/block/slime_block.png",
+            "slime_block.png",
+            0, 0, 0
         }
     };
     const char *output_directory = "res/textures/item";
