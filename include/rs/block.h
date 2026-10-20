@@ -10,6 +10,7 @@ typedef enum {
     BLOCK_GLASS, BLOCK_REDSTONE_REPEATER, BLOCK_REDSTONE_COMPARATOR,
     BLOCK_POWERED_RAIL, BLOCK_ACTIVATOR_RAIL, BLOCK_OBSERVER,
     BLOCK_PISTON, BLOCK_STICKY_PISTON, BLOCK_BARREL, BLOCK_SLIME,
+    BLOCK_NOTE_BLOCK,
     BLOCK_INTERNAL_FIRST,
     BLOCK_PISTON_HEAD = BLOCK_INTERNAL_FIRST,
     BLOCK_STICKY_PISTON_HEAD,
@@ -65,6 +66,9 @@ typedef struct {
             uint8_t level;          /* Comparator output, 1..15. */
             bool open;              /* Renderer-only; never stored in World. */
         } barrel;
+        struct {
+            bool powered;           /* Stored edge state; no note or instrument. */
+        } note_block;
     } data;
 } BlockState;
 

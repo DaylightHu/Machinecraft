@@ -40,7 +40,8 @@ static const ItemTexture item_textures[] = {
     {BLOCK_PISTON, "res/textures/item/piston.png"},
     {BLOCK_STICKY_PISTON, "res/textures/item/sticky_piston.png"},
     {BLOCK_BARREL, "res/textures/item/barrel.png"},
-    {BLOCK_SLIME, "res/textures/item/slime_block.png"}
+    {BLOCK_SLIME, "res/textures/item/slime_block.png"},
+    {BLOCK_NOTE_BLOCK, "res/textures/item/note_block.png"}
 };
 
 static InventoryLayout inventory_layout(void)

@@ -270,6 +270,10 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 (unsigned)state.data.barrel.level,
                 direction_names[state.data.barrel.facing]);
         break;
+    case BLOCK_NOTE_BLOCK:
+        fprintf(output, " powered=%s",
+                state.data.note_block.powered ? "yes" : "no");
+        break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);
         fprintf(output, " received=%u strong=%u", (unsigned)power.received,

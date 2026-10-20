@@ -26,7 +26,9 @@ enum {
     STATE_STICKY_PISTON_HEAD_COUNT = DIR_COUNT * 2,
     STATE_BARREL_FIRST =
         STATE_STICKY_PISTON_HEAD_FIRST + STATE_STICKY_PISTON_HEAD_COUNT,
-    STATE_BARREL_COUNT = DIR_COUNT * 15
+    STATE_BARREL_COUNT = DIR_COUNT * 15,
+    STATE_NOTE_BLOCK_FIRST = STATE_BARREL_FIRST + STATE_BARREL_COUNT,
+    STATE_NOTE_BLOCK_COUNT = 2
 };
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -134,6 +136,11 @@ bool state_encode(BlockState s, StateId *id)
             s.data.barrel.open) return false;
         *id = (StateId)(STATE_BARREL_FIRST + s.data.barrel.facing +
               (unsigned)(s.data.barrel.level - 1)*DIR_COUNT);
+        return true;
+    }
+    if (s.id == BLOCK_NOTE_BLOCK) {
+        *id = (StateId)(STATE_NOTE_BLOCK_FIRST +
+                        (s.data.note_block.powered ? 1u : 0u));
         return true;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
@@ -244,6 +251,12 @@ bool state_decode(StateId id, BlockState *s)
         *s = block_default(BLOCK_BARREL);
         s->data.barrel.facing = (uint8_t)(value % DIR_COUNT);
         s->data.barrel.level = (uint8_t)(value / DIR_COUNT + 1);
+        return true;
+    }
+    if (id >= STATE_NOTE_BLOCK_FIRST &&
+        id < STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT) {
+        *s = block_default(BLOCK_NOTE_BLOCK);
+        s->data.note_block.powered = id != STATE_NOTE_BLOCK_FIRST;
         return true;
     }
     if (id < 16 || id > 8207) return false;
