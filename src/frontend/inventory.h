@@ -6,7 +6,7 @@
 
 #include <stdbool.h>
 
-enum {INVENTORY_SLOT_COUNT = 16};
+enum {INVENTORY_SLOT_COUNT = 32};
 
 typedef struct {
     Texture2D item_textures[BLOCK_COUNT];

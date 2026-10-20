@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 enum {
-    INVENTORY_COLUMNS = 4,
+    INVENTORY_COLUMNS = 8,
     INVENTORY_ROWS = 4,
     INVENTORY_SLOT_SIZE = 58,
     INVENTORY_SLOT_GAP = 4,
@@ -11,6 +11,9 @@ enum {
     INVENTORY_HEADER_HEIGHT = 52,
     INVENTORY_FOOTER_HEIGHT = 64
 };
+
+_Static_assert(INVENTORY_COLUMNS*INVENTORY_ROWS == INVENTORY_SLOT_COUNT,
+        "inventory grid must match slot capacity");
 
 typedef struct {
     BlockId id;
