@@ -249,7 +249,7 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->accumulator = 0.0;
     app->screen = GUI_WORLD;
     snprintf(app->message, sizeof(app->message),
-             "LMB remove | RMB use/place | Shift+RMB place | E inventory | ESC menu");
+             "LMB remove | RMB use/place | Shift+RMB place | MMB pick | E inventory | ESC menu");
     capture_mouse(app);
     return true;
 }
@@ -535,6 +535,13 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
              place ? "Place" : "Remove", rs_result_name(result));
 }
 
+static BlockId pickable_block(BlockId id)
+{
+    if (id == BLOCK_PISTON_HEAD) return BLOCK_PISTON;
+    if (id == BLOCK_STICKY_PISTON_HEAD) return BLOCK_STICKY_PISTON;
+    return id > BLOCK_AIR && id < BLOCK_INTERNAL_FIRST ? id : BLOCK_AIR;
+}
+
 static void advance_simulation(GuiApp *app)
 {
     double frame = GetFrameTime();
@@ -603,18 +610,26 @@ static VoxelHit update_world(GuiApp *app)
     if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
         bool shift = IsKeyDown(KEY_LEFT_SHIFT) ||
                      IsKeyDown(KEY_RIGHT_SHIFT);
+        BlockId target = hit.hit ? (BlockId)world_get(world, hit.pos).id :
+                                  BLOCK_AIR;
         if (hit.hit && !shift &&
-            world_get(world, hit.pos).id == BLOCK_BARREL) {
+            target == BLOCK_BARREL) {
             open_barrel_palette(app, hit.pos);
-        } else if (hit.hit &&
-                   world_get(world, hit.pos).id == BLOCK_REDSTONE_REPEATER) {
+        } else if (hit.hit && !shift && target == BLOCK_REDSTONE_WIRE) {
+            RsResult result = world_toggle_wire_dot(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            snprintf(app->message, sizeof(app->message), "Toggle dot: %s",
+                     rs_result_name(result));
+        } else if (hit.hit && !shift &&
+                   target == BLOCK_REDSTONE_REPEATER) {
             RsResult result = world_cycle_repeater_delay(world, hit.pos);
             if (result == RS_OK || result == RS_UNCHANGED)
                 result = game_session_flush(app->session);
             snprintf(app->message, sizeof(app->message),
                      "Cycle repeater delay: %s", rs_result_name(result));
-        } else if (hit.hit &&
-                   world_get(world, hit.pos).id == BLOCK_REDSTONE_COMPARATOR) {
+        } else if (hit.hit && !shift &&
+                   target == BLOCK_REDSTONE_COMPARATOR) {
             RsResult result = world_toggle_comparator_mode(world, hit.pos);
             if (result == RS_OK || result == RS_UNCHANGED)
                 result = game_session_flush(app->session);
@@ -624,13 +639,18 @@ static VoxelHit update_world(GuiApp *app)
             apply_edit(app, hit, selected, true, facing);
         }
     }
-    if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) && hit.hit &&
-        world_get(world, hit.pos).id == BLOCK_REDSTONE_WIRE) {
-        RsResult result = world_toggle_wire_dot(world, hit.pos);
-        if (result == RS_OK || result == RS_UNCHANGED)
-            result = game_session_flush(app->session);
-        snprintf(app->message, sizeof(app->message), "Toggle dot: %s",
-                 rs_result_name(result));
+    if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) && hit.hit) {
+        BlockId picked = pickable_block(
+            (BlockId)world_get(world, hit.pos).id);
+        if (picked != BLOCK_AIR &&
+            hotbar_set_selected_block(&app->hotbar, picked)) {
+            snprintf(app->message, sizeof(app->message),
+                     "Hotbar slot %d: %s", app->hotbar.selected_slot + 1,
+                     block_name(picked));
+        } else {
+            snprintf(app->message, sizeof(app->message),
+                     "This block cannot be picked");
+        }
     }
 
     advance_simulation(app);
