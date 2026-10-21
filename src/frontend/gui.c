@@ -1,6 +1,7 @@
 #include "gui.h"
 
 #include "block_renderer.h"
+#include "block_shape.h"
 #include "hotbar.h"
 #include "inventory.h"
 #include "voxel_pick.h"
@@ -944,6 +945,30 @@ static void draw_container(const GuiApp *app, BlockId id)
     hotbar_draw(&app->hotbar, &app->inventory);
 }
 
+static void draw_block_outline(BlockState state, Vector3 center)
+{
+    static BlockShape cached;
+    static BlockShapeEdge edges[BLOCK_SHAPE_EDGES];
+    static unsigned edge_count;
+    BlockShape shape;
+    block_outline_shape(state, &shape);
+    if (shape.count != cached.count ||
+        memcmp(shape.boxes, cached.boxes, shape.count*sizeof(shape.boxes[0]))) {
+        cached = shape;
+        edge_count = block_shape_edges(&shape, edges);
+    }
+    for (unsigned i = 0; i < edge_count; ++i) {
+        const BlockShapeEdge *edge = &edges[i];
+        Vector3 start = {center.x + edge->start[0]/16.0f - 0.5f,
+                         center.y + edge->start[1]/16.0f - 0.5f,
+                         center.z + edge->start[2]/16.0f - 0.5f};
+        Vector3 end = {center.x + edge->end[0]/16.0f - 0.5f,
+                       center.y + edge->end[1]/16.0f - 0.5f,
+                       center.z + edge->end[2]/16.0f - 0.5f};
+        DrawLine3D(start, end, YELLOW);
+    }
+}
+
 static void draw_world(GuiApp *app, VoxelHit hit)
 {
     ClearBackground((Color){184, 211, 214, 255});
@@ -952,7 +977,8 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         if (hit.hit) {
             Vector3 center = {(float)hit.pos.x, (float)hit.pos.y,
                               (float)hit.pos.z};
-            DrawCubeWires(center, 1.02f, 1.02f, 1.02f, YELLOW);
+            draw_block_outline(world_get(game_session_world(app->session), hit.pos),
+                                center);
         }
     EndMode3D();
 
