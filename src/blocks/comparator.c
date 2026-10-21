@@ -112,6 +112,7 @@ void comparator_check_input(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
     if (state.id != BLOCK_REDSTONE_COMPARATOR) return;
+    if (sim_will_tick(world, position)) return;
     if (state.data.comparator.output !=
         comparator_desired_output(world, position, state)) {
         TickPriority priority = comparator_should_prioritize(

@@ -17,7 +17,7 @@ static void observer_observed_changed(World *world, BlockPos position,
 {
     BlockState state = world_get(world, position);
     if (state.id != BLOCK_OBSERVER || state.data.observer.powered ||
-        scheduler_pending(&world->sim->scheduler, position)) return;
+        sim_has_scheduled_tick(world, position)) return;
 
     Direction output = (Direction)state.data.observer.facing;
     if ((unsigned)output >= DIR_COUNT) return;

@@ -46,7 +46,7 @@ void torch_check_input(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
     bool should_be_lit = !input_powered(world, position);
-    if (state.data.torch.lit != should_be_lit) {
+    if (state.data.torch.lit != should_be_lit && !sim_will_tick(world, position)) {
         sim_schedule(world, position, TORCH_DELAY);
     }
 }

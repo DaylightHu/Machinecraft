@@ -84,7 +84,7 @@ void repeater_check_input(World *world, BlockPos position)
         state.data.repeater.locked = locked;
         if (!world_write_derived(world, position, state)) return;
     }
-    if (locked) return;
+    if (locked || sim_will_tick(world, position)) return;
 
     bool should_be_powered = repeater_input_powered(world, position, state);
     if (state.data.repeater.powered != should_be_powered) {
