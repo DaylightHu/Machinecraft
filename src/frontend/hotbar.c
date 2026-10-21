@@ -73,21 +73,52 @@ void hotbar_update(Hotbar *hotbar)
     }
 }
 
-BlockId hotbar_selected_block(const Hotbar *hotbar)
+InventorySlot hotbar_selected(const Hotbar *hotbar)
 {
     if (!hotbar || hotbar->selected_slot < 0 ||
         hotbar->selected_slot >= HOTBAR_SLOT_COUNT)
-        return BLOCK_AIR;
+        return (InventorySlot){0};
     return hotbar->slots[hotbar->selected_slot];
+}
+
+BlockId hotbar_selected_block(const Hotbar *hotbar)
+{
+    InventorySlot slot = hotbar_selected(hotbar);
+    return slot.kind == INVENTORY_BLOCK ? slot.block : BLOCK_AIR;
+}
+
+bool hotbar_set_selected(Hotbar *hotbar, InventorySlot slot)
+{
+    if (!hotbar || hotbar->selected_slot < 0 ||
+        hotbar->selected_slot >= HOTBAR_SLOT_COUNT) return false;
+    if (slot.kind == INVENTORY_BLOCK) {
+        if (slot.block <= BLOCK_AIR || slot.block >= BLOCK_INTERNAL_FIRST)
+            return false;
+    } else if (slot.kind == INVENTORY_ITEM) {
+        if (!slot.stack.count || !item_stack_valid(slot.stack)) return false;
+    } else if (slot.kind != INVENTORY_EMPTY) return false;
+    hotbar->slots[hotbar->selected_slot] = slot;
+    return true;
 }
 
 bool hotbar_set_selected_block(Hotbar *hotbar, BlockId id)
 {
-    if (!hotbar || hotbar->selected_slot < 0 ||
-        hotbar->selected_slot >= HOTBAR_SLOT_COUNT ||
-        id <= BLOCK_AIR || id >= BLOCK_INTERNAL_FIRST) return false;
-    hotbar->slots[hotbar->selected_slot] = id;
-    return true;
+    return hotbar_set_selected(hotbar, (InventorySlot){
+        .kind = INVENTORY_BLOCK, .block = id
+    });
+}
+
+bool hotbar_pick(Hotbar *hotbar, InventorySlot picked)
+{
+    InventorySlot selected = hotbar_selected(hotbar);
+    if (picked.kind == INVENTORY_ITEM && selected.kind == INVENTORY_ITEM &&
+        picked.stack.item == selected.stack.item &&
+        picked.stack.limit == selected.stack.limit) {
+        if (!item_stack_transfer(&selected.stack, &picked.stack,
+                                  picked.stack.count)) return false;
+        return hotbar_set_selected(hotbar, selected);
+    }
+    return picked.kind != INVENTORY_EMPTY && hotbar_set_selected(hotbar, picked);
 }
 
 void hotbar_draw(const Hotbar *hotbar, const Inventory *inventory)
@@ -106,8 +137,7 @@ void hotbar_draw(const Hotbar *hotbar, const Inventory *inventory)
         Rectangle slot = hotbar_slot_rectangle(slot_index);
         DrawRectangleRec(slot, (Color){75, 75, 75, 190});
 
-        BlockId id = hotbar->slots[slot_index];
-        inventory_draw_icon(inventory, id, slot);
+        inventory_draw_slot(inventory, hotbar->slots[slot_index], slot);
 
         DrawRectangleLinesEx(slot, 1.0f, (Color){145, 145, 145, 255});
         DrawText(TextFormat("%d", slot_index + 1),

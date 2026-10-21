@@ -12,9 +12,7 @@ static size_t slots_for(unsigned id) { return id == BLOCK_HOPPER ? 5 : 27; }
 
 bool container_stack_valid(ContainerStack s)
 {
-    if (!s.count) return !s.item && !s.limit;
-    return s.item && (s.limit == 1 || s.limit == 16 || s.limit == 64) &&
-           s.count <= s.limit;
+    return item_stack_valid(s);
 }
 
 ContainerRuntime *container_runtime(const World *w, BlockPos pos)
@@ -46,7 +44,9 @@ static void fill_barrel(ContainerRuntime *c, uint8_t level)
     if (level && !count) count = 1;
     for (size_t i = 0; count && i < 27; ++i) {
         unsigned amount = count > 64 ? 64 : count;
-        c->slots[i] = (ContainerStack){1, (uint8_t)amount, 64};
+        c->slots[i] = (ContainerStack){ITEM_POISONOUS_POTATO,
+                                      (uint8_t)amount,
+                                      POISONOUS_POTATO_STACK_LIMIT};
         count -= amount;
     }
 }

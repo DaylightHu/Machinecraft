@@ -9,7 +9,7 @@ enum {
     INVENTORY_SLOT_GAP = 4,
     INVENTORY_PANEL_PADDING = 18,
     INVENTORY_HEADER_HEIGHT = 52,
-    INVENTORY_FOOTER_HEIGHT = 64
+    INVENTORY_FOOTER_HEIGHT = 84
 };
 
 _Static_assert(INVENTORY_COLUMNS*INVENTORY_ROWS == INVENTORY_SLOT_COUNT,
@@ -18,7 +18,7 @@ _Static_assert(INVENTORY_COLUMNS*INVENTORY_ROWS == INVENTORY_SLOT_COUNT,
 typedef struct {
     BlockId id;
     const char *path;
-} ItemTexture;
+} BlockTexture;
 
 typedef struct {
     Rectangle panel;
@@ -26,7 +26,7 @@ typedef struct {
     float grid_y;
 } InventoryLayout;
 
-static const ItemTexture item_textures[] = {
+static const BlockTexture block_textures[] = {
     {BLOCK_IRON, "res/textures/item/iron_block.png"},
     {BLOCK_GLASS, "res/textures/item/glass.png"},
     {BLOCK_REDSTONE_BLOCK, "res/textures/item/redstone_block.png"},
@@ -62,7 +62,7 @@ static InventoryLayout inventory_layout(void)
     InventoryLayout layout = {
         {
             (GetScreenWidth() - panel_width)*0.5f,
-            (GetScreenHeight() - panel_height)*0.5f,
+            (GetScreenHeight() - 80 - panel_height)*0.5f,
             (float)panel_width,
             (float)panel_height
         },
@@ -92,15 +92,15 @@ bool inventory_init(Inventory *inventory)
     if (!inventory) return false;
     *inventory = (Inventory){0};
 
-    size_t count = sizeof(item_textures)/sizeof(item_textures[0]);
-    if (count > INVENTORY_SLOT_COUNT) {
+    size_t count = sizeof(block_textures)/sizeof(block_textures[0]);
+    if (count + 1 > INVENTORY_SLOT_COUNT) {
         TraceLog(LOG_ERROR, "INVENTORY: Too many item textures (%d > %d)",
-                 (int)count, INVENTORY_SLOT_COUNT);
+                 (int)count + 1, INVENTORY_SLOT_COUNT);
         return false;
     }
 
     for (size_t index = 0; index < count; ++index) {
-        ItemTexture item = item_textures[index];
+        BlockTexture item = block_textures[index];
         Texture2D texture = LoadTexture(item.path);
         if (!texture.id) {
             TraceLog(LOG_ERROR, "INVENTORY: Cannot load %s", item.path);
@@ -108,10 +108,31 @@ bool inventory_init(Inventory *inventory)
             return false;
         }
         SetTextureFilter(texture, TEXTURE_FILTER_POINT);
-        inventory->item_textures[item.id] = texture;
-        inventory->slots[index] = item.id;
+        inventory->block_textures[item.id] = texture;
+        inventory->slots[index] = (InventorySlot){
+            .kind = INVENTORY_BLOCK, .block = item.id
+        };
     }
-    inventory->count = (int)count;
+    Image potato = LoadImage("res/textures/item/poisonous_potato.png");
+    if (!potato.data) {
+        inventory_unload(inventory);
+        return false;
+    }
+    ImageAlphaCrop(&potato, 0.0f);
+    Texture2D texture = LoadTextureFromImage(potato);
+    UnloadImage(potato);
+    if (!texture.id) {
+        inventory_unload(inventory);
+        return false;
+    }
+    SetTextureFilter(texture, TEXTURE_FILTER_POINT);
+    inventory->item_textures[ITEM_POISONOUS_POTATO] = texture;
+    inventory->slots[count] = (InventorySlot){
+        .kind = INVENTORY_ITEM,
+        .stack = {ITEM_POISONOUS_POTATO, 1,
+                  item_stack_limit(ITEM_POISONOUS_POTATO)}
+    };
+    inventory->count = (int)count + 1;
     return true;
 }
 
@@ -119,23 +140,23 @@ void inventory_unload(Inventory *inventory)
 {
     if (!inventory) return;
     for (int id = 0; id < BLOCK_COUNT; ++id) {
+        if (inventory->block_textures[id].id)
+            UnloadTexture(inventory->block_textures[id]);
+    }
+    for (int id = 0; id < ITEM_COUNT; ++id) {
         if (inventory->item_textures[id].id)
             UnloadTexture(inventory->item_textures[id]);
     }
     *inventory = (Inventory){0};
 }
 
-void inventory_draw_icon(const Inventory *inventory, BlockId id,
-                         Rectangle slot)
+static void draw_icon(Texture2D texture, Rectangle slot)
 {
-    if (!inventory || id <= BLOCK_AIR || id >= BLOCK_COUNT) return;
-    Texture2D texture = inventory->item_textures[id];
     if (!texture.id) return;
 
     const float padding = 5.0f;
-    float available = slot.width - 2.0f*padding;
-    float scale_x = available/(float)texture.width;
-    float scale_y = available/(float)texture.height;
+    float scale_x = (slot.width - 2.0f*padding)/(float)texture.width;
+    float scale_y = (slot.height - 2.0f*padding)/(float)texture.height;
     float scale = scale_x < scale_y ? scale_x : scale_y;
     float width = texture.width*scale;
     float height = texture.height*scale;
@@ -149,34 +170,79 @@ void inventory_draw_icon(const Inventory *inventory, BlockId id,
     DrawTexturePro(texture, source, destination, (Vector2){0, 0}, 0.0f, WHITE);
 }
 
-BlockId inventory_update(const Inventory *inventory)
+void inventory_draw_stack(const Inventory *inventory, ItemStack stack,
+                           Rectangle slot)
 {
-    if (!inventory || !IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
-        return BLOCK_AIR;
+    if (!inventory || !stack.count) return;
+    Texture2D texture = stack.item < ITEM_COUNT ?
+                        inventory->item_textures[stack.item] : (Texture2D){0};
+    if (texture.id) draw_icon(texture, slot);
+    else DrawText("?", (int)slot.x + 18, (int)slot.y + 10, 26, RAYWHITE);
+    if (stack.count > 1) {
+        const char *count = TextFormat("%u", (unsigned)stack.count);
+        int x = (int)(slot.x + slot.width) - MeasureText(count, 18) - 4;
+        int y = (int)(slot.y + slot.height) - 22;
+        DrawText(count, x + 1, y + 1, 18, BLACK);
+        DrawText(count, x, y, 18, RAYWHITE);
+    }
+}
+
+void inventory_draw_slot(const Inventory *inventory, InventorySlot contents,
+                          Rectangle slot)
+{
+    if (!inventory) return;
+    if (contents.kind == INVENTORY_BLOCK && contents.block > BLOCK_AIR &&
+        contents.block < BLOCK_COUNT)
+        draw_icon(inventory->block_textures[contents.block], slot);
+    else if (contents.kind == INVENTORY_ITEM)
+        inventory_draw_stack(inventory, contents.stack, slot);
+}
+
+const char *inventory_slot_name(InventorySlot slot)
+{
+    if (slot.kind == INVENTORY_BLOCK) return block_name(slot.block);
+    if (slot.kind == INVENTORY_ITEM) return item_name(slot.stack.item);
+    return "Empty";
+}
+
+InventorySlot inventory_update(const Inventory *inventory)
+{
+    bool left = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+    bool right = IsMouseButtonReleased(MOUSE_BUTTON_RIGHT);
+    bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    if (!inventory || (!left && !(shift && right)))
+        return (InventorySlot){0};
 
     InventoryLayout layout = inventory_layout();
     Vector2 mouse = GetMousePosition();
     for (int index = 0; index < inventory->count; ++index) {
         Rectangle slot = inventory_slot_rectangle(layout, index);
-        if (CheckCollisionPointRec(mouse, slot)) return inventory->slots[index];
+        if (!CheckCollisionPointRec(mouse, slot)) continue;
+        InventorySlot picked = inventory->slots[index];
+        if (picked.kind == INVENTORY_ITEM) {
+            picked.stack.count = !shift ? 1 :
+                                 (left ? picked.stack.limit : picked.stack.limit/2);
+            return picked;
+        }
+        if (left) return picked;
     }
-    return BLOCK_AIR;
+    return (InventorySlot){0};
 }
 
-void inventory_draw(const Inventory *inventory, BlockId selected)
+void inventory_draw(const Inventory *inventory, InventorySlot selected)
 {
     if (!inventory) return;
 
     InventoryLayout layout = inventory_layout();
     Vector2 mouse = GetMousePosition();
-    BlockId hovered = BLOCK_AIR;
+    InventorySlot hovered = {0};
 
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
                   (Color){10, 18, 20, 155});
     DrawRectangleRec(layout.panel, (Color){226, 218, 196, 250});
     DrawRectangleLinesEx(layout.panel, 3.0f, (Color){34, 63, 66, 255});
 
-    const char *title = "BLOCK INVENTORY";
+    const char *title = "INVENTORY";
     int title_size = 25;
     DrawText(title,
              (int)(layout.panel.x +
@@ -187,20 +253,27 @@ void inventory_draw(const Inventory *inventory, BlockId selected)
         Rectangle slot = inventory_slot_rectangle(layout, index);
         bool occupied = index < inventory->count;
         bool under_mouse = CheckCollisionPointRec(mouse, slot);
-        BlockId id = occupied ? inventory->slots[index] : BLOCK_AIR;
+        InventorySlot contents = occupied ? inventory->slots[index] :
+                                            (InventorySlot){0};
         Color fill = under_mouse && occupied ? (Color){102, 116, 112, 255}
                                              : (Color){75, 75, 75, 235};
         DrawRectangleRec(slot, fill);
         DrawRectangleLinesEx(slot, 1.0f, (Color){145, 145, 145, 255});
-        if (occupied) inventory_draw_icon(inventory, id, slot);
-        if (id == selected)
+        if (occupied) inventory_draw_slot(inventory, contents, slot);
+        bool same = contents.kind == selected.kind &&
+                    ((contents.kind == INVENTORY_BLOCK &&
+                      contents.block == selected.block) ||
+                     (contents.kind == INVENTORY_ITEM &&
+                      contents.stack.item == selected.stack.item));
+        if (same)
             DrawRectangleLinesEx(slot, 3.0f, (Color){244, 190, 88, 255});
-        if (under_mouse && occupied) hovered = id;
+        if (under_mouse && occupied) hovered = contents;
     }
 
-    const char *label = hovered != BLOCK_AIR ? block_name(hovered) :
-                        "Click a block to fill the selected hotbar slot";
-    int label_size = hovered != BLOCK_AIR ? 19 : 15;
+    const char *label = hovered.kind != INVENTORY_EMPTY ?
+                        inventory_slot_name(hovered) :
+                        "Click an icon to fill the selected hotbar slot";
+    int label_size = hovered.kind != INVENTORY_EMPTY ? 19 : 15;
     int label_y = (int)(layout.grid_y +
         INVENTORY_ROWS*INVENTORY_SLOT_SIZE +
         (INVENTORY_ROWS - 1)*INVENTORY_SLOT_GAP + 8);
@@ -209,10 +282,15 @@ void inventory_draw(const Inventory *inventory, BlockId selected)
                    (layout.panel.width - MeasureText(label, label_size))*0.5f),
              label_y, label_size, (Color){26, 50, 55, 255});
 
-    const char *hint = "1-9/click: slot   E/ESC: close";
+    const char *hint = "Potato: LMB 1   Shift+LMB 64   Shift+RMB 32";
     int hint_size = 14;
     DrawText(hint,
              (int)(layout.panel.x +
                    (layout.panel.width - MeasureText(hint, hint_size))*0.5f),
              label_y + 27, hint_size, (Color){83, 99, 94, 255});
+    hint = "1-9/click/wheel: hotbar slot   E/ESC: close";
+    DrawText(hint,
+             (int)(layout.panel.x +
+                   (layout.panel.width - MeasureText(hint, hint_size))*0.5f),
+             label_y + 47, hint_size, (Color){83, 99, 94, 255});
 }

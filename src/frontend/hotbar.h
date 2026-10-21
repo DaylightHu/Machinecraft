@@ -9,14 +9,17 @@
 enum {HOTBAR_SLOT_COUNT = 9};
 
 typedef struct {
-    BlockId slots[HOTBAR_SLOT_COUNT];
+    InventorySlot slots[HOTBAR_SLOT_COUNT];
     int selected_slot;
 } Hotbar;
 
 bool hotbar_init(Hotbar *hotbar, const Inventory *inventory);
 void hotbar_unload(Hotbar *hotbar);
 void hotbar_update(Hotbar *hotbar);
+InventorySlot hotbar_selected(const Hotbar *hotbar);
 BlockId hotbar_selected_block(const Hotbar *hotbar);
+bool hotbar_set_selected(Hotbar *hotbar, InventorySlot slot);
 bool hotbar_set_selected_block(Hotbar *hotbar, BlockId id);
+bool hotbar_pick(Hotbar *hotbar, InventorySlot picked);
 void hotbar_draw(const Hotbar *hotbar, const Inventory *inventory);
 #endif

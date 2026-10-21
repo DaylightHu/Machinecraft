@@ -2,6 +2,7 @@
 #define RS_WORLD_H
 #include <stddef.h>
 #include "block.h"
+#include "item.h"
 
 typedef struct World World;
 /* One optional observer, called after a cell is written. It must not edit the
@@ -15,10 +16,7 @@ typedef enum {
 enum { CHUNK_SIZE = 16, SECTION_VOLUME = 4096, WORLD_MIN_Y = -64,
        WORLD_MAX_Y = 319, SECTION_COUNT = 24, STATE_ID_LIMIT = 32768 };
 typedef struct { int ground_layers; } WorldConfig;
-typedef struct {
-    uint32_t item;                  /* User-defined identity; zero means empty. */
-    uint8_t count, limit;           /* Stack limit: 1, 16 or 64. */
-} ContainerStack;
+typedef ItemStack ContainerStack;
 typedef void (*WorldSectionVisitor)(void *context, BlockPos origin);
 
 /* Fixed iron ground, no RNG, no seed, no immovable bedrock. */
