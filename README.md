@@ -1,6 +1,6 @@
 # Machinecraft
 
-A redstone sandbox written in C.
+A redstone sandbox written in C, based on Minecraft 1.16.2.
 
 Machinecraft is a small, independent environment for building, observing, and testing redstone machines. It deliberately removes survival mechanics,
 entities, random terrain, and lighting simulation so the project can focus on
