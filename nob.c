@@ -53,6 +53,7 @@ static const char *common_sources[] = {
     "src/blocks/target.c",
     "src/blocks/hopper.c",
     "src/blocks/dropper.c",
+    "src/blocks/lamp.c",
 };
 
 static const char *cli_sources[] = {
@@ -67,6 +68,7 @@ static const char *gui_sources[] = {
     "src/frontend/block_renderer.c",
     "src/frontend/world_renderer.c",
     "src/frontend/voxel_pick.c",
+    "src/frontend/block_shape.c",
     "src/frontend/inventory.c",
     "src/frontend/hotbar.c",
 };

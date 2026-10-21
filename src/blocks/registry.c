@@ -31,6 +31,7 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_TARGET] = &rs_target_def,
         [BLOCK_HOPPER] = &rs_hopper_def,
         [BLOCK_DROPPER] = &rs_dropper_def,
+        [BLOCK_REDSTONE_LAMP] = &rs_lamp_def,
         [BLOCK_PISTON_HEAD] = &rs_piston_head_def,
         [BLOCK_STICKY_PISTON_HEAD] = &rs_sticky_piston_head_def
     };

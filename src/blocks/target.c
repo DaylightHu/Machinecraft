@@ -7,9 +7,8 @@ static uint8_t target_signal(const World *world, BlockPos position,
                              Direction face, SignalMode mode)
 {
     (void)face;
-    uint8_t own = world_get(world, position).data.target.power;
-    uint8_t conducted = power_conducted(world, position, mode);
-    return own > conducted ? own : conducted;
+    (void)mode;
+    return world_get(world, position).data.target.power;
 }
 
 static uint8_t target_hit_power(double u, double v)
@@ -37,7 +36,7 @@ RsResult world_hit_target(World *world, BlockPos position, double u, double v,
     if (result != RS_OK) return result;
     BlockState state = world_get(world, position);
     if (state.id != BLOCK_TARGET) return RS_INVALID_ARGUMENT;
-    if (scheduler_pending(&world->sim->scheduler, position))
+    if (sim_has_scheduled_tick(world, position))
         return RS_UNCHANGED;
 
     state.data.target.power = target_hit_power(u, v);

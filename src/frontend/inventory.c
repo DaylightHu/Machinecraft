@@ -9,7 +9,7 @@ enum {
     INVENTORY_SLOT_GAP = 4,
     INVENTORY_PANEL_PADDING = 18,
     INVENTORY_HEADER_HEIGHT = 52,
-    INVENTORY_FOOTER_HEIGHT = 84
+    INVENTORY_FOOTER_HEIGHT = 32
 };
 
 _Static_assert(INVENTORY_COLUMNS*INVENTORY_ROWS == INVENTORY_SLOT_COUNT,
@@ -45,7 +45,8 @@ static const BlockTexture block_textures[] = {
     {BLOCK_NOTE_BLOCK, "res/textures/item/note_block.png"},
     {BLOCK_TARGET, "res/textures/item/target_block.png"},
     {BLOCK_HOPPER, "res/textures/item/hopper.png"},
-    {BLOCK_DROPPER, "res/textures/item/dropper.png"}
+    {BLOCK_DROPPER, "res/textures/item/dropper.png"},
+    {BLOCK_REDSTONE_LAMP, "res/textures/item/redstone_lamp.png"}
 };
 
 static InventoryLayout inventory_layout(void)
@@ -271,27 +272,15 @@ void inventory_draw(const Inventory *inventory, InventorySlot selected)
         if (under_mouse && occupied) hovered = contents;
     }
 
-    const char *label = hovered.kind != INVENTORY_EMPTY ?
-                        inventory_slot_name(hovered) :
-                        "Click an icon to fill the selected hotbar slot";
-    int label_size = hovered.kind != INVENTORY_EMPTY ? 19 : 15;
-    int label_y = (int)(layout.grid_y +
-        INVENTORY_ROWS*INVENTORY_SLOT_SIZE +
-        (INVENTORY_ROWS - 1)*INVENTORY_SLOT_GAP + 8);
-    DrawText(label,
-             (int)(layout.panel.x +
-                   (layout.panel.width - MeasureText(label, label_size))*0.5f),
-             label_y, label_size, (Color){26, 50, 55, 255});
-
-    const char *hint = "Potato: LMB 1   Shift+LMB 64   Shift+RMB 32";
-    int hint_size = 14;
-    DrawText(hint,
-             (int)(layout.panel.x +
-                   (layout.panel.width - MeasureText(hint, hint_size))*0.5f),
-             label_y + 27, hint_size, (Color){83, 99, 94, 255});
-    hint = "1-9/click/wheel: hotbar slot   E/ESC: close";
-    DrawText(hint,
-             (int)(layout.panel.x +
-                   (layout.panel.width - MeasureText(hint, hint_size))*0.5f),
-             label_y + 47, hint_size, (Color){83, 99, 94, 255});
+    if (hovered.kind != INVENTORY_EMPTY) {
+        const char *label = inventory_slot_name(hovered);
+        int label_size = 19;
+        int label_y = (int)(layout.grid_y +
+            INVENTORY_ROWS*INVENTORY_SLOT_SIZE +
+            (INVENTORY_ROWS - 1)*INVENTORY_SLOT_GAP + 8);
+        DrawText(label,
+                 (int)(layout.panel.x +
+                       (layout.panel.width - MeasureText(label, label_size))*0.5f),
+                 label_y, label_size, (Color){26, 50, 55, 255});
+    }
 }

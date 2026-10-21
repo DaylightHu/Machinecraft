@@ -37,10 +37,12 @@ enum {
     STATE_HOPPER_COUNT = 5 * 2 * 16,
     STATE_EMPTY_BARREL_FIRST = STATE_HOPPER_FIRST + STATE_HOPPER_COUNT,
     STATE_DROPPER_FIRST = STATE_EMPTY_BARREL_FIRST + DIR_COUNT,
-    STATE_DROPPER_COUNT = DIR_COUNT * 2 * 16
+    STATE_DROPPER_COUNT = DIR_COUNT * 2 * 16,
+    STATE_LAMP_FIRST = STATE_DROPPER_FIRST + STATE_DROPPER_COUNT,
+    STATE_LAMP_COUNT = 2
 };
 
-_Static_assert(STATE_DROPPER_FIRST + STATE_DROPPER_COUNT <= STATE_ID_LIMIT,
+_Static_assert(STATE_LAMP_FIRST + STATE_LAMP_COUNT <= STATE_ID_LIMIT,
                "block states must fit the palette state id");
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -181,6 +183,10 @@ bool state_encode(BlockState s, StateId *id)
         *id = (StateId)(STATE_DROPPER_FIRST + s.data.dropper.facing +
               (s.data.dropper.triggered ? DIR_COUNT : 0) +
               s.data.dropper.level * (DIR_COUNT * 2));
+        return true;
+    }
+    if (s.id == BLOCK_REDSTONE_LAMP) {
+        *id = (StateId)(STATE_LAMP_FIRST + (s.data.lamp.lit ? 1u : 0u));
         return true;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
@@ -326,6 +332,11 @@ bool state_decode(StateId id, BlockState *s)
         s->data.dropper.facing = (uint8_t)(value % DIR_COUNT);
         s->data.dropper.triggered = (value % (DIR_COUNT * 2)) >= DIR_COUNT;
         s->data.dropper.level = (uint8_t)(value / (DIR_COUNT * 2));
+        return true;
+    }
+    if (id >= STATE_LAMP_FIRST && id < STATE_LAMP_FIRST + STATE_LAMP_COUNT) {
+        *s = block_default(BLOCK_REDSTONE_LAMP);
+        s->data.lamp.lit = id != STATE_LAMP_FIRST;
         return true;
     }
     if (id < 16 || id > 8207) return false;

@@ -20,6 +20,7 @@ void sim_destroy_internal(World *w)
     container_destroy(w);
     queue_destroy(&s->dirty); queue_destroy(&s->wire_roots);
     queue_destroy(&s->rail_roots); queue_destroy(&s->input_roots);
+    free(s->piston_events.items); posmap_destroy(&s->piston_events.pending);
     scheduler_destroy(&s->scheduler); posmap_destroy(&s->torch_slots);
     free(s->torches); free(s); w->sim = NULL;
 }
@@ -48,7 +49,10 @@ void sim_forget_cell(World *w, BlockPos p)
 {
     container_forget(w, p);
     Simulator *s = w->sim; size_t slot;
-    scheduler_cancel(&s->scheduler, p);
+    /* Vanilla scheduled block ticks survive replacement. Piston entries are
+     * this engine's motion markers, not vanilla scheduled block ticks. */
+    scheduler_cancel(&s->scheduler, p, BLOCK_PISTON);
+    scheduler_cancel(&s->scheduler, p, BLOCK_STICKY_PISTON);
     if (posmap_get(&s->torch_slots, p, &slot)) {
         s->torches[slot].used = false; s->torches[slot].next_free = s->free_torch;
         s->free_torch = slot; posmap_remove(&s->torch_slots, p);
@@ -151,30 +155,99 @@ void sim_schedule_priority(World *w, BlockPos p, uint32_t delay,
                            TickPriority priority)
 {
     if (!delay || UINT64_MAX - w->tick < delay) { w->sim->error = RS_INTERNAL_ERROR; return; }
-    if (!scheduler_add_priority(&w->sim->scheduler, p, w->tick + delay,
+    if (!scheduler_add_priority(&w->sim->scheduler, p,
+                                scheduler_block_type(world_get(w, p)), w->tick + delay,
                                 priority))
         w->sim->error = RS_OUT_OF_MEMORY;
 }
-void sim_cancel(World *w, BlockPos p) { scheduler_cancel(&w->sim->scheduler, p); }
+void sim_cancel(World *w, BlockPos p)
+{
+    scheduler_cancel(&w->sim->scheduler, p, scheduler_block_type(world_get(w, p)));
+}
+bool sim_has_scheduled_tick(const World *w, BlockPos p)
+{
+    return scheduler_pending(&w->sim->scheduler, p,
+                             scheduler_block_type(world_get(w, p)));
+}
+bool sim_will_tick(const World *w, BlockPos p)
+{
+    return scheduler_will_tick(&w->sim->scheduler, p,
+                               scheduler_block_type(world_get(w, p)));
+}
+
+static BlockPos piston_event_key(PistonEvent event)
+{
+    BlockPos key = event.pos;
+    unsigned type = ((event.block == BLOCK_STICKY_PISTON ? 3u : 0u) +
+                     event.type)*DIR_COUNT + event.facing;
+    key.y = (key.y - WORLD_MIN_Y)*(6*DIR_COUNT) + (int)type;
+    return key;
+}
+
+bool sim_queue_piston_event(World *w, PistonEvent event)
+{
+    if (!world_in_bounds(w, event.pos) ||
+        !block_is_piston_base((BlockId)event.block) ||
+        event.type > 2 || event.facing >= DIR_COUNT) {
+        w->sim->error = RS_INTERNAL_ERROR;
+        return false;
+    }
+    PistonEvents *q = &w->sim->piston_events;
+    BlockPos key = piston_event_key(event);
+    if (posmap_get(&q->pending, key, NULL)) return true;
+    if (q->head && q->count == q->capacity) {
+        memmove(q->items, q->items + q->head,
+                (q->count - q->head)*sizeof(*q->items));
+        q->count -= q->head;
+        q->head = 0;
+    }
+    if (q->count == q->capacity) {
+        size_t capacity = q->capacity ? q->capacity*2 : 16;
+        if (capacity < q->capacity || capacity > SIZE_MAX/sizeof(*q->items))
+            goto fail;
+        PistonEvent *next = realloc(q->items, capacity*sizeof(*next));
+        if (!next) goto fail;
+        q->items = next;
+        q->capacity = capacity;
+    }
+    if (!posmap_set(&q->pending, key, 0)) goto fail;
+    q->items[q->count++] = event;
+    return true;
+fail:
+    w->sim->error = RS_OUT_OF_MEMORY;
+    return false;
+}
+
+static bool pop_piston_event(PistonEvents *q, PistonEvent *event)
+{
+    if (q->head == q->count) return false;
+    *event = q->items[q->head++];
+    posmap_remove(&q->pending, piston_event_key(*event));
+    if (q->head == q->count) q->head = q->count = 0;
+    return true;
+}
 RsResult sim_flush(World *w)
 {
     if (!w) return RS_INVALID_ARGUMENT;
     Simulator *s = w->sim; BlockPos p;
     if (s->error != RS_OK) return s->error;
-    while (queue_pop(&s->dirty, &p)) {
-        const BlockDef *d = block_definition((BlockId)world_get(w, p).id);
-        if (d->neighbor_changed) { ++s->stats.neighbor_checks; d->neighbor_changed(w, p); }
+    do {
+        while (queue_pop(&s->dirty, &p)) {
+            const BlockDef *d = block_definition((BlockId)world_get(w, p).id);
+            if (d->neighbor_changed) { ++s->stats.neighbor_checks; d->neighbor_changed(w, p); }
+            if (s->error != RS_OK) return s->error;
+        }
+        wire_solver_flush(w);
         if (s->error != RS_OK) return s->error;
-    }
-    wire_solver_flush(w);
-    if (s->error != RS_OK) return s->error;
-    while (queue_pop(&s->input_roots, &p)) {
-        const BlockDef *d = block_definition((BlockId)world_get(w, p).id);
-        if (d->input_changed) d->input_changed(w, p);
+        while (queue_pop(&s->input_roots, &p)) {
+            const BlockDef *d = block_definition((BlockId)world_get(w, p).id);
+            if (d->input_changed) d->input_changed(w, p);
+            if (s->error != RS_OK) return s->error;
+        }
+        rail_solver_flush(w);
         if (s->error != RS_OK) return s->error;
-    }
-    rail_solver_flush(w);
-    if (s->error != RS_OK) return s->error;
+    } while (s->dirty.count || s->wire_roots.count ||
+             s->input_roots.count || s->rail_roots.count);
     return s->error;
 }
 RsResult sim_step(World *w)
@@ -184,9 +257,13 @@ RsResult sim_step(World *w)
     if (w->tick == UINT64_MAX) return RS_INTERNAL_ERROR;
     Simulator *s = w->sim;
     ++w->tick;
+    if (!scheduler_begin_tick(&s->scheduler, w->tick))
+        return s->error = RS_OUT_OF_MEMORY;
     ScheduledEvent event;
-    while (scheduler_pop_due(&s->scheduler, w->tick, &event)) {
-        const BlockDef *d = block_definition((BlockId)world_get(w, event.pos).id);
+    while (scheduler_next_tick(&s->scheduler, &event)) {
+        BlockState state = world_get(w, event.pos);
+        if (scheduler_block_type(state) != event.block) continue;
+        const BlockDef *d = block_definition((BlockId)state.id);
         if (!d->scheduled_tick) continue;
         TickAction action = d->scheduled_tick(w, event.pos);
         ++s->stats.events_processed;
@@ -197,13 +274,29 @@ RsResult sim_step(World *w)
         result = sim_flush(w);
         if (result != RS_OK) return result;
     }
+    /* ServerLevel runs block events after the complete scheduled-tick batch,
+     * before block entities. A block event may append more events to this FIFO. */
+    PistonEvent piston;
+    while (pop_piston_event(&s->piston_events, &piston)) {
+        if (world_get(w, piston.pos).id != piston.block) continue;
+        piston_trigger_event(w, piston);
+        ++s->stats.events_processed;
+        result = sim_flush(w);
+        if (result != RS_OK) return result;
+    }
     container_step(w);
     return s->error;
 }
 SimStats sim_stats(const World *w)
 {
     SimStats stats = {0};
-    if (w) { stats = w->sim->stats; stats.pending_events = w->sim->scheduler.count; }
+    if (w) {
+        const Simulator *s = w->sim;
+        stats = s->stats;
+        stats.pending_events = s->scheduler.count +
+            s->scheduler.ticking_count - s->scheduler.ticking_head +
+            s->piston_events.count - s->piston_events.head;
+    }
     return stats;
 }
 void sim_reset_stats(World *w) { if (w) memset(&w->sim->stats, 0, sizeof(SimStats)); }
@@ -217,6 +310,10 @@ bool sim_chunk_pinned(const World *w, BlockPos chunk)
     if (container_chunk_pinned(w, chunk)) return true;
     const Simulator *s = w->sim;
     for (size_t i = 0; i < s->scheduler.count; ++i) if (near_chunk(s->scheduler.heap[i].pos, chunk)) return true;
+    for (size_t i = s->scheduler.ticking_head; i < s->scheduler.ticking_count; ++i)
+        if (near_chunk(s->scheduler.ticking[i].pos, chunk)) return true;
+    for (size_t i = s->piston_events.head; i < s->piston_events.count; ++i)
+        if (near_chunk(s->piston_events.items[i].pos, chunk)) return true;
     const PositionQueue *queues[] = {
         &s->dirty, &s->wire_roots, &s->rail_roots, &s->input_roots
     };

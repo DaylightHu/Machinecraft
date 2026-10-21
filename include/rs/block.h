@@ -11,6 +11,7 @@ typedef enum {
     BLOCK_POWERED_RAIL, BLOCK_ACTIVATOR_RAIL, BLOCK_OBSERVER,
     BLOCK_PISTON, BLOCK_STICKY_PISTON, BLOCK_BARREL, BLOCK_SLIME,
     BLOCK_NOTE_BLOCK, BLOCK_HONEY, BLOCK_TARGET, BLOCK_HOPPER, BLOCK_DROPPER,
+    BLOCK_REDSTONE_LAMP,
     BLOCK_INTERNAL_FIRST,
     BLOCK_PISTON_HEAD = BLOCK_INTERNAL_FIRST,
     BLOCK_STICKY_PISTON_HEAD,
@@ -82,6 +83,9 @@ typedef struct {
             uint8_t level;          /* Derived comparator fullness, 0..15. */
             bool triggered;        /* Input latch, separate from the pending tick. */
         } dropper;
+        struct {
+            bool lit;
+        } lamp;
     } data;
 } BlockState;
 

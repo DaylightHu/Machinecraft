@@ -1,10 +1,11 @@
 #include "block_internal.h"
 
-/* Slime has a full supporting shape but, like vanilla's translucent blocks,
- * it does not conduct redstone power through itself. */
+/* In 1.16.2, Material.CLAY and the full collision shape make slime a
+ * conductor. noOcclusion controls rendering, not this power property. */
 const BlockDef rs_slime_def = {
     .name = "slime_block",
     .full_cube = true,
+    .conductor = true,
     .supports_wire = true,
     .push_reaction = PUSH_NORMAL
 };

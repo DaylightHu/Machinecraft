@@ -12,7 +12,14 @@ uint8_t power_signal(const World *world, BlockPos position, Direction face, Sign
         return 0;
     }
     const BlockDef *definition = block_definition((BlockId)world_get(world, position).id);
-    return definition->signal ? definition->signal(world, position, face, mode) : 0;
+    uint8_t signal = definition->signal ?
+                     definition->signal(world, position, face, mode) : 0;
+    /* Level.getSignal combines the block's own output with direct power
+     * received by a conductor. Direct queries never relay conductors, so
+     * this cannot turn a line of solid blocks into a signal network. */
+    if (signal < 15 && definition->conductor)
+        signal = max_power(signal, power_conducted(world, position, mode));
+    return signal;
 }
 
 uint8_t power_direct(const World *world, BlockPos position, Direction face, SignalMode mode)
@@ -30,6 +37,7 @@ uint8_t power_received(const World *world, BlockPos position, SignalMode mode)
     for (Direction face = 0; face < DIR_COUNT; ++face) {
         BlockPos neighbor = block_offset(position, face);
         best = max_power(best, power_signal(world, neighbor, direction_opposite(face), mode));
+        if (best == 15) break;
     }
     return best;
 }
@@ -40,6 +48,7 @@ uint8_t power_conducted(const World *world, BlockPos position, SignalMode mode)
     for (Direction face = 0; face < DIR_COUNT; ++face) {
         BlockPos neighbor = block_offset(position, face);
         best = max_power(best, power_direct(world, neighbor, direction_opposite(face), mode));
+        if (best == 15) break;
     }
     return best;
 }

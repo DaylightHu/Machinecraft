@@ -1,6 +1,7 @@
 #include "gui.h"
 
 #include "block_renderer.h"
+#include "block_shape.h"
 #include "hotbar.h"
 #include "inventory.h"
 #include "voxel_pick.h"
@@ -175,7 +176,7 @@ static ContainerLayout container_layout(BlockId id)
                       (rows - 1)*CONTAINER_SLOT_GAP;
     int header = barrel ? 76 : 58;
     int panel_width = barrel ? grid_width + 40 : 480;
-    int panel_height = header + grid_height + (barrel ? 68 : 0) + 90;
+    int panel_height = header + grid_height + (barrel ? 42 : 0) + 18;
     ContainerLayout layout = {0};
     layout.panel = (Rectangle){
         (GetScreenWidth() - panel_width)*0.5f,
@@ -206,7 +207,7 @@ static Rectangle barrel_signal_rectangle(ContainerLayout layout, int level)
     return (Rectangle){
         layout.panel.x + (layout.panel.width - width)*0.5f +
         level*(SIGNAL_BUTTON_SIZE + SIGNAL_BUTTON_GAP),
-        layout.grid_y + layout.rows*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP) + 24,
+        layout.grid_y + layout.rows*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP) + 8,
         SIGNAL_BUTTON_SIZE, 30
     };
 }
@@ -927,10 +928,6 @@ static void draw_container(const GuiApp *app, BlockId id)
             inventory_draw_stack(&app->inventory, stack, slot);
     }
     if (barrel) {
-        int label_y = (int)(layout.grid_y +
-            layout.rows*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP)) + 4;
-        draw_centered("Set signal: click 0-15 or use Left/Right", label_y, 14,
-                      (Color){83, 69, 50, 255});
         for (int value = 0; value <= 15; ++value) {
             Rectangle shortcut = barrel_signal_rectangle(layout, value);
             bool hovered = point_in(shortcut);
@@ -945,14 +942,31 @@ static void draw_container(const GuiApp *app, BlockId id)
                      (int)shortcut.y + 7, 16, RAYWHITE);
         }
     }
-    int footer_y = (int)(layout.panel.y + layout.panel.height) - 72;
-    draw_centered("Click hotbar: store | Click container: retrieve",
-                  footer_y, 14, DARKGRAY);
-    draw_centered("LMB: 1   Shift+LMB: stack   Shift+RMB: half", footer_y + 22,
-                  14, DARKGRAY);
-    draw_centered("Half rounds up   E/ESC: close", footer_y + 44,
-                  14, DARKGRAY);
     hotbar_draw(&app->hotbar, &app->inventory);
+}
+
+static void draw_block_outline(BlockState state, Vector3 center)
+{
+    static BlockShape cached;
+    static BlockShapeEdge edges[BLOCK_SHAPE_EDGES];
+    static unsigned edge_count;
+    BlockShape shape;
+    block_outline_shape(state, &shape);
+    if (shape.count != cached.count ||
+        memcmp(shape.boxes, cached.boxes, shape.count*sizeof(shape.boxes[0]))) {
+        cached = shape;
+        edge_count = block_shape_edges(&shape, edges);
+    }
+    for (unsigned i = 0; i < edge_count; ++i) {
+        const BlockShapeEdge *edge = &edges[i];
+        Vector3 start = {center.x + edge->start[0]/16.0f - 0.5f,
+                         center.y + edge->start[1]/16.0f - 0.5f,
+                         center.z + edge->start[2]/16.0f - 0.5f};
+        Vector3 end = {center.x + edge->end[0]/16.0f - 0.5f,
+                       center.y + edge->end[1]/16.0f - 0.5f,
+                       center.z + edge->end[2]/16.0f - 0.5f};
+        DrawLine3D(start, end, YELLOW);
+    }
 }
 
 static void draw_world(GuiApp *app, VoxelHit hit)
@@ -963,7 +977,8 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         if (hit.hit) {
             Vector3 center = {(float)hit.pos.x, (float)hit.pos.y,
                               (float)hit.pos.z};
-            DrawCubeWires(center, 1.02f, 1.02f, 1.02f, YELLOW);
+            draw_block_outline(world_get(game_session_world(app->session), hit.pos),
+                                center);
         }
     EndMode3D();
 
@@ -973,24 +988,18 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         DrawLine(cx - 6, cy, cx + 6, cy, BLACK);
         DrawLine(cx, cy - 6, cx, cy + 6, BLACK);
     }
-    InventorySlot selected = hotbar_selected(&app->hotbar);
-    DrawText(TextFormat("Selected: %s%s",
-             inventory_slot_name(selected),
-             game_session_dirty(app->session) ? " | unsaved" : ""),
-             15, 15, 20, DARKBLUE);
-    DrawText(TextFormat("Camera: (%.2f, %.2f, %.2f)",
+    DrawText(TextFormat("Position: (%.2f, %.2f, %.2f)",
              app->camera.position.x,
              app->camera.position.y,
              app->camera.position.z),
-             15, 42, 18, DARKBLUE);
+             15, 15, 18, DARKBLUE);
     if (hit.hit) {
         DrawText(TextFormat("Target: (%d, %d, %d)",
                  hit.pos.x, hit.pos.y, hit.pos.z),
-                 15, 66, 18, DARKBLUE);
+                 15, 39, 18, DARKBLUE);
     } else {
-        DrawText("Target: none", 15, 66, 18, DARKBLUE);
+        DrawText("Target: none", 15, 39, 18, DARKBLUE);
     }
-    DrawText(app->message, 15, 90, 18, DARKBLUE);
     hotbar_draw(&app->hotbar, &app->inventory);
 }
 

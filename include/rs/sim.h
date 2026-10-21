@@ -15,8 +15,10 @@ typedef struct {
 
 /* Edits mark work; flush performs zero-delay work without advancing time.
  * step flushes edits, advances ONE game tick, then runs due events in
- * Java-style priority/insertion order. Each event's consequences settle
- * before the next event runs. Torch delay = 2 game ticks (100 ms at 20 TPS). */
+ * priority/insertion order from a frozen due batch, then piston block events,
+ * then containers. flush does not execute piston block events or advance time.
+ * Each callback's zero-delay consequences settle before the next callback.
+ * Torch delay = 2 game ticks (100 ms at 20 TPS). */
 RsResult sim_flush(World *world);
 RsResult sim_step(World *world);
 SimStats sim_stats(const World *world);

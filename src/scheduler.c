@@ -3,6 +3,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+uint8_t scheduler_block_type(BlockState state)
+{
+    return state.id == BLOCK_REDSTONE_TORCH &&
+           direction_horizontal((Direction)state.data.torch.support_dir) ?
+           TICK_WALL_TORCH : state.id;
+}
+
+static bool valid_key(BlockPos pos, uint8_t block)
+{
+    return pos.y >= WORLD_MIN_Y && pos.y <= WORLD_MAX_Y &&
+           block > BLOCK_AIR && block < TICK_BLOCK_TYPES;
+}
+
+static BlockPos event_key(BlockPos pos, uint8_t block)
+{
+    /* The bounded building height leaves room to pack the type without
+     * changing the general-purpose position map or its constant-time lookup. */
+    pos.y = (pos.y - WORLD_MIN_Y)*TICK_BLOCK_TYPES + block;
+    return pos;
+}
+
 static bool before(ScheduledEvent first, ScheduledEvent second)
 {
     if (first.due != second.due) return first.due < second.due;
@@ -16,8 +37,9 @@ static void swap(Scheduler *scheduler, size_t first, size_t second)
     ScheduledEvent temporary = scheduler->heap[first];
     scheduler->heap[first] = scheduler->heap[second];
     scheduler->heap[second] = temporary;
-    (void)posmap_set(&scheduler->slots, scheduler->heap[first].pos, first);
-    (void)posmap_set(&scheduler->slots, scheduler->heap[second].pos, second);
+    ScheduledEvent a = scheduler->heap[first], b = scheduler->heap[second];
+    (void)posmap_set(&scheduler->slots, event_key(a.pos, a.block), first);
+    (void)posmap_set(&scheduler->slots, event_key(b.pos, b.block), second);
 }
 
 static void sift_up(Scheduler *scheduler, size_t index)
@@ -77,50 +99,63 @@ bool scheduler_reserve(Scheduler *scheduler, size_t capacity)
 void scheduler_destroy(Scheduler *scheduler)
 {
     free(scheduler->heap);
+    free(scheduler->ticking);
     posmap_destroy(&scheduler->slots);
+    posmap_destroy(&scheduler->ticking_slots);
     memset(scheduler, 0, sizeof(*scheduler));
 }
 
-bool scheduler_pending(const Scheduler *s, BlockPos pos)
+bool scheduler_pending(const Scheduler *s, BlockPos pos, uint8_t block)
 {
-    return posmap_get(&s->slots, pos, NULL);
+    return valid_key(pos, block) &&
+           posmap_get(&s->slots, event_key(pos, block), NULL);
 }
 
-bool scheduler_add(Scheduler *s, BlockPos pos, uint64_t due)
+bool scheduler_will_tick(const Scheduler *s, BlockPos pos, uint8_t block)
 {
-    return scheduler_add_priority(s, pos, due, TICK_NORMAL);
+    return valid_key(pos, block) &&
+           posmap_get(&s->ticking_slots, event_key(pos, block), NULL);
 }
 
-bool scheduler_add_priority(Scheduler *s, BlockPos pos, uint64_t due,
+bool scheduler_add(Scheduler *s, BlockPos pos, uint8_t block, uint64_t due)
+{
+    return scheduler_add_priority(s, pos, block, due, TICK_NORMAL);
+}
+
+bool scheduler_add_priority(Scheduler *s, BlockPos pos, uint8_t block, uint64_t due,
                             TickPriority priority)
 {
-    if (scheduler_pending(s, pos)) return true;
-    if ((unsigned)priority > TICK_EXTREMELY_LOW ||
-        s->next_sequence == UINT64_MAX) return false;
+    if (!valid_key(pos, block) || (unsigned)priority > TICK_EXTREMELY_LOW)
+        return false;
+    if (scheduler_pending(s, pos, block)) return true;
+    if (s->next_sequence == UINT64_MAX) return false;
     if (s->count == s->capacity) {
         size_t capacity = s->capacity ? s->capacity * 2 : 8;
         if (capacity < s->capacity || !scheduler_reserve(s, capacity)) return false;
     }
-    if (!posmap_set(&s->slots, pos, s->count)) return false;
+    if (!posmap_set(&s->slots, event_key(pos, block), s->count)) return false;
     size_t slot = s->count++;
     s->heap[slot] = (ScheduledEvent){
         .due = due,
         .sequence = s->next_sequence++,
         .pos = pos,
-        .priority = priority
+        .priority = priority,
+        .block = block
     };
     sift_up(s, slot); return true;
 }
 
-void scheduler_cancel(Scheduler *s, BlockPos pos)
+void scheduler_cancel(Scheduler *s, BlockPos pos, uint8_t block)
 {
     size_t slot;
-    if (!posmap_get(&s->slots, pos, &slot)) return;
-    posmap_remove(&s->slots, pos);
+    if (!valid_key(pos, block) ||
+        !posmap_get(&s->slots, event_key(pos, block), &slot)) return;
+    posmap_remove(&s->slots, event_key(pos, block));
     --s->count;
     if (slot == s->count) return;
     s->heap[slot] = s->heap[s->count];
-    (void)posmap_set(&s->slots, s->heap[slot].pos, slot);
+    ScheduledEvent moved = s->heap[slot];
+    (void)posmap_set(&s->slots, event_key(moved.pos, moved.block), slot);
     if (slot && before(s->heap[slot], s->heap[(slot - 1) / 2])) sift_up(s, slot);
     else sift_down(s, slot);
 }
@@ -131,6 +166,38 @@ bool scheduler_pop_due(Scheduler *scheduler, uint64_t now, ScheduledEvent *event
         return false;
     }
     *event = scheduler->heap[0];
-    scheduler_cancel(scheduler, event->pos);
+    scheduler_cancel(scheduler, event->pos, event->block);
+    return true;
+}
+
+bool scheduler_begin_tick(Scheduler *s, uint64_t now)
+{
+    if (s->ticking_head != s->ticking_count) return false;
+    s->ticking_head = s->ticking_count = 0;
+    /* next_tick removes each entry. Keep the empty map and its tombstones,
+     * so an idle tick does not clear storage sized for a previous large batch. */
+    while (s->count && s->heap[0].due <= now &&
+           s->ticking_count < TICKS_PER_STEP_LIMIT) {
+        if (s->ticking_count == s->ticking_capacity) {
+            size_t capacity = s->ticking_capacity ? s->ticking_capacity*2 : 8;
+            if (capacity > SIZE_MAX/sizeof(*s->ticking)) return false;
+            ScheduledEvent *next = realloc(s->ticking, capacity*sizeof(*next));
+            if (!next) return false;
+            s->ticking = next;
+            s->ticking_capacity = capacity;
+        }
+        ScheduledEvent event = s->heap[0];
+        if (!posmap_set(&s->ticking_slots, event_key(event.pos, event.block), 0))
+            return false;
+        (void)scheduler_pop_due(s, now, &s->ticking[s->ticking_count++]);
+    }
+    return true;
+}
+
+bool scheduler_next_tick(Scheduler *s, ScheduledEvent *event)
+{
+    if (s->ticking_head == s->ticking_count) return false;
+    *event = s->ticking[s->ticking_head++];
+    posmap_remove(&s->ticking_slots, event_key(event->pos, event->block));
     return true;
 }

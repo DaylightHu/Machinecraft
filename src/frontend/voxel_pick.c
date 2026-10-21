@@ -1,5 +1,5 @@
 #include "voxel_pick.h"
-#include "hopper_shape.h"
+#include "block_shape.h"
 
 #include <limits.h>
 #include <math.h>
@@ -11,22 +11,20 @@ static Direction face_entered(int axis, int step)
     return step > 0 ? DIR_NORTH : DIR_SOUTH;
 }
 
-static VoxelHit pick_hopper(BlockPos pos, Direction facing,
-                            const double origin[3], const double direction[3],
-                            double max_distance)
+static VoxelHit pick_shape(BlockPos pos, const BlockShape *shape,
+                           const double origin[3], const double direction[3],
+                           double max_distance)
 {
-    HopperBox boxes[HOPPER_BOX_COUNT];
-    hopper_shape(facing, boxes);
-    VoxelHit result = {0};
+    VoxelHit result = {.face = DIR_COUNT};
     double nearest = max_distance;
     const double center[] = {pos.x, pos.y, pos.z};
-    for (int i = 0; i < HOPPER_BOX_COUNT; ++i) {
+    for (unsigned i = 0; i < shape->count; ++i) {
         double enter = -INFINITY, leave = INFINITY;
         Direction face = DIR_COUNT;
         bool intersects = true;
         for (int axis = 0; axis < 3; ++axis) {
-            double low = center[axis]+boxes[i].minimum[axis]/16.0-0.5;
-            double high = center[axis]+boxes[i].maximum[axis]/16.0-0.5;
+            double low = center[axis]+shape->boxes[i].minimum[axis]/16.0-0.5;
+            double high = center[axis]+shape->boxes[i].maximum[axis]/16.0-0.5;
             if (direction[axis] == 0.0) {
                 if (origin[axis] < low || origin[axis] > high) intersects = false;
                 continue;
@@ -37,7 +35,7 @@ static VoxelHit pick_hopper(BlockPos pos, Direction facing,
             if (first > enter) { enter = first; face = face_entered(axis, direction[axis] > 0 ? 1 : -1); }
             if (last < leave) leave = last;
         }
-        if (!intersects || leave < enter || leave < 0) continue;
+        if (!intersects || leave < enter || leave <= 0) continue;
         double distance = enter > 0 ? enter : 0;
         if (distance > nearest) continue;
         nearest = distance;
@@ -63,7 +61,6 @@ VoxelHit voxel_pick(const World *world, PickVec3 origin,
 
     int cell[3], step[3];
     double next[3], delta[3];
-    Direction face = DIR_COUNT;
 
     for (int axis = 0; axis < 3; ++axis)
     {
@@ -91,34 +88,29 @@ VoxelHit voxel_pick(const World *world, PickVec3 origin,
                               (step[axis] > 0 ? 0.5 : -0.5);
             next[axis] = (boundary - o[axis])/d[axis];
             delta[axis] = 1.0/fabs(d[axis]);
-
-            /* If the ray starts exactly on a cell face, that face is known. */
-            if (grid == floor(grid) && face == DIR_COUNT)
-                face = face_entered(axis, step[axis]);
         }
     }
 
-    double t = 0.0;
     for (;;)
     {
         BlockPos pos = {cell[0], cell[1], cell[2]};
         if (world_in_bounds(world, pos))
         {
             BlockState state = world_get(world, pos);
-            if (state.id == BLOCK_HOPPER) {
-                VoxelHit hopper = pick_hopper(pos, (Direction)state.data.hopper.facing,
-                                              o, d, max_distance);
-                if (hopper.hit) return hopper;
-            }
-            else if (state.id != BLOCK_AIR)
-            {
-                VoxelHit result = {0};
-                result.hit = true;
-                result.has_face = face != DIR_COUNT;
-                result.pos = pos;
-                result.face = face;
-                result.distance = (float)t;
-                return result;
+            if (state.id != BLOCK_AIR) {
+                BlockShape shape;
+                block_outline_shape(state, &shape);
+                VoxelHit hit = pick_shape(pos, &shape, o, d, max_distance);
+                if (hit.hit) {
+                    block_interaction_shape(state, &shape);
+                    if (shape.count) {
+                        VoxelHit interaction = pick_shape(pos, &shape, o, d, max_distance);
+                        if (interaction.hit && interaction.has_face &&
+                            interaction.distance < hit.distance)
+                            hit.face = interaction.face;
+                    }
+                    return hit;
+                }
             }
         }
 
@@ -128,7 +120,6 @@ VoxelHit voxel_pick(const World *world, PickVec3 origin,
 
         /* At a grid edge/corner, advance all tied axes together.
          * This avoids selecting cells touched at only a zero-area edge. */
-        Direction entered = DIR_COUNT;
         for (int axis = 0; axis < 3; ++axis)
         {
             if (fabs(next[axis] - t_next) <= 1e-9)
@@ -139,11 +130,7 @@ VoxelHit voxel_pick(const World *world, PickVec3 origin,
 
                 cell[axis] += step[axis];
                 next[axis] += delta[axis];
-                if (entered == DIR_COUNT)
-                    entered = face_entered(axis, step[axis]);
             }
         }
-        t = t_next;
-        face = entered;
     }
 }

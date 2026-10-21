@@ -20,13 +20,18 @@ typedef struct {
     bool extending;
 } PistonResolver;
 
+static const Direction piston_directions[] = {
+    DIR_DOWN, DIR_UP, DIR_NORTH, DIR_SOUTH, DIR_WEST, DIR_EAST
+};
+
 static bool piston_input_powered(const World *world, BlockPos position,
                                  Direction facing)
 {
     if ((unsigned)facing >= DIR_COUNT) return false;
 
     /* Vanilla pistons ignore power entering through their moving face. */
-    for (Direction direction = 0; direction < DIR_COUNT; ++direction) {
+    for (unsigned i = 0; i < DIR_COUNT; ++i) {
+        Direction direction = piston_directions[i];
         if (direction == facing) continue;
         BlockPos source = block_offset(position, direction);
         if (power_signal(world, source, direction_opposite(direction),
@@ -37,7 +42,8 @@ static bool piston_input_powered(const World *world, BlockPos position,
     /* Java Edition quasi-connectivity: also sample the neighbors of the cell
      * above the piston, except the piston cell itself. */
     BlockPos above = block_offset(position, DIR_UP);
-    for (Direction direction = 0; direction < DIR_COUNT; ++direction) {
+    for (unsigned i = 0; i < DIR_COUNT; ++i) {
+        Direction direction = piston_directions[i];
         if (direction == DIR_DOWN) continue;
         BlockPos source = block_offset(above, direction);
         if (power_signal(world, source, direction_opposite(direction),
@@ -238,7 +244,8 @@ static bool piston_add_branching_blocks(PistonResolver *resolver,
                                         BlockPos position)
 {
     BlockState sticky = world_get(resolver->world, position);
-    for (Direction direction = 0; direction < DIR_COUNT; ++direction) {
+    for (unsigned i = 0; i < DIR_COUNT; ++i) {
+        Direction direction = piston_directions[i];
         if (piston_same_axis(direction, resolver->push_direction)) continue;
         BlockPos neighbor = block_offset(position, direction);
         BlockState state = world_get(resolver->world, neighbor);
@@ -372,17 +379,16 @@ static bool piston_set_extended(World *world, BlockPos position,
     return true;
 }
 
-void piston_check_input(World *world, BlockPos position)
+static bool piston_update_indicator(World *world, BlockPos position,
+                                     BlockState *current, bool powered)
 {
-    BlockState state = world_get(world, position);
-    if (!block_is_piston_base((BlockId)state.id)) return;
+    BlockState state = *current;
     Direction facing = (Direction)state.data.piston.facing;
-    bool powered = piston_input_powered(world, position, facing);
     bool changed = state.data.piston.powered != powered;
 
     if (changed) {
         state.data.piston.powered = powered;
-        if (!world_write_visual(world, position, state)) return;
+        if (!world_write_visual(world, position, state)) return false;
 
         if (state.data.piston.extended) {
             BlockPos head_position = block_offset(position, facing);
@@ -391,22 +397,61 @@ void piston_check_input(World *world, BlockPos position)
                 head.data.piston.facing == state.data.piston.facing &&
                 head.data.piston.powered != powered) {
                 head.data.piston.powered = powered;
-                if (!world_write_visual(world, head_position, head)) return;
+                if (!world_write_visual(world, head_position, head)) return false;
             }
         }
     }
+    *current = state;
+    return true;
+}
 
+void piston_check_input(World *world, BlockPos position)
+{
+    BlockState state = world_get(world, position);
+    if (!block_is_piston_base((BlockId)state.id)) return;
+    Direction facing = (Direction)state.data.piston.facing;
+    bool powered = piston_input_powered(world, position, facing);
+    if (!piston_update_indicator(world, position, &state, powered)) return;
     if (powered && !state.data.piston.extended) {
-        bool pushed_block = false;
-        if (piston_set_extended(world, position, state, true, false, &pushed_block) && pushed_block)
-            sim_schedule(world, position, PISTON_MOTION_TICKS);
+        PistonResolver resolver = {
+            .world = world, .piston_position = position,
+            .start_position = block_offset(position, facing),
+            .piston_direction = facing, .push_direction = facing,
+            .extending = true
+        };
+        if (piston_resolve(&resolver))
+            (void)sim_queue_piston_event(world,
+                (PistonEvent){position, state.id, 0, (uint8_t)facing});
     } else if (!powered && state.data.piston.extended) {
         /* A retraction requested while extension is still moving is event 2
          * in Java 1.16.2. Sticky pistons retract but leave the moved block. */
         bool extension_in_progress =
-            scheduler_pending(&world->sim->scheduler, position);
-        sim_cancel(world, position);
-        (void)piston_set_extended(world, position, state, false, !extension_in_progress, NULL);
+            sim_has_scheduled_tick(world, position) || sim_will_tick(world, position);
+        (void)sim_queue_piston_event(world,
+            (PistonEvent){position, state.id, extension_in_progress ? 2 : 1,
+                           (uint8_t)facing});
+    }
+}
+
+void piston_trigger_event(World *world, PistonEvent event)
+{
+    BlockState state = world_get(world, event.pos);
+    if (state.id != event.block) return;
+    Direction facing = (Direction)state.data.piston.facing;
+    bool powered = piston_input_powered(world, event.pos, facing);
+    if (!piston_update_indicator(world, event.pos, &state, powered)) return;
+    /* A request records an edge, not permission to move later. Vanilla
+     * rechecks the actual power when the block-event FIFO reaches this entry. */
+    if (event.type == 0) {
+        if (!powered) return;
+        bool pushed_block = false;
+        if (piston_set_extended(world, event.pos, state, true, false, &pushed_block) &&
+            pushed_block)
+            sim_schedule(world, event.pos, PISTON_MOTION_TICKS);
+    } else {
+        if (powered) return;
+        sim_cancel(world, event.pos);
+        (void)piston_set_extended(world, event.pos, state, false, event.type == 1, NULL);
     }
 }
 

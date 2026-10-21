@@ -13,9 +13,19 @@ typedef struct {
     size_t next_free;
     bool used;
 } TorchRuntime;
+typedef struct {
+    BlockPos pos;
+    uint8_t block, type, facing;
+} PistonEvent;
+typedef struct {
+    PistonEvent *items;
+    size_t head, count, capacity;
+    PosMap pending;
+} PistonEvents;
 struct Simulator {
     PositionQueue dirty, wire_roots, rail_roots, input_roots;
     Scheduler scheduler;
+    PistonEvents piston_events;
     ContainerTable containers;
     PosMap torch_slots;
     TorchRuntime *torches;
@@ -40,6 +50,10 @@ void sim_schedule(World *, BlockPos, uint32_t delay);
 void sim_schedule_priority(World *, BlockPos, uint32_t delay,
                            TickPriority priority);
 void sim_cancel(World *, BlockPos);
+bool sim_has_scheduled_tick(const World *, BlockPos);
+bool sim_will_tick(const World *, BlockPos);
+bool sim_queue_piston_event(World *, PistonEvent);
+void piston_trigger_event(World *, PistonEvent);
 TorchRuntime *sim_torch_runtime(const World *, BlockPos);
 bool sim_chunk_pinned(const World *, BlockPos chunk);
 #endif

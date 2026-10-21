@@ -27,7 +27,9 @@ enum {
     DROPPER_BACK1_TILE = DROPPER_BACK0_TILE + 1,
     DROPPER_SIDE0_TILE = DROPPER_BACK1_TILE + 1,
     DROPPER_SIDE1_TILE = DROPPER_SIDE0_TILE + 1,
-    TILE_COUNT = DROPPER_SIDE1_TILE + 1
+    LAMP_OFF_TILE = DROPPER_SIDE1_TILE + 1,
+    LAMP_ON_TILE = LAMP_OFF_TILE + 1,
+    TILE_COUNT = LAMP_ON_TILE + 1
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
@@ -176,7 +178,9 @@ static Image create_solid_atlas(void)
         "res/textures/block/dropper_back0.png",
         "res/textures/block/dropper_back1.png",
         "res/textures/block/dropper_side0.png",
-        "res/textures/block/dropper_side1.png"
+        "res/textures/block/dropper_side1.png",
+        "res/textures/block/redstone_lamp0.png",
+        "res/textures/block/redstone_lamp1.png"
     };
     Image sources[TILE_COUNT] = {0};
     Image atlas = {0};
@@ -580,6 +584,7 @@ void block_renderer_draw_cube(const BlockRenderer *renderer, BlockId id,
     case BLOCK_NOTE_BLOCK:     tile = NOTE_BLOCK_TILE; break;
     case BLOCK_HONEY:          tile = HONEY_TILE; break;
     case BLOCK_TARGET:         tile = TARGET_TILE; break;
+    case BLOCK_REDSTONE_LAMP:  tile = LAMP_OFF_TILE; break;
     case BLOCK_GLASS:
         texture = renderer->glass_texture;
         if (!texture.id) return;
@@ -1257,14 +1262,16 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
         state.id == BLOCK_GLASS || state.id == BLOCK_SLIME ||
         state.id == BLOCK_NOTE_BLOCK || state.id == BLOCK_HONEY ||
-        state.id == BLOCK_TARGET) {
+        state.id == BLOCK_TARGET || state.id == BLOCK_REDSTONE_LAMP) {
         bool glass = state.id == BLOCK_GLASS;
         Texture2D texture = glass ? renderer->glass_texture : renderer->atlas;
         int tile = state.id == BLOCK_REDSTONE_BLOCK ? 1 :
                    state.id == BLOCK_SLIME ? SLIME_TILE :
                    state.id == BLOCK_NOTE_BLOCK ? NOTE_BLOCK_TILE :
                    state.id == BLOCK_HONEY ? HONEY_TILE :
-                   state.id == BLOCK_TARGET ? TARGET_TILE : 0;
+                   state.id == BLOCK_TARGET ? TARGET_TILE :
+                   state.id == BLOCK_REDSTONE_LAMP ?
+                       (state.data.lamp.lit ? LAMP_ON_TILE : LAMP_OFF_TILE) : 0;
         float u0 = (tile*TILE_SIZE + 0.5f)/texture.width;
         float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/texture.width;
         float v0 = 0.5f/texture.height;
@@ -1442,7 +1449,8 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
         state.id == BLOCK_GLASS || state.id == BLOCK_OBSERVER ||
         state.id == BLOCK_BARREL || state.id == BLOCK_SLIME ||
         state.id == BLOCK_NOTE_BLOCK || state.id == BLOCK_HONEY ||
-        state.id == BLOCK_TARGET || state.id == BLOCK_DROPPER) {
+        state.id == BLOCK_TARGET || state.id == BLOCK_DROPPER ||
+        state.id == BLOCK_REDSTONE_LAMP) {
         for (int face = 0; face < 6; ++face) {
             if (!(solid_faces & (1u << face))) continue;
             for (int vertex = 0; vertex < 4; ++vertex) {

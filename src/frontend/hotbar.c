@@ -147,9 +147,6 @@ void hotbar_draw(const Hotbar *hotbar, const Inventory *inventory)
         inventory_draw_slot(inventory, hotbar->slots[slot_index], slot);
 
         DrawRectangleLinesEx(slot, 1.0f, (Color){145, 145, 145, 255});
-        DrawText(TextFormat("%d", slot_index + 1),
-                 (int)slot.x + 3, (int)slot.y + 2, 12, LIGHTGRAY);
-
         if (slot_index == hotbar->selected_slot) {
             Rectangle selection = {
                 slot.x - 2.0f, slot.y - 2.0f,

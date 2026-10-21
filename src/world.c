@@ -297,6 +297,8 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         state.data.hopper.facing = (uint8_t)support;
     if (id == BLOCK_DROPPER)
         state.data.dropper.facing = (uint8_t)support;
+    if (id == BLOCK_REDSTONE_LAMP)
+        state.data.lamp.lit = power_received(w, p, SIGNAL_ALL) > 0;
     if ((block_is_piston_base((BlockId)previous.id) &&
          previous.data.piston.extended) ||
         block_is_piston_head((BlockId)previous.id)) {

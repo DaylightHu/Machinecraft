@@ -1,15 +1,6 @@
 #include "block_internal.h"
 #include "sim_internal.h"
 
-static uint8_t note_block_signal(const World *world, BlockPos position,
-                                 Direction face, SignalMode mode)
-{
-    (void)face;
-    /* Like every solid conductor, relay direct emitters without allowing
-     * conductor chains to power one another recursively. */
-    return power_conducted(world, position, mode);
-}
-
 static void note_block_check_input(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
@@ -33,7 +24,6 @@ const BlockDef rs_note_block_def = {
     .conductor = true,
     .supports_wire = true,
     .push_reaction = PUSH_NORMAL,
-    .signal = note_block_signal,
     .neighbor_changed = note_block_check_input,
     .input_changed = note_block_check_input
 };
