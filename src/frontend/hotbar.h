@@ -16,6 +16,7 @@ typedef struct {
 bool hotbar_init(Hotbar *hotbar, const Inventory *inventory);
 void hotbar_unload(Hotbar *hotbar);
 void hotbar_update(Hotbar *hotbar);
+int hotbar_slot_at(Vector2 position);
 InventorySlot hotbar_selected(const Hotbar *hotbar);
 BlockId hotbar_selected_block(const Hotbar *hotbar);
 bool hotbar_set_selected(Hotbar *hotbar, InventorySlot slot);

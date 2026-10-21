@@ -709,52 +709,134 @@ static void update_inventory(GuiApp *app)
     advance_simulation(app);
 }
 
+static bool write_container_slot(World *world, BlockPos pos, size_t index,
+                                 ItemStack contents, RsResult *result)
+{
+    *result = world_set_container_slot(world, pos, index, contents);
+    /* A simulation error may be reported after the slot was written. */
+    ContainerStack committed;
+    if (world_get_container_slot(world, pos, index, &committed) == RS_OK &&
+        committed.item == contents.item && committed.count == contents.count &&
+        committed.limit == contents.limit) return true;
+    if (*result == RS_OK || *result == RS_UNCHANGED)
+        *result = RS_INTERNAL_ERROR;
+    return false;
+}
+
+static unsigned store_hotbar_items(World *world, BlockPos pos,
+                                    InventorySlot *slot, unsigned amount,
+                                    RsResult *result)
+{
+    unsigned moved = 0;
+    size_t count = world_container_size(world, pos);
+    for (int pass = 0; pass < 2 && moved < amount; ++pass) {
+        for (size_t index = 0; index < count && moved < amount; ++index) {
+            ContainerStack contents;
+            *result = world_get_container_slot(world, pos, index, &contents);
+            if (*result != RS_OK) return moved;
+            if ((contents.count == 0) != (pass == 1)) continue;
+            ItemStack remaining = slot->stack;
+            unsigned added = item_stack_transfer(&contents, &remaining,
+                                                   amount - moved);
+            if (!added) continue;
+            if (!write_container_slot(world, pos, index, contents, result))
+                return moved;
+            *slot = remaining.count ? (InventorySlot){
+                .kind = INVENTORY_ITEM, .stack = remaining
+            } : (InventorySlot){0};
+            moved += added;
+            if (*result != RS_OK && *result != RS_UNCHANGED) return moved;
+        }
+    }
+    return moved;
+}
+
+static unsigned take_container_items(World *world, BlockPos pos, size_t index,
+                                      Hotbar *hotbar, ItemStack contents,
+                                      unsigned amount, RsResult *result)
+{
+    Hotbar updated = *hotbar;
+    unsigned moved = 0;
+    for (int pass = 0; pass < 3 && moved < amount; ++pass) {
+        for (int slot = 0; slot < HOTBAR_SLOT_COUNT && moved < amount; ++slot) {
+            InventorySlot *destination = &updated.slots[slot];
+            if (pass == 0 && destination->kind != INVENTORY_ITEM) continue;
+            if (pass == 1 && destination->kind != INVENTORY_EMPTY) continue;
+            /* Creative block icons can be replaced in the selected slot. */
+            if (pass == 2 && (slot != updated.selected_slot ||
+                             destination->kind != INVENTORY_BLOCK)) continue;
+            ItemStack stack = destination->kind == INVENTORY_ITEM ?
+                              destination->stack : (ItemStack){0};
+            unsigned added = item_stack_transfer(&stack, &contents,
+                                                   amount - moved);
+            if (!added) continue;
+            *destination = (InventorySlot){.kind = INVENTORY_ITEM, .stack = stack};
+            moved += added;
+        }
+    }
+    if (!moved || !write_container_slot(world, pos, index, contents, result))
+        return 0;
+    *hotbar = updated;
+    return moved;
+}
+
 static void update_container_slots(GuiApp *app, BlockPos pos,
                                     ContainerLayout layout)
 {
     hotbar_update(&app->hotbar);
     bool left = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
     bool right = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
-    if (!left && !right) return;
     bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
-    World *world = game_session_world(app->session);
-    for (int index = 0; index < layout.columns*layout.rows; ++index) {
-        if (!point_in(container_slot_rectangle(layout, index))) continue;
-        ContainerStack contents;
-        RsResult result = world_get_container_slot(world, pos, (size_t)index,
-                                                    &contents);
-        if (result != RS_OK) return;
-        InventorySlot selected = hotbar_selected(&app->hotbar);
-        ItemStack held = selected.kind == INVENTORY_ITEM ? selected.stack :
-                                                          (ItemStack){0};
-        bool take = right && !shift;
-        unsigned amount = left ? (shift ? POISONOUS_POTATO_STACK_LIMIT : 1u) :
-                                 ((unsigned)held.count + 1u)/2u;
-        uint8_t moved = take ? item_stack_transfer(&held, &contents, contents.count) :
-                               item_stack_transfer(&contents, &held, amount);
-        if (!moved) {
-            snprintf(app->message, sizeof(app->message),
-                     "No items moved: check the selected hotbar slot and free space");
-            return;
+    if (!left && !(right && shift)) return;
+
+    int hotbar_slot = hotbar_slot_at(GetMousePosition());
+    int container_slot = -1;
+    if (hotbar_slot >= 0) app->hotbar.selected_slot = hotbar_slot;
+    else {
+        for (int index = 0; index < layout.columns*layout.rows; ++index) {
+            if (point_in(container_slot_rectangle(layout, index))) {
+                container_slot = index;
+                break;
+            }
         }
-        result = world_set_container_slot(world, pos, (size_t)index, contents);
-        /* A simulation error may be reported after the slot was written. */
-        ContainerStack committed;
-        if (world_get_container_slot(world, pos, (size_t)index, &committed) == RS_OK &&
-            committed.item == contents.item && committed.count == contents.count &&
-            committed.limit == contents.limit) {
-            InventorySlot updated = {0};
-            if (held.count) updated = (InventorySlot){
-                .kind = INVENTORY_ITEM, .stack = held
-            };
-            hotbar_set_selected(&app->hotbar, updated);
-        }
-        if (result == RS_OK || result == RS_UNCHANGED)
-            result = game_session_flush(app->session);
-        snprintf(app->message, sizeof(app->message), "%s %u: %s",
-                 take ? "Take" : "Put", (unsigned)moved, rs_result_name(result));
+    }
+    if (hotbar_slot < 0 && container_slot < 0) return;
+
+    RsResult result = game_session_flush(app->session);
+    if (result != RS_OK) {
+        snprintf(app->message, sizeof(app->message), "Transfer failed: %s",
+                 rs_result_name(result));
         return;
     }
+    World *world = game_session_world(app->session);
+    ItemStack source;
+    if (hotbar_slot >= 0) {
+        InventorySlot slot = app->hotbar.slots[hotbar_slot];
+        if (slot.kind != INVENTORY_ITEM) return;
+        source = slot.stack;
+    } else {
+        result = world_get_container_slot(world, pos, (size_t)container_slot,
+                                          &source);
+        if (result != RS_OK) return;
+    }
+    if (!source.count) return;
+    unsigned amount = !shift ? 1u : left ? source.count :
+                      ((unsigned)source.count + 1u)/2u;
+    unsigned moved = hotbar_slot >= 0 ?
+        store_hotbar_items(world, pos, &app->hotbar.slots[hotbar_slot], amount,
+                            &result) :
+        take_container_items(world, pos, (size_t)container_slot, &app->hotbar,
+                               source, amount, &result);
+    if (!moved && (result == RS_OK || result == RS_UNCHANGED)) {
+        snprintf(app->message, sizeof(app->message),
+                 "No items moved: destination has no free space");
+        return;
+    }
+    if (result == RS_OK || result == RS_UNCHANGED)
+        result = game_session_flush(app->session);
+    snprintf(app->message, sizeof(app->message), "%s %u: %s",
+             hotbar_slot >= 0 ? "Stored" : "Retrieved", moved,
+             rs_result_name(result));
 }
 
 static void update_barrel(GuiApp *app)
@@ -864,10 +946,11 @@ static void draw_container(const GuiApp *app, BlockId id)
         }
     }
     int footer_y = (int)(layout.panel.y + layout.panel.height) - 72;
-    draw_centered("LMB: put 1   Shift+LMB: put 64", footer_y, 14, DARKGRAY);
-    draw_centered("Shift+RMB: put half   RMB: take stack", footer_y + 22,
+    draw_centered("Click hotbar: store | Click container: retrieve",
+                  footer_y, 14, DARKGRAY);
+    draw_centered("LMB: 1   Shift+LMB: stack   Shift+RMB: half", footer_y + 22,
                   14, DARKGRAY);
-    draw_centered("1-9/click/wheel: hotbar   E/ESC: close", footer_y + 44,
+    draw_centered("Half rounds up   E/ESC: close", footer_y + 44,
                   14, DARKGRAY);
     hotbar_draw(&app->hotbar, &app->inventory);
 }

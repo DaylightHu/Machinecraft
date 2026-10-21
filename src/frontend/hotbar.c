@@ -20,6 +20,15 @@ static Rectangle hotbar_slot_rectangle(int index)
     };
 }
 
+int hotbar_slot_at(Vector2 position)
+{
+    for (int slot = 0; slot < HOTBAR_SLOT_COUNT; ++slot) {
+        if (CheckCollisionPointRec(position, hotbar_slot_rectangle(slot)))
+            return slot;
+    }
+    return -1;
+}
+
 bool hotbar_init(Hotbar *hotbar, const Inventory *inventory)
 {
     if (!hotbar || !inventory) return false;
@@ -54,12 +63,10 @@ void hotbar_update(Hotbar *hotbar)
     }
 
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-        Vector2 mouse = GetMousePosition();
-        for (int slot = 0; slot < HOTBAR_SLOT_COUNT; ++slot) {
-            if (CheckCollisionPointRec(mouse, hotbar_slot_rectangle(slot))) {
-                hotbar->selected_slot = slot;
-                return;
-            }
+        int slot = hotbar_slot_at(GetMousePosition());
+        if (slot >= 0) {
+            hotbar->selected_slot = slot;
+            return;
         }
     }
 
