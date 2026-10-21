@@ -1,13 +1,6 @@
 #include "block_internal.h"
 #include "sim_internal.h"
 
-static uint8_t dropper_signal(const World *world, BlockPos pos,
-                              Direction face, SignalMode mode)
-{
-    (void)face;
-    return power_conducted(world, pos, mode);
-}
-
 static uint8_t dropper_analog(const World *world, BlockPos pos)
 {
     return world_get(world, pos).data.dropper.level;
@@ -44,7 +37,6 @@ const BlockDef rs_dropper_def = {
     .conductor = true,
     .supports_wire = true,
     .push_reaction = PUSH_BLOCK,
-    .signal = dropper_signal,
     .analog_output = dropper_analog,
     .neighbor_changed = dropper_neighbor,
     .input_changed = dropper_input,

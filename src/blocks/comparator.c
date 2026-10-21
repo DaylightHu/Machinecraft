@@ -21,6 +21,11 @@ static uint8_t comparator_rear_input(const World *world, BlockPos position,
     Direction rear = direction_opposite(facing);
     BlockPos source = block_offset(position, rear);
     uint8_t signal = power_signal(world, source, facing, SIGNAL_ALL);
+    if (signal < 15) {
+        BlockState input = world_get(world, source);
+        if (input.id == BLOCK_REDSTONE_WIRE && input.data.wire.power > signal)
+            signal = input.data.wire.power;
+    }
 
     if (block_has_analog_output(world, source))
         return block_analog_output(world, source);

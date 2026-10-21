@@ -20,7 +20,10 @@ static bool repeater_input_powered(const World *world, BlockPos position,
     if (!valid_facing(facing)) return false;
     Direction rear = direction_opposite(facing);
     BlockPos source = block_offset(position, rear);
-    return power_signal(world, source, facing, SIGNAL_ALL) > 0;
+    if (power_signal(world, source, facing, SIGNAL_ALL) > 0) return true;
+    /* DiodeBlock.getInputSignal also reads the rear dust level directly. */
+    BlockState input = world_get(world, source);
+    return input.id == BLOCK_REDSTONE_WIRE && input.data.wire.power > 0;
 }
 
 static bool repeater_side_locked(const World *world, BlockPos position,

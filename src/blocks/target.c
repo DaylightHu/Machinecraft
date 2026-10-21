@@ -7,9 +7,8 @@ static uint8_t target_signal(const World *world, BlockPos position,
                              Direction face, SignalMode mode)
 {
     (void)face;
-    uint8_t own = world_get(world, position).data.target.power;
-    uint8_t conducted = power_conducted(world, position, mode);
-    return own > conducted ? own : conducted;
+    (void)mode;
+    return world_get(world, position).data.target.power;
 }
 
 static uint8_t target_hit_power(double u, double v)
