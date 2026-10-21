@@ -284,6 +284,9 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
         fprintf(output, " lit=%s support=%s", state.data.torch.lit ? "on" : "off",
                 direction_names[state.data.torch.support_dir]);
         break;
+    case BLOCK_REDSTONE_LAMP:
+        fprintf(output, " lit=%s", state.data.lamp.lit ? "on" : "off");
+        break;
     case BLOCK_REDSTONE_REPEATER:
         fprintf(output, " powered=%s facing=%s delay=%u locked=%s",
                 state.data.repeater.powered ? "on" : "off",

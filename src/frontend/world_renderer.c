@@ -58,6 +58,7 @@ static int part_for(unsigned id)
     case BLOCK_PISTON: case BLOCK_STICKY_PISTON: case BLOCK_BARREL:
     case BLOCK_SLIME: case BLOCK_NOTE_BLOCK: case BLOCK_HONEY:
     case BLOCK_TARGET: case BLOCK_HOPPER: case BLOCK_DROPPER:
+    case BLOCK_REDSTONE_LAMP:
     case BLOCK_PISTON_HEAD: case BLOCK_STICKY_PISTON_HEAD:
         return SOLIDS;
     case BLOCK_GLASS: return GLASS;
@@ -180,6 +181,9 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
                before.id == BLOCK_DROPPER && after.id == BLOCK_DROPPER) {
         visual = before.data.dropper.facing != after.data.dropper.facing ||
                  before.data.dropper.triggered != after.data.dropper.triggered;
+    } else if (old_part == new_part && new_part == SOLIDS &&
+               before.id == BLOCK_REDSTONE_LAMP && after.id == BLOCK_REDSTONE_LAMP) {
+        visual = before.data.lamp.lit != after.data.lamp.lit;
     } else if (old_part == new_part && new_part == SOLIDS &&
                before.id == BLOCK_BARREL && after.id == BLOCK_BARREL) {
         visual = before.data.barrel.facing != after.data.barrel.facing;

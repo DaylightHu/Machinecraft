@@ -466,6 +466,13 @@ int main(int argc, char **argv)
             "res/textures/block/dropper_front.png",
             "dropper.png",
             0, 0, 0
+        },
+        {
+            "res/textures/block/redstone_lamp0.png",
+            "res/textures/block/redstone_lamp0.png",
+            "res/textures/block/redstone_lamp0.png",
+            "redstone_lamp.png",
+            0, 0, 0
         }
     };
     const char *output_directory = "res/textures/item";
