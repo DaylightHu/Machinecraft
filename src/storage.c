@@ -4,6 +4,8 @@
 
 enum {
     STATE_GLASS = 13,
+    STATE_HONEY = 14,
+    STATE_SLIME = 15,
     STATE_REPEATER_FIRST = 8208,
     STATE_REPEATER_COUNT = 64,
     STATE_COMPARATOR_FIRST = STATE_REPEATER_FIRST + STATE_REPEATER_COUNT,
@@ -25,8 +27,21 @@ enum {
     STATE_STICKY_PISTON_HEAD_COUNT = DIR_COUNT * 2,
     STATE_BARREL_FIRST =
         STATE_STICKY_PISTON_HEAD_FIRST + STATE_STICKY_PISTON_HEAD_COUNT,
-    STATE_BARREL_COUNT = DIR_COUNT * 15
+    STATE_BARREL_COUNT = DIR_COUNT * 15,
+    STATE_NOTE_BLOCK_FIRST = STATE_BARREL_FIRST + STATE_BARREL_COUNT,
+    STATE_NOTE_BLOCK_COUNT = 2,
+    /* Append state ranges so existing .mcw palettes retain their meaning. */
+    STATE_TARGET_FIRST = STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT,
+    STATE_TARGET_COUNT = 16,
+    STATE_HOPPER_FIRST = STATE_TARGET_FIRST + STATE_TARGET_COUNT,
+    STATE_HOPPER_COUNT = 5 * 2 * 16,
+    STATE_EMPTY_BARREL_FIRST = STATE_HOPPER_FIRST + STATE_HOPPER_COUNT,
+    STATE_DROPPER_FIRST = STATE_EMPTY_BARREL_FIRST + DIR_COUNT,
+    STATE_DROPPER_COUNT = DIR_COUNT * 2 * 16
 };
+
+_Static_assert(STATE_DROPPER_FIRST + STATE_DROPPER_COUNT <= STATE_ID_LIMIT,
+               "block states must fit the palette state id");
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
 int floor_mod16(int x) { int r = x % 16; return r < 0 ? r + 16 : r; }
@@ -64,6 +79,8 @@ bool state_encode(BlockState s, StateId *id)
 {
     if (s.id <= BLOCK_REDSTONE_BLOCK) { *id = s.id; return true; }
     if (s.id == BLOCK_GLASS) { *id = STATE_GLASS; return true; }
+    if (s.id == BLOCK_HONEY) { *id = STATE_HONEY; return true; }
+    if (s.id == BLOCK_SLIME) { *id = STATE_SLIME; return true; }
     if (s.id == BLOCK_REDSTONE_TORCH) {
         unsigned face = s.data.torch.support_dir;
         if (face == DIR_DOWN) face = 4;
@@ -128,10 +145,42 @@ bool state_encode(BlockState s, StateId *id)
     }
     if (s.id == BLOCK_BARREL) {
         if (s.data.barrel.facing >= DIR_COUNT ||
-            s.data.barrel.level < 1 || s.data.barrel.level > 15 ||
+            s.data.barrel.level > 15 ||
             s.data.barrel.open) return false;
+        if (!s.data.barrel.level) {
+            *id = (StateId)(STATE_EMPTY_BARREL_FIRST + s.data.barrel.facing);
+            return true;
+        }
         *id = (StateId)(STATE_BARREL_FIRST + s.data.barrel.facing +
               (unsigned)(s.data.barrel.level - 1)*DIR_COUNT);
+        return true;
+    }
+    if (s.id == BLOCK_NOTE_BLOCK) {
+        *id = (StateId)(STATE_NOTE_BLOCK_FIRST +
+                        (s.data.note_block.powered ? 1u : 0u));
+        return true;
+    }
+    if (s.id == BLOCK_TARGET) {
+        if (s.data.target.power > 15) return false;
+        *id = (StateId)(STATE_TARGET_FIRST + s.data.target.power);
+        return true;
+    }
+    if (s.id == BLOCK_HOPPER) {
+        static const Direction faces[] = {DIR_DOWN, DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH};
+        if (s.data.hopper.level > 15) return false;
+        for (unsigned i = 0; i < 5; ++i) if (s.data.hopper.facing == faces[i]) {
+            *id = (StateId)(STATE_HOPPER_FIRST + i +
+                  (s.data.hopper.enabled ? 5u : 0u) + s.data.hopper.level * 10u);
+            return true;
+        }
+        return false;
+    }
+    if (s.id == BLOCK_DROPPER) {
+        if (s.data.dropper.facing >= DIR_COUNT || s.data.dropper.level > 15)
+            return false;
+        *id = (StateId)(STATE_DROPPER_FIRST + s.data.dropper.facing +
+              (s.data.dropper.triggered ? DIR_COUNT : 0) +
+              s.data.dropper.level * (DIR_COUNT * 2));
         return true;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
@@ -151,6 +200,8 @@ bool state_decode(StateId id, BlockState *s)
         s->data.torch.lit = ((id - 3) & 1u) != 0; return true;
     }
     if (id == STATE_GLASS) { *s = block_default(BLOCK_GLASS); return true; }
+    if (id == STATE_HONEY) { *s = block_default(BLOCK_HONEY); return true; }
+    if (id == STATE_SLIME) { *s = block_default(BLOCK_SLIME); return true; }
     if (id >= STATE_REPEATER_FIRST &&
         id < STATE_REPEATER_FIRST + STATE_REPEATER_COUNT) {
         unsigned value = id - STATE_REPEATER_FIRST;
@@ -241,6 +292,40 @@ bool state_decode(StateId id, BlockState *s)
         *s = block_default(BLOCK_BARREL);
         s->data.barrel.facing = (uint8_t)(value % DIR_COUNT);
         s->data.barrel.level = (uint8_t)(value / DIR_COUNT + 1);
+        return true;
+    }
+    if (id >= STATE_NOTE_BLOCK_FIRST &&
+        id < STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT) {
+        *s = block_default(BLOCK_NOTE_BLOCK);
+        s->data.note_block.powered = id != STATE_NOTE_BLOCK_FIRST;
+        return true;
+    }
+    if (id >= STATE_TARGET_FIRST && id < STATE_TARGET_FIRST + STATE_TARGET_COUNT) {
+        *s = block_default(BLOCK_TARGET);
+        s->data.target.power = (uint8_t)(id - STATE_TARGET_FIRST);
+        return true;
+    }
+    if (id >= STATE_HOPPER_FIRST && id < STATE_HOPPER_FIRST + STATE_HOPPER_COUNT) {
+        static const Direction faces[] = {DIR_DOWN, DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH};
+        unsigned value = id - STATE_HOPPER_FIRST;
+        *s = block_default(BLOCK_HOPPER);
+        s->data.hopper.facing = (uint8_t)faces[value % 5];
+        s->data.hopper.enabled = (value % 10) >= 5;
+        s->data.hopper.level = (uint8_t)(value / 10);
+        return true;
+    }
+    if (id >= STATE_EMPTY_BARREL_FIRST && id < STATE_EMPTY_BARREL_FIRST + DIR_COUNT) {
+        *s = block_default(BLOCK_BARREL);
+        s->data.barrel.facing = (uint8_t)(id - STATE_EMPTY_BARREL_FIRST);
+        s->data.barrel.level = 0;
+        return true;
+    }
+    if (id >= STATE_DROPPER_FIRST && id < STATE_DROPPER_FIRST + STATE_DROPPER_COUNT) {
+        unsigned value = id - STATE_DROPPER_FIRST;
+        *s = block_default(BLOCK_DROPPER);
+        s->data.dropper.facing = (uint8_t)(value % DIR_COUNT);
+        s->data.dropper.triggered = (value % (DIR_COUNT * 2)) >= DIR_COUNT;
+        s->data.dropper.level = (uint8_t)(value / (DIR_COUNT * 2));
         return true;
     }
     if (id < 16 || id > 8207) return false;

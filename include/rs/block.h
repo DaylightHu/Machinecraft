@@ -9,7 +9,8 @@ typedef enum {
     BLOCK_IRON, BLOCK_REDSTONE_BLOCK, BLOCK_REDSTONE_WIRE, BLOCK_REDSTONE_TORCH,
     BLOCK_GLASS, BLOCK_REDSTONE_REPEATER, BLOCK_REDSTONE_COMPARATOR,
     BLOCK_POWERED_RAIL, BLOCK_ACTIVATOR_RAIL, BLOCK_OBSERVER,
-    BLOCK_PISTON, BLOCK_STICKY_PISTON, BLOCK_BARREL,
+    BLOCK_PISTON, BLOCK_STICKY_PISTON, BLOCK_BARREL, BLOCK_SLIME,
+    BLOCK_NOTE_BLOCK, BLOCK_HONEY, BLOCK_TARGET, BLOCK_HOPPER, BLOCK_DROPPER,
     BLOCK_INTERNAL_FIRST,
     BLOCK_PISTON_HEAD = BLOCK_INTERNAL_FIRST,
     BLOCK_STICKY_PISTON_HEAD,
@@ -62,9 +63,25 @@ typedef struct {
         } piston;
         struct {
             uint8_t facing;         /* Direction of the configurable lid. */
-            uint8_t level;          /* Comparator output, 1..15. */
+            uint8_t level;          /* Derived comparator fullness, 0..15. */
             bool open;              /* Renderer-only; never stored in World. */
         } barrel;
+        struct {
+            bool powered;           /* Stored edge state; no note or instrument. */
+        } note_block;
+        struct {
+            uint8_t power;          /* Own projectile pulse, 0..15; not conducted power. */
+        } target;
+        struct {
+            uint8_t facing;         /* Down or horizontal outlet direction. */
+            uint8_t level;          /* Derived comparator fullness, 0..15. */
+            bool enabled;          /* False when receiving redstone power. */
+        } hopper;
+        struct {
+            uint8_t facing;         /* Six-direction item outlet. */
+            uint8_t level;          /* Derived comparator fullness, 0..15. */
+            bool triggered;        /* Input latch, separate from the pending tick. */
+        } dropper;
     } data;
 } BlockState;
 

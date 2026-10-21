@@ -29,6 +29,8 @@ typedef enum {
     GUI_WORLD,
     GUI_INVENTORY,
     GUI_BARREL,
+    GUI_HOPPER,
+    GUI_DROPPER,
     GUI_PAUSE,
     GUI_SAVE_ERROR
 } GuiScreen;
@@ -56,6 +58,7 @@ typedef struct {
     size_t world_name_length;
     char message[MESSAGE_CAPACITY];
     BlockPos barrel_pos;
+    BlockPos container_pos;
     double accumulator;
     bool mouse_captured;
     bool close_latched;
@@ -67,13 +70,15 @@ typedef struct {
     Rectangle panel;
     float grid_x;
     float grid_y;
-} BarrelPaletteLayout;
+    int columns;
+    int rows;
+} ContainerLayout;
 
 enum {
-    BARREL_COLUMNS = 5,
-    BARREL_ROWS = 3,
-    BARREL_SLOT_SIZE = 54,
-    BARREL_SLOT_GAP = 8
+    CONTAINER_SLOT_SIZE = 54,
+    CONTAINER_SLOT_GAP = 4,
+    SIGNAL_BUTTON_SIZE = 29,
+    SIGNAL_BUTTON_GAP = 3
 };
 
 static bool point_in(Rectangle rectangle)
@@ -159,53 +164,64 @@ static void capture_mouse(GuiApp *app)
     app->mouse_captured = true;
 }
 
-static BarrelPaletteLayout barrel_palette_layout(void)
+static ContainerLayout container_layout(BlockId id)
 {
-    const int grid_width = BARREL_COLUMNS*BARREL_SLOT_SIZE +
-                           (BARREL_COLUMNS - 1)*BARREL_SLOT_GAP;
-    const int grid_height = BARREL_ROWS*BARREL_SLOT_SIZE +
-                            (BARREL_ROWS - 1)*BARREL_SLOT_GAP;
-    const int panel_width = grid_width + 40;
-    const int panel_height = grid_height + 142;
-    BarrelPaletteLayout layout = {
-        {
-            (GetScreenWidth() - panel_width)*0.5f,
-            (GetScreenHeight() - panel_height)*0.5f,
-            (float)panel_width,
-            (float)panel_height
-        },
-        0.0f,
-        0.0f
+    bool barrel = id == BLOCK_BARREL;
+    int columns = barrel ? 9 : id == BLOCK_HOPPER ? 5 : 3;
+    int rows = id == BLOCK_HOPPER ? 1 : 3;
+    int grid_width = columns*CONTAINER_SLOT_SIZE +
+                     (columns - 1)*CONTAINER_SLOT_GAP;
+    int grid_height = rows*CONTAINER_SLOT_SIZE +
+                      (rows - 1)*CONTAINER_SLOT_GAP;
+    int header = barrel ? 76 : 58;
+    int panel_width = barrel ? grid_width + 40 : 480;
+    int panel_height = header + grid_height + (barrel ? 68 : 0) + 90;
+    ContainerLayout layout = {0};
+    layout.panel = (Rectangle){
+        (GetScreenWidth() - panel_width)*0.5f,
+        (GetScreenHeight() - 80 - panel_height)*0.5f,
+        (float)panel_width, (float)panel_height
     };
-    layout.grid_x = layout.panel.x + 20.0f;
-    layout.grid_y = layout.panel.y + 76.0f;
+    layout.grid_x = layout.panel.x + (panel_width - grid_width)*0.5f;
+    layout.grid_y = layout.panel.y + header;
+    layout.columns = columns;
+    layout.rows = rows;
     return layout;
 }
 
-static Rectangle barrel_slot_rectangle(BarrelPaletteLayout layout, int level)
+static Rectangle container_slot_rectangle(ContainerLayout layout, int index)
 {
-    int index = level - 1;
-    int column = index % BARREL_COLUMNS;
-    int row = index / BARREL_COLUMNS;
+    int column = index % layout.columns;
+    int row = index / layout.columns;
     return (Rectangle){
-        layout.grid_x + column*(BARREL_SLOT_SIZE + BARREL_SLOT_GAP),
-        layout.grid_y + row*(BARREL_SLOT_SIZE + BARREL_SLOT_GAP),
-        BARREL_SLOT_SIZE,
-        BARREL_SLOT_SIZE
+        layout.grid_x + column*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP),
+        layout.grid_y + row*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP),
+        CONTAINER_SLOT_SIZE, CONTAINER_SLOT_SIZE
     };
 }
 
-static void open_barrel_palette(GuiApp *app, BlockPos pos)
+static Rectangle barrel_signal_rectangle(ContainerLayout layout, int level)
+{
+    int width = 16*SIGNAL_BUTTON_SIZE + 15*SIGNAL_BUTTON_GAP;
+    return (Rectangle){
+        layout.panel.x + (layout.panel.width - width)*0.5f +
+        level*(SIGNAL_BUTTON_SIZE + SIGNAL_BUTTON_GAP),
+        layout.grid_y + layout.rows*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP) + 24,
+        SIGNAL_BUTTON_SIZE, 30
+    };
+}
+
+static void open_barrel(GuiApp *app, BlockPos pos)
 {
     app->barrel_pos = pos;
     world_renderer_set_barrel_open(app->world_renderer, pos, true);
     release_mouse(app);
     app->screen = GUI_BARREL;
     snprintf(app->message, sizeof(app->message),
-             "Barrel: choose comparator output 1-15");
+             "Barrel: store items or use the signal shortcuts");
 }
 
-static void close_barrel_palette(GuiApp *app)
+static void close_barrel(GuiApp *app)
 {
     world_renderer_set_barrel_open(app->world_renderer,
                                    app->barrel_pos, false);
@@ -249,7 +265,7 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->accumulator = 0.0;
     app->screen = GUI_WORLD;
     snprintf(app->message, sizeof(app->message),
-             "LMB remove | RMB use/place | Shift+RMB place | E inventory | ESC menu");
+             "LMB remove | RMB use/place | Shift+RMB place | MMB pick | E inventory | ESC menu");
     capture_mouse(app);
     return true;
 }
@@ -519,6 +535,7 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                            selected == BLOCK_ACTIVATOR_RAIL;
         Direction placement = (selected == BLOCK_OBSERVER ||
                                selected == BLOCK_BARREL ||
+                               selected == BLOCK_DROPPER ||
                                block_is_piston_base(selected)) ?
                               direction_opposite(
                                   camera_direction(&app->camera)) :
@@ -533,6 +550,13 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
     }
     snprintf(app->message, sizeof(app->message), "%s: %s",
              place ? "Place" : "Remove", rs_result_name(result));
+}
+
+static BlockId pickable_block(BlockId id)
+{
+    if (id == BLOCK_PISTON_HEAD) return BLOCK_PISTON;
+    if (id == BLOCK_STICKY_PISTON_HEAD) return BLOCK_STICKY_PISTON;
+    return id > BLOCK_AIR && id < BLOCK_INTERNAL_FIRST ? id : BLOCK_AIR;
 }
 
 static void advance_simulation(GuiApp *app)
@@ -560,7 +584,7 @@ static VoxelHit update_world(GuiApp *app)
         release_mouse(app);
         app->screen = GUI_INVENTORY;
         snprintf(app->message, sizeof(app->message),
-                 "Inventory: choose a hotbar slot, then click a block");
+                 "Inventory: choose a hotbar slot, then click an icon");
         return hit;
     }
     if (IsKeyPressed(KEY_ESCAPE) || !IsWindowFocused()) {
@@ -603,34 +627,55 @@ static VoxelHit update_world(GuiApp *app)
     if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
         bool shift = IsKeyDown(KEY_LEFT_SHIFT) ||
                      IsKeyDown(KEY_RIGHT_SHIFT);
+        BlockId target = hit.hit ? (BlockId)world_get(world, hit.pos).id :
+                                  BLOCK_AIR;
         if (hit.hit && !shift &&
-            world_get(world, hit.pos).id == BLOCK_BARREL) {
-            open_barrel_palette(app, hit.pos);
-        } else if (hit.hit &&
-                   world_get(world, hit.pos).id == BLOCK_REDSTONE_REPEATER) {
+            target == BLOCK_BARREL) {
+            open_barrel(app, hit.pos);
+        } else if (hit.hit && !shift &&
+                   (target == BLOCK_HOPPER || target == BLOCK_DROPPER)) {
+            app->container_pos = hit.pos;
+            app->screen = target == BLOCK_HOPPER ? GUI_HOPPER : GUI_DROPPER;
+            release_mouse(app);
+        } else if (hit.hit && !shift && target == BLOCK_REDSTONE_WIRE) {
+            RsResult result = world_toggle_wire_dot(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            snprintf(app->message, sizeof(app->message), "Toggle dot: %s",
+                     rs_result_name(result));
+        } else if (hit.hit && !shift &&
+                   target == BLOCK_REDSTONE_REPEATER) {
             RsResult result = world_cycle_repeater_delay(world, hit.pos);
             if (result == RS_OK || result == RS_UNCHANGED)
                 result = game_session_flush(app->session);
             snprintf(app->message, sizeof(app->message),
                      "Cycle repeater delay: %s", rs_result_name(result));
-        } else if (hit.hit &&
-                   world_get(world, hit.pos).id == BLOCK_REDSTONE_COMPARATOR) {
+        } else if (hit.hit && !shift &&
+                   target == BLOCK_REDSTONE_COMPARATOR) {
             RsResult result = world_toggle_comparator_mode(world, hit.pos);
             if (result == RS_OK || result == RS_UNCHANGED)
                 result = game_session_flush(app->session);
             snprintf(app->message, sizeof(app->message),
                      "Toggle comparator mode: %s", rs_result_name(result));
         } else {
-            apply_edit(app, hit, selected, true, facing);
+            if (hotbar_selected(&app->hotbar).kind == INVENTORY_ITEM)
+                snprintf(app->message, sizeof(app->message),
+                         "Open a hopper, dropper or barrel to store items");
+            else apply_edit(app, hit, selected, true, facing);
         }
     }
-    if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) && hit.hit &&
-        world_get(world, hit.pos).id == BLOCK_REDSTONE_WIRE) {
-        RsResult result = world_toggle_wire_dot(world, hit.pos);
-        if (result == RS_OK || result == RS_UNCHANGED)
-            result = game_session_flush(app->session);
-        snprintf(app->message, sizeof(app->message), "Toggle dot: %s",
-                 rs_result_name(result));
+    if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) && hit.hit) {
+        BlockId picked = pickable_block(
+            (BlockId)world_get(world, hit.pos).id);
+        if (picked != BLOCK_AIR &&
+            hotbar_set_selected_block(&app->hotbar, picked)) {
+            snprintf(app->message, sizeof(app->message),
+                     "Hotbar slot %d: %s", app->hotbar.selected_slot + 1,
+                     block_name(picked));
+        } else {
+            snprintf(app->message, sizeof(app->message),
+                     "This block cannot be picked");
+        }
     }
 
     advance_simulation(app);
@@ -646,94 +691,268 @@ static void update_inventory(GuiApp *app)
     }
 
     hotbar_update(&app->hotbar);
-    BlockId picked = inventory_update(&app->inventory);
-    if (picked != BLOCK_AIR && hotbar_set_selected_block(&app->hotbar, picked)) {
-        snprintf(app->message, sizeof(app->message),
-                 "Hotbar slot %d: %s", app->hotbar.selected_slot + 1,
-                 block_name(picked));
+    InventorySlot picked = inventory_update(&app->inventory);
+    if (picked.kind != INVENTORY_EMPTY) {
+        bool changed = hotbar_pick(&app->hotbar, picked);
+        InventorySlot selected = hotbar_selected(&app->hotbar);
+        if (selected.kind == INVENTORY_ITEM)
+            snprintf(app->message, sizeof(app->message),
+                     "Hotbar slot %d: %s x%u%s", app->hotbar.selected_slot + 1,
+                     inventory_slot_name(selected), (unsigned)selected.stack.count,
+                     changed ? "" : " (full)");
+        else
+            snprintf(app->message, sizeof(app->message),
+                     "Hotbar slot %d: %s", app->hotbar.selected_slot + 1,
+                     inventory_slot_name(selected));
     }
 
     advance_simulation(app);
 }
 
-static void update_barrel_palette(GuiApp *app)
+static bool write_container_slot(World *world, BlockPos pos, size_t index,
+                                 ItemStack contents, RsResult *result)
+{
+    *result = world_set_container_slot(world, pos, index, contents);
+    /* A simulation error may be reported after the slot was written. */
+    ContainerStack committed;
+    if (world_get_container_slot(world, pos, index, &committed) == RS_OK &&
+        committed.item == contents.item && committed.count == contents.count &&
+        committed.limit == contents.limit) return true;
+    if (*result == RS_OK || *result == RS_UNCHANGED)
+        *result = RS_INTERNAL_ERROR;
+    return false;
+}
+
+static unsigned store_hotbar_items(World *world, BlockPos pos,
+                                    InventorySlot *slot, unsigned amount,
+                                    RsResult *result)
+{
+    unsigned moved = 0;
+    size_t count = world_container_size(world, pos);
+    for (int pass = 0; pass < 2 && moved < amount; ++pass) {
+        for (size_t index = 0; index < count && moved < amount; ++index) {
+            ContainerStack contents;
+            *result = world_get_container_slot(world, pos, index, &contents);
+            if (*result != RS_OK) return moved;
+            if ((contents.count == 0) != (pass == 1)) continue;
+            ItemStack remaining = slot->stack;
+            unsigned added = item_stack_transfer(&contents, &remaining,
+                                                   amount - moved);
+            if (!added) continue;
+            if (!write_container_slot(world, pos, index, contents, result))
+                return moved;
+            *slot = remaining.count ? (InventorySlot){
+                .kind = INVENTORY_ITEM, .stack = remaining
+            } : (InventorySlot){0};
+            moved += added;
+            if (*result != RS_OK && *result != RS_UNCHANGED) return moved;
+        }
+    }
+    return moved;
+}
+
+static unsigned take_container_items(World *world, BlockPos pos, size_t index,
+                                      Hotbar *hotbar, ItemStack contents,
+                                      unsigned amount, RsResult *result)
+{
+    Hotbar updated = *hotbar;
+    unsigned moved = 0;
+    for (int pass = 0; pass < 3 && moved < amount; ++pass) {
+        for (int slot = 0; slot < HOTBAR_SLOT_COUNT && moved < amount; ++slot) {
+            InventorySlot *destination = &updated.slots[slot];
+            if (pass == 0 && destination->kind != INVENTORY_ITEM) continue;
+            if (pass == 1 && destination->kind != INVENTORY_EMPTY) continue;
+            /* Creative block icons can be replaced in the selected slot. */
+            if (pass == 2 && (slot != updated.selected_slot ||
+                             destination->kind != INVENTORY_BLOCK)) continue;
+            ItemStack stack = destination->kind == INVENTORY_ITEM ?
+                              destination->stack : (ItemStack){0};
+            unsigned added = item_stack_transfer(&stack, &contents,
+                                                   amount - moved);
+            if (!added) continue;
+            *destination = (InventorySlot){.kind = INVENTORY_ITEM, .stack = stack};
+            moved += added;
+        }
+    }
+    if (!moved || !write_container_slot(world, pos, index, contents, result))
+        return 0;
+    *hotbar = updated;
+    return moved;
+}
+
+static void update_container_slots(GuiApp *app, BlockPos pos,
+                                    ContainerLayout layout)
+{
+    hotbar_update(&app->hotbar);
+    bool left = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    bool right = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+    bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    if (!left && !(right && shift)) return;
+
+    int hotbar_slot = hotbar_slot_at(GetMousePosition());
+    int container_slot = -1;
+    if (hotbar_slot >= 0) app->hotbar.selected_slot = hotbar_slot;
+    else {
+        for (int index = 0; index < layout.columns*layout.rows; ++index) {
+            if (point_in(container_slot_rectangle(layout, index))) {
+                container_slot = index;
+                break;
+            }
+        }
+    }
+    if (hotbar_slot < 0 && container_slot < 0) return;
+
+    RsResult result = game_session_flush(app->session);
+    if (result != RS_OK) {
+        snprintf(app->message, sizeof(app->message), "Transfer failed: %s",
+                 rs_result_name(result));
+        return;
+    }
+    World *world = game_session_world(app->session);
+    ItemStack source;
+    if (hotbar_slot >= 0) {
+        InventorySlot slot = app->hotbar.slots[hotbar_slot];
+        if (slot.kind != INVENTORY_ITEM) return;
+        source = slot.stack;
+    } else {
+        result = world_get_container_slot(world, pos, (size_t)container_slot,
+                                          &source);
+        if (result != RS_OK) return;
+    }
+    if (!source.count) return;
+    unsigned amount = !shift ? 1u : left ? source.count :
+                      ((unsigned)source.count + 1u)/2u;
+    unsigned moved = hotbar_slot >= 0 ?
+        store_hotbar_items(world, pos, &app->hotbar.slots[hotbar_slot], amount,
+                            &result) :
+        take_container_items(world, pos, (size_t)container_slot, &app->hotbar,
+                               source, amount, &result);
+    if (!moved && (result == RS_OK || result == RS_UNCHANGED)) {
+        snprintf(app->message, sizeof(app->message),
+                 "No items moved: destination has no free space");
+        return;
+    }
+    if (result == RS_OK || result == RS_UNCHANGED)
+        result = game_session_flush(app->session);
+    snprintf(app->message, sizeof(app->message), "%s %u: %s",
+             hotbar_slot >= 0 ? "Stored" : "Retrieved", moved,
+             rs_result_name(result));
+}
+
+static void update_barrel(GuiApp *app)
 {
     World *world = game_session_world(app->session);
     BlockState state = world_get(world, app->barrel_pos);
     if (state.id != BLOCK_BARREL) {
-        close_barrel_palette(app);
+        close_barrel(app);
         snprintf(app->message, sizeof(app->message),
                  "Barrel is no longer available");
         return;
     }
     if (IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ESCAPE)) {
-        close_barrel_palette(app);
-        snprintf(app->message, sizeof(app->message),
-                 "Barrel capacity unchanged: %u",
-                 (unsigned)state.data.barrel.level);
+        close_barrel(app);
         return;
     }
 
-    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-        BarrelPaletteLayout layout = barrel_palette_layout();
-        Vector2 mouse = GetMousePosition();
-        for (int level = 1; level <= 15; ++level) {
-            if (!CheckCollisionPointRec(
-                    mouse, barrel_slot_rectangle(layout, level))) continue;
-            RsResult result = world_set_barrel_level(
-                world, app->barrel_pos, (uint8_t)level);
-            if (result == RS_OK || result == RS_UNCHANGED)
-                result = game_session_flush(app->session);
-            close_barrel_palette(app);
-            snprintf(app->message, sizeof(app->message),
-                     "Barrel capacity %d: %s", level,
-                     rs_result_name(result));
-            return;
+    ContainerLayout layout = container_layout(BLOCK_BARREL);
+    update_container_slots(app, app->barrel_pos, layout);
+    int level = -1;
+    state = world_get(world, app->barrel_pos);
+    if (IsKeyPressed(KEY_LEFT) && state.data.barrel.level > 0)
+        level = state.data.barrel.level - 1;
+    if (IsKeyPressed(KEY_RIGHT) && state.data.barrel.level < 15)
+        level = state.data.barrel.level + 1;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        for (int value = 0; value <= 15; ++value) {
+            if (point_in(barrel_signal_rectangle(layout, value))) {
+                level = value;
+                break;
+            }
         }
     }
-
+    if (level >= 0) {
+        RsResult result = world_set_barrel_level(world, app->barrel_pos,
+                                                 (uint8_t)level);
+        if (result == RS_OK || result == RS_UNCHANGED)
+            result = game_session_flush(app->session);
+        snprintf(app->message, sizeof(app->message), "Barrel signal %d: %s",
+                 level, rs_result_name(result));
+    }
     advance_simulation(app);
 }
 
-static void draw_barrel_palette(const GuiApp *app)
+static void update_container(GuiApp *app)
 {
-    BarrelPaletteLayout layout = barrel_palette_layout();
-    BlockState state = world_get(game_session_world(app->session),
-                                 app->barrel_pos);
-    int selected = state.id == BLOCK_BARREL ? state.data.barrel.level : 0;
-    Vector2 mouse = GetMousePosition();
+    World *world = game_session_world(app->session);
+    BlockId id = app->screen == GUI_DROPPER ? BLOCK_DROPPER : BLOCK_HOPPER;
+    if (world_get(world, app->container_pos).id != id ||
+        IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ESCAPE)) {
+        app->screen = GUI_WORLD;
+        capture_mouse(app);
+        return;
+    }
+    update_container_slots(app, app->container_pos, container_layout(id));
+    advance_simulation(app);
+}
 
+static void draw_container(const GuiApp *app, BlockId id)
+{
+    bool barrel = id == BLOCK_BARREL;
+    World *world = game_session_world(app->session);
+    BlockPos pos = barrel ? app->barrel_pos : app->container_pos;
+    ContainerLayout layout = container_layout(id);
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
                   (Color){10, 18, 20, 155});
     DrawRectangleRec(layout.panel, (Color){226, 218, 196, 250});
     DrawRectangleLinesEx(layout.panel, 3.0f, (Color){73, 48, 24, 255});
-    draw_centered("BARREL CAPACITY", (int)layout.panel.y + 18, 26,
-                  (Color){73, 48, 24, 255});
-    draw_centered(TextFormat("Comparator output: %d", selected),
-                  (int)layout.panel.y + 49, 17,
-                  (Color){100, 71, 36, 255});
+    draw_centered(barrel ? "BARREL" : id == BLOCK_HOPPER ? "HOPPER" : "DROPPER",
+                  (int)layout.panel.y + 18,
+                  26, (Color){73, 48, 24, 255});
+    BlockState state = world_get(world, pos);
+    int level = barrel && state.id == BLOCK_BARREL ? state.data.barrel.level : 0;
+    if (barrel)
+        draw_centered(TextFormat("Comparator output: %d", level),
+                      (int)layout.panel.y + 49, 17, (Color){100, 71, 36, 255});
 
-    for (int level = 1; level <= 15; ++level) {
-        Rectangle slot = barrel_slot_rectangle(layout, level);
-        bool hovered = CheckCollisionPointRec(mouse, slot);
-        unsigned red = (unsigned)(55 + level*9);
-        Color fill = hovered ? (Color){(unsigned char)(red + 20), 72, 48, 255}
-                             : (Color){(unsigned char)red, 48, 35, 245};
-        DrawRectangleRec(slot, fill);
-        DrawRectangleLinesEx(slot, level == selected ? 4.0f : 2.0f,
-                             level == selected ? (Color){244, 190, 88, 255}
-                                               : (Color){142, 119, 86, 255});
-        const char *label = TextFormat("%d", level);
-        int font_size = 24;
-        DrawText(label,
-                 (int)(slot.x + (slot.width - MeasureText(label, font_size))*0.5f),
-                 (int)(slot.y + (slot.height - font_size)*0.5f),
-                 font_size, RAYWHITE);
+    for (int index = 0; index < layout.columns*layout.rows; ++index) {
+        Rectangle slot = container_slot_rectangle(layout, index);
+        bool hovered = point_in(slot);
+        DrawRectangleRec(slot, hovered ? (Color){102, 116, 112, 255} :
+                                        (Color){75, 75, 75, 235});
+        DrawRectangleLinesEx(slot, hovered ? 2.0f : 1.0f,
+                             hovered ? (Color){244, 190, 88, 255} :
+                                       (Color){145, 145, 145, 255});
+        ContainerStack stack;
+        if (world_get_container_slot(world, pos, (size_t)index, &stack) == RS_OK)
+            inventory_draw_stack(&app->inventory, stack, slot);
     }
-
-    draw_centered("Click: set capacity   E/ESC: close",
-                  (int)(layout.panel.y + layout.panel.height - 34), 15,
-                  (Color){83, 69, 50, 255});
+    if (barrel) {
+        int label_y = (int)(layout.grid_y +
+            layout.rows*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP)) + 4;
+        draw_centered("Set signal: click 0-15 or use Left/Right", label_y, 14,
+                      (Color){83, 69, 50, 255});
+        for (int value = 0; value <= 15; ++value) {
+            Rectangle shortcut = barrel_signal_rectangle(layout, value);
+            bool hovered = point_in(shortcut);
+            DrawRectangleRec(shortcut, hovered ? (Color){111, 79, 50, 255} :
+                                                (Color){82, 58, 37, 255});
+            DrawRectangleLinesEx(shortcut, value == level ? 3.0f : 1.0f,
+                                 value == level ? (Color){244, 190, 88, 255} :
+                                                  (Color){142, 119, 86, 255});
+            const char *text = TextFormat("%d", value);
+            DrawText(text,
+                     (int)(shortcut.x + (shortcut.width - MeasureText(text, 16))*0.5f),
+                     (int)shortcut.y + 7, 16, RAYWHITE);
+        }
+    }
+    int footer_y = (int)(layout.panel.y + layout.panel.height) - 72;
+    draw_centered("Click hotbar: store | Click container: retrieve",
+                  footer_y, 14, DARKGRAY);
+    draw_centered("LMB: 1   Shift+LMB: stack   Shift+RMB: half", footer_y + 22,
+                  14, DARKGRAY);
+    draw_centered("Half rounds up   E/ESC: close", footer_y + 44,
+                  14, DARKGRAY);
+    hotbar_draw(&app->hotbar, &app->inventory);
 }
 
 static void draw_world(GuiApp *app, VoxelHit hit)
@@ -754,9 +973,9 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         DrawLine(cx - 6, cy, cx + 6, cy, BLACK);
         DrawLine(cx, cy - 6, cx, cy + 6, BLACK);
     }
-    BlockId selected = hotbar_selected_block(&app->hotbar);
+    InventorySlot selected = hotbar_selected(&app->hotbar);
     DrawText(TextFormat("Selected: %s%s",
-             block_name(selected),
+             inventory_slot_name(selected),
              game_session_dirty(app->session) ? " | unsaved" : ""),
              15, 15, 20, DARKBLUE);
     DrawText(TextFormat("Camera: (%.2f, %.2f, %.2f)",
@@ -925,7 +1144,9 @@ int gui_run(void)
         if (app.screen == GUI_TITLE) update_title(&app);
         else if (app.screen == GUI_WORLD) hit = update_world(&app);
         else if (app.screen == GUI_INVENTORY) update_inventory(&app);
-        else if (app.screen == GUI_BARREL) update_barrel_palette(&app);
+        else if (app.screen == GUI_BARREL) update_barrel(&app);
+        else if (app.screen == GUI_HOPPER || app.screen == GUI_DROPPER)
+            update_container(&app);
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
@@ -942,10 +1163,12 @@ int gui_run(void)
             draw_world(&app, hit);
             if (app.screen == GUI_INVENTORY) {
                 inventory_draw(&app.inventory,
-                               hotbar_selected_block(&app.hotbar));
+                               hotbar_selected(&app.hotbar));
                 hotbar_draw(&app.hotbar, &app.inventory);
             }
-            if (app.screen == GUI_BARREL) draw_barrel_palette(&app);
+            if (app.screen == GUI_BARREL) draw_container(&app, BLOCK_BARREL);
+            if (app.screen == GUI_HOPPER) draw_container(&app, BLOCK_HOPPER);
+            if (app.screen == GUI_DROPPER) draw_container(&app, BLOCK_DROPPER);
             if (app.screen == GUI_PAUSE) draw_pause(&app);
         }
         EndDrawing();

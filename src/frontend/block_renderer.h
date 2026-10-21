@@ -17,7 +17,7 @@ typedef struct{
 } BlockRenderer;
 
 enum {
-    BLOCK_GEOMETRY_QUADS = 10,
+    BLOCK_GEOMETRY_QUADS = 32,
     REDSTONE_GATE_GEOMETRY_QUADS = 5
 };
 typedef struct {

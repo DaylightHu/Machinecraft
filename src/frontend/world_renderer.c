@@ -3,6 +3,7 @@
 #include "rlgl.h"
 #include "storage.h"
 #include "posmap.h"
+#include "hopper_shape.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -55,6 +56,8 @@ static int part_for(unsigned id)
     switch (id) {
     case BLOCK_IRON: case BLOCK_REDSTONE_BLOCK: case BLOCK_OBSERVER:
     case BLOCK_PISTON: case BLOCK_STICKY_PISTON: case BLOCK_BARREL:
+    case BLOCK_SLIME: case BLOCK_NOTE_BLOCK: case BLOCK_HONEY:
+    case BLOCK_TARGET: case BLOCK_HOPPER: case BLOCK_DROPPER:
     case BLOCK_PISTON_HEAD: case BLOCK_STICKY_PISTON_HEAD:
         return SOLIDS;
     case BLOCK_GLASS: return GLASS;
@@ -71,6 +74,8 @@ static int part_for(unsigned id)
 static bool state_solid(BlockState state)
 {
     if (part_for(state.id) != SOLIDS) return false;
+    /* Vanilla honey uses noOcclusion and an inset collision shape. */
+    if (state.id == BLOCK_HONEY || state.id == BLOCK_HOPPER) return false;
     if (block_is_piston_head((BlockId)state.id)) return false;
     return !block_is_piston_base((BlockId)state.id) ||
            !state.data.piston.extended;
@@ -168,6 +173,14 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
         visual = geometry ||
                  before.data.piston.powered != after.data.piston.powered;
     } else if (old_part == new_part && new_part == SOLIDS &&
+               before.id == BLOCK_HOPPER && after.id == BLOCK_HOPPER) {
+        geometry = before.data.hopper.facing != after.data.hopper.facing;
+        visual = geometry;
+    } else if (old_part == new_part && new_part == SOLIDS &&
+               before.id == BLOCK_DROPPER && after.id == BLOCK_DROPPER) {
+        visual = before.data.dropper.facing != after.data.dropper.facing ||
+                 before.data.dropper.triggered != after.data.dropper.triggered;
+    } else if (old_part == new_part && new_part == SOLIDS &&
                before.id == BLOCK_BARREL && after.id == BLOCK_BARREL) {
         visual = before.data.barrel.facing != after.data.barrel.facing;
     }
@@ -249,7 +262,8 @@ static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
         if (kind == SOLIDS || kind == GLASS) {
             cell->solid_faces = (uint8_t)(kind == SOLIDS ? visible_faces(r,p) :
                                                            visible_glass_faces(r,p));
-            quads += (int)bit_count(cell->solid_faces);
+            quads += cell->state.id == BLOCK_HOPPER ? HOPPER_QUAD_COUNT :
+                     (int)bit_count(cell->solid_faces);
             if (block_is_piston_head((BlockId)cell->state.id)) quads += 4;
         } else if (kind == DUST) quads += 1+(int)bit_count(wire_sides(cell->state));
         else if (kind == REPEATERS || kind == COMPARATORS)

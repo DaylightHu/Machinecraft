@@ -32,6 +32,8 @@ static const char *common_sources[] = {
     "src/rail_solver.c",
     "src/power.c",
     "src/session.c",
+    "src/item.c",
+    "src/container.c",
     "src/save_file.c",
     "src/blocks/registry.c",
     "src/blocks/iron.c",
@@ -45,6 +47,12 @@ static const char *common_sources[] = {
     "src/blocks/observer.c",
     "src/blocks/piston.c",
     "src/blocks/barrel.c",
+    "src/blocks/slime.c",
+    "src/blocks/note_block.c",
+    "src/blocks/honey.c",
+    "src/blocks/target.c",
+    "src/blocks/hopper.c",
+    "src/blocks/dropper.c",
 };
 
 static const char *cli_sources[] = {

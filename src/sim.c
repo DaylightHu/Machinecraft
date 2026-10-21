@@ -10,12 +10,14 @@ bool sim_init_internal(World *w)
 {
     w->sim = calloc(1, sizeof(*w->sim));
     if (!w->sim) return false;
+    w->sim->containers.dropper_random = UINT64_C(0x5deece66d); /* Java seed 0. */
     w->sim->free_torch = SIZE_MAX; scheduler_init(&w->sim->scheduler); return true;
 }
 void sim_destroy_internal(World *w)
 {
     Simulator *s = w->sim;
     if (!s) return;
+    container_destroy(w);
     queue_destroy(&s->dirty); queue_destroy(&s->wire_roots);
     queue_destroy(&s->rail_roots); queue_destroy(&s->input_roots);
     scheduler_destroy(&s->scheduler); posmap_destroy(&s->torch_slots);
@@ -44,6 +46,7 @@ bool sim_attach_torch(World *w, BlockPos p)
 }
 void sim_forget_cell(World *w, BlockPos p)
 {
+    container_forget(w, p);
     Simulator *s = w->sim; size_t slot;
     scheduler_cancel(&s->scheduler, p);
     if (posmap_get(&s->torch_slots, p, &slot)) {
@@ -68,21 +71,67 @@ void sim_mark_input(World *w, BlockPos p)
 {
     if (!queue_push(&w->sim->input_roots, p)) w->sim->error = RS_OUT_OF_MEMORY;
 }
-static void notify(World *w, BlockPos p, bool topology)
+static bool dropper_secondary_update(BlockState source, int dx, int dy, int dz)
 {
+    if (source.id == BLOCK_REDSTONE_WIRE || source.id == BLOCK_REDSTONE_TORCH)
+        return true;
+    Direction facing;
+    if (source.id == BLOCK_REDSTONE_REPEATER)
+        facing = (Direction)source.data.repeater.facing;
+    else if (source.id == BLOCK_REDSTONE_COMPARATOR)
+        facing = (Direction)source.data.comparator.facing;
+    else if (source.id == BLOCK_OBSERVER)
+        facing = (Direction)source.data.observer.facing;
+    else return false;
+    BlockPos output = block_offset((BlockPos){0}, facing);
+    return abs(dx - output.x) + abs(dy - output.y) + abs(dz - output.z) == 1;
+}
+
+static void notify(World *w, BlockPos p, bool topology, BlockState previous)
+{
+    BlockState source = world_get(w, p);
     for (int dy = -3; dy <= 3; ++dy) for (int dz = -3; dz <= 3; ++dz) for (int dx = -3; dx <= 3; ++dx) {
-        if (abs(dx) + abs(dy) + abs(dz) > NOTIFICATION_RADIUS) continue;
+        int distance = abs(dx) + abs(dy) + abs(dz);
+        if (distance > NOTIFICATION_RADIUS) continue;
         int64_t x = (int64_t)p.x + dx, y = (int64_t)p.y + dy, z = (int64_t)p.z + dz;
         if (x < INT_MIN || x > INT_MAX || y < WORLD_MIN_Y || y > WORLD_MAX_Y || z < INT_MIN || z > INT_MAX) continue;
         BlockPos n = {(int)x, (int)y, (int)z};
         const BlockDef *d = block_definition((BlockId)world_get(w, n).id);
+        /* QC samples above the dropper only when a neighbor update reaches it.
+         * A plain block two cells away must not wake this BUD-sensitive latch. */
+        if (d == &rs_dropper_def && distance != 1 &&
+            (distance != 2 || (!dropper_secondary_update(source, dx, dy, dz) &&
+                               !dropper_secondary_update(previous, dx, dy, dz))))
+            continue;
+        if (d == &rs_dropper_def) {
+            sim_mark_input(w, n);
+            continue;
+        }
         if (topology && d->neighbor_changed) {
             if (!queue_push(&w->sim->dirty, n)) w->sim->error = RS_OUT_OF_MEMORY;
         } else if (!topology && d->input_changed) sim_mark_input(w, n);
     }
 }
-void sim_notify_change(World *w, BlockPos p) { notify(w, p, true); }
-void sim_notify_power(World *w, BlockPos p) { notify(w, p, false); }
+void sim_notify_change(World *w, BlockPos p) { notify(w, p, true, world_get(w, p)); }
+void sim_notify_replacement(World *w, BlockPos p, BlockState previous)
+{
+    notify(w, p, true, previous);
+}
+void sim_notify_power(World *w, BlockPos p) { notify(w, p, false, world_get(w, p)); }
+void sim_notify_analog(World *w, BlockPos p)
+{
+    for (Direction direction = 0; direction < DIR_COUNT; ++direction) {
+        if (!direction_horizontal(direction)) continue;
+        BlockPos next = block_offset(p, direction);
+        if (world_get(w, next).id == BLOCK_REDSTONE_COMPARATOR)
+            sim_mark_input(w, next);
+        else if (block_is_conductor(w, next)) {
+            next = block_offset(next, direction);
+            if (world_get(w, next).id == BLOCK_REDSTONE_COMPARATOR)
+                sim_mark_input(w, next);
+        }
+    }
+}
 void sim_notify_observers(World *w, BlockPos changed)
 {
     for (Direction direction = 0; direction < DIR_COUNT; ++direction) {
@@ -148,7 +197,8 @@ RsResult sim_step(World *w)
         result = sim_flush(w);
         if (result != RS_OK) return result;
     }
-    return RS_OK;
+    container_step(w);
+    return s->error;
 }
 SimStats sim_stats(const World *w)
 {
@@ -164,6 +214,7 @@ static bool near_chunk(BlockPos p, BlockPos chunk)
 }
 bool sim_chunk_pinned(const World *w, BlockPos chunk)
 {
+    if (container_chunk_pinned(w, chunk)) return true;
     const Simulator *s = w->sim;
     for (size_t i = 0; i < s->scheduler.count; ++i) if (near_chunk(s->scheduler.heap[i].pos, chunk)) return true;
     const PositionQueue *queues[] = {

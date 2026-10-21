@@ -1,5 +1,6 @@
 #include "block_renderer.h"
 #include "rlgl.h"
+#include "hopper_shape.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -15,7 +16,18 @@ enum {
     STICKY_PISTON_TILE_FIRST = PISTON_TILE_FIRST + PISTON_TEXTURES,
     BARREL_TILE_FIRST = STICKY_PISTON_TILE_FIRST + PISTON_TEXTURES,
     BARREL_TEXTURES = 3,
-    TILE_COUNT = BARREL_TILE_FIRST + BARREL_TEXTURES
+    SLIME_TILE = BARREL_TILE_FIRST + BARREL_TEXTURES,
+    NOTE_BLOCK_TILE = SLIME_TILE + 1,
+    HONEY_TILE = NOTE_BLOCK_TILE + 1,
+    TARGET_TILE = HONEY_TILE + 1,
+    HOPPER_OUTSIDE_TILE = TARGET_TILE + 1,
+    HOPPER_INSIDE_TILE = HOPPER_OUTSIDE_TILE + 1,
+    DROPPER_FRONT_TILE = HOPPER_INSIDE_TILE + 1,
+    DROPPER_BACK0_TILE = DROPPER_FRONT_TILE + 1,
+    DROPPER_BACK1_TILE = DROPPER_BACK0_TILE + 1,
+    DROPPER_SIDE0_TILE = DROPPER_BACK1_TILE + 1,
+    DROPPER_SIDE1_TILE = DROPPER_SIDE0_TILE + 1,
+    TILE_COUNT = DROPPER_SIDE1_TILE + 1
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
@@ -153,7 +165,18 @@ static Image create_solid_atlas(void)
         "res/textures/block/sticky_piston_top.png",
         "res/textures/block/barrel_side.png",
         "res/textures/block/barrel_top.png",
-        "res/textures/block/barrel_top_open.png"
+        "res/textures/block/barrel_top_open.png",
+        "res/textures/block/slime_block.png",
+        "res/textures/block/note_block.png",
+        "res/textures/block/honey_block.png",
+        "res/textures/block/target_block.png",
+        "res/textures/block/hopper_outside.png",
+        "res/textures/block/hopper_inside.png",
+        "res/textures/block/dropper_front.png",
+        "res/textures/block/dropper_back0.png",
+        "res/textures/block/dropper_back1.png",
+        "res/textures/block/dropper_side0.png",
+        "res/textures/block/dropper_side1.png"
     };
     Image sources[TILE_COUNT] = {0};
     Image atlas = {0};
@@ -553,6 +576,10 @@ void block_renderer_draw_cube(const BlockRenderer *renderer, BlockId id,
     switch (id) {
     case BLOCK_IRON:           tile = 0; break;
     case BLOCK_REDSTONE_BLOCK: tile = 1; break;
+    case BLOCK_SLIME:          tile = SLIME_TILE; break;
+    case BLOCK_NOTE_BLOCK:     tile = NOTE_BLOCK_TILE; break;
+    case BLOCK_HONEY:          tile = HONEY_TILE; break;
+    case BLOCK_TARGET:         tile = TARGET_TILE; break;
     case BLOCK_GLASS:
         texture = renderer->glass_texture;
         if (!texture.id) return;
@@ -724,6 +751,32 @@ static void barrel_face_uv(Texture2D atlas, BlockState state, int face,
     solid_tile_uv(atlas, BARREL_TILE_FIRST + texture,
                   direction_turns(right[face], down[face], desired,
                                   source_points_down),
+                  uv);
+}
+
+static void dropper_face_uv(Texture2D atlas, BlockState state, int face,
+                            Vector2 uv[4])
+{
+    static const Direction directions[6] = {
+        DIR_SOUTH, DIR_NORTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN
+    };
+    static const Direction right[6] = {
+        DIR_EAST, DIR_WEST, DIR_NORTH, DIR_SOUTH, DIR_EAST, DIR_EAST
+    };
+    static const Direction down[6] = {
+        DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_SOUTH, DIR_NORTH
+    };
+    Direction facing = (Direction)state.data.dropper.facing;
+    bool front = directions[face] == facing;
+    bool back = directions[face] == direction_opposite(facing);
+    int tile = front ? DROPPER_FRONT_TILE :
+               back ? DROPPER_BACK0_TILE + state.data.dropper.triggered :
+                      DROPPER_SIDE0_TILE + state.data.dropper.triggered;
+    Direction desired = front || back ?
+        (facing == DIR_UP ? DIR_NORTH : facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN) :
+        facing;
+    solid_tile_uv(atlas, tile,
+                  direction_turns(right[face], down[face], desired, front || back),
                   uv);
 }
 
@@ -1187,16 +1240,31 @@ void block_renderer_draw_rail(const BlockRenderer *renderer, BlockState state,
     rlSetTexture(0);
 }
 
+static int hopper_geometry(const BlockRenderer *renderer, BlockState state,
+                            Vector3 center, BlockGeometry *geometry);
+
 int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
                             unsigned solid_faces,
                             Vector2 uv[BLOCK_GEOMETRY_QUADS][4])
 {
     int count = 0;
+    if (state.id == BLOCK_HOPPER) {
+        BlockGeometry geometry;
+        count = hopper_geometry(renderer, state, (Vector3){0}, &geometry);
+        memcpy(uv, geometry.uv, (size_t)count * sizeof(geometry.uv[0]));
+        return count;
+    }
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
-        state.id == BLOCK_GLASS) {
+        state.id == BLOCK_GLASS || state.id == BLOCK_SLIME ||
+        state.id == BLOCK_NOTE_BLOCK || state.id == BLOCK_HONEY ||
+        state.id == BLOCK_TARGET) {
         bool glass = state.id == BLOCK_GLASS;
         Texture2D texture = glass ? renderer->glass_texture : renderer->atlas;
-        int tile = state.id == BLOCK_REDSTONE_BLOCK ? 1 : 0;
+        int tile = state.id == BLOCK_REDSTONE_BLOCK ? 1 :
+                   state.id == BLOCK_SLIME ? SLIME_TILE :
+                   state.id == BLOCK_NOTE_BLOCK ? NOTE_BLOCK_TILE :
+                   state.id == BLOCK_HONEY ? HONEY_TILE :
+                   state.id == BLOCK_TARGET ? TARGET_TILE : 0;
         float u0 = (tile*TILE_SIZE + 0.5f)/texture.width;
         float u1 = ((tile + 1)*TILE_SIZE - 0.5f)/texture.width;
         float v0 = 0.5f/texture.height;
@@ -1209,6 +1277,10 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
                 observer_face_uv(renderer->atlas, state, face, uv[count++]);
+    } else if (state.id == BLOCK_DROPPER) {
+        for (int face = 0; face < 6; ++face)
+            if (solid_faces & (1u << face))
+                dropper_face_uv(renderer->atlas, state, face, uv[count++]);
     } else if (state.id == BLOCK_BARREL) {
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
@@ -1264,6 +1336,38 @@ static void box_face_vertices(Vector3 center, Vector3 minimum,
             center.z + (point.z < 0.0f ? minimum.z : maximum.z)
         };
     }
+}
+
+static int hopper_geometry(const BlockRenderer *renderer, BlockState state,
+                            Vector3 center, BlockGeometry *geometry)
+{
+    HopperBox boxes[HOPPER_BOX_COUNT];
+    hopper_shape((Direction)state.data.hopper.facing, boxes);
+    int count = 0;
+    for (int b = 0; b < HOPPER_BOX_COUNT; ++b) {
+        const HopperBox *box = &boxes[b];
+        Vector3 minimum = {box->minimum[0]/16-0.5f, box->minimum[1]/16-0.5f, box->minimum[2]/16-0.5f};
+        Vector3 maximum = {box->maximum[0]/16-0.5f, box->maximum[1]/16-0.5f, box->maximum[2]/16-0.5f};
+        for (int face = 0; face < 6; ++face) {
+            if (!(box->faces & (1u << face))) continue;
+            box_face_vertices(center, minimum, maximum, face, geometry->vertices[count]);
+            int tile = b == 0 && face == 4 ? HOPPER_INSIDE_TILE : HOPPER_OUTSIDE_TILE;
+            for (int v = 0; v < 4; ++v) {
+                Vector3 vertex = geometry->vertices[count][v];
+                float x = vertex.x-center.x+0.5f;
+                float y = vertex.y-center.y+0.5f;
+                float z = vertex.z-center.z+0.5f;
+                float u = face == 0 || face >= 4 ? x : face == 1 ? 1-x : face == 2 ? 1-z : z;
+                float t = face == 4 ? z : face == 5 ? 1-z : 1-y;
+                geometry->uv[count][v] = (Vector2){
+                    (tile*TILE_SIZE+0.5f+u*(TILE_SIZE-1))/renderer->atlas.width,
+                    (0.5f+t*(TILE_SIZE-1))/renderer->atlas.height};
+            }
+            ++count;
+        }
+    }
+    geometry->quads = count;
+    return count;
 }
 
 static void piston_base_bounds(BlockState state, Vector3 *minimum,
@@ -1328,11 +1432,17 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
                                    Vector3 center, unsigned solid_faces,
                                    BlockGeometry *geometry)
 {
+    if (state.id == BLOCK_HOPPER) {
+        (void)hopper_geometry(renderer, state, center, geometry);
+        return;
+    }
     geometry->quads = block_renderer_build_uv(renderer, state, solid_faces, geometry->uv);
     int count = 0;
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
         state.id == BLOCK_GLASS || state.id == BLOCK_OBSERVER ||
-        state.id == BLOCK_BARREL) {
+        state.id == BLOCK_BARREL || state.id == BLOCK_SLIME ||
+        state.id == BLOCK_NOTE_BLOCK || state.id == BLOCK_HONEY ||
+        state.id == BLOCK_TARGET || state.id == BLOCK_DROPPER) {
         for (int face = 0; face < 6; ++face) {
             if (!(solid_faces & (1u << face))) continue;
             for (int vertex = 0; vertex < 4; ++vertex) {

@@ -14,9 +14,11 @@
 #endif
 
 enum {
-    SAVE_VERSION = 3,
+    SAVE_VERSION = 5,
     SAVE_VERSION_LEGACY = 2,
-    SAVE_HEADER_SIZE = 40,
+    SAVE_HEADER_SIZE = 52,
+    SAVE_HEADER_V4_SIZE = 44,
+    SAVE_HEADER_OLD_SIZE = 40,
     SAVE_CRC_OFFSET = 36
 };
 static const unsigned char save_magic[8] = {'M','C','W','O','R','L','D',0};
@@ -93,7 +95,7 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     if (s->error != RS_OK || s->dirty.count || s->wire_roots.count ||
         s->rail_roots.count || s->input_roots.count)
         return GAME_SESSION_SIMULATION_ERROR;
-    if (w->chunk_count > UINT32_MAX || s->torch_slots.count > UINT32_MAX || s->torch_used > UINT32_MAX || s->scheduler.count > UINT32_MAX)
+    if (w->chunk_count > UINT32_MAX || s->torch_slots.count > UINT32_MAX || s->torch_used > UINT32_MAX || s->scheduler.count > UINT32_MAX || s->containers.count > UINT32_MAX)
         return GAME_SESSION_SIMULATION_ERROR;
     Chunk **chunks = w->chunk_count ? malloc(w->chunk_count * sizeof(Chunk *)) : NULL;
     TorchRuntime **torches = s->torch_used ? malloc(s->torch_used * sizeof(TorchRuntime *)) : NULL;
@@ -113,6 +115,8 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     bytes_u32(&b, (uint32_t)w->config.ground_layers); bytes_u64(&b, w->tick);
     bytes_u32(&b, (uint32_t)chunk_count); bytes_u32(&b, (uint32_t)torch_count);
     bytes_u32(&b, (uint32_t)s->scheduler.count); bytes_u32(&b, 0);
+    bytes_u32(&b, (uint32_t)s->containers.count);
+    bytes_u64(&b, s->containers.dropper_random);
     GameSessionResult result = GAME_SESSION_OK;
     for (size_t i = 0; i < chunk_count; ++i) {
         ByteBuffer snapshot; bytes_init(&snapshot);
@@ -139,6 +143,23 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
         bytes_pos(&b, e.pos);
         bytes_u64(&b, e.due - w->tick);
         bytes_u8(&b, (uint8_t)e.priority);
+    }
+    for (size_t i = 0; i < s->containers.count; ++i) {
+        const ContainerRuntime *c = &s->containers.items[i];
+        size_t count = world_container_size(w, c->pos);
+        uint64_t cooldown = c->cooldown_until > w->tick ? c->cooldown_until - w->tick : 0;
+        if (cooldown > 8 || c->last_tick > w->tick) {
+            result = GAME_SESSION_SIMULATION_ERROR; goto cleanup;
+        }
+        bytes_pos(&b, c->pos); bytes_u8(&b, (uint8_t)count);
+        bytes_u8(&b, (uint8_t)cooldown); bytes_u64(&b, c->last_tick);
+        for (size_t j = 0; j < count; ++j) {
+            ContainerStack stack = c->slots[j];
+            if (!container_stack_valid(stack)) {
+                result = GAME_SESSION_SIMULATION_ERROR; goto cleanup;
+            }
+            bytes_u32(&b, stack.item); bytes_u8(&b, stack.count); bytes_u8(&b, stack.limit);
+        }
     }
     if (!b.ok) { result = GAME_SESSION_OUT_OF_MEMORY; goto cleanup; }
     uint32_t crc = crc32_bytes(b.data, b.size);
@@ -227,23 +248,30 @@ World *save_file_read(const char *path, GameSessionResult *result)
     if (b.size < 12 || memcmp(b.data, save_magic, 8)) goto fail;
     b.cursor = 8;
     unsigned version = bytes_read16(&b), header = bytes_read16(&b);
-    if (version != SAVE_VERSION && version != SAVE_VERSION_LEGACY) {
+    if (version != SAVE_VERSION && version != 4 && version != 3 &&
+        version != SAVE_VERSION_LEGACY) {
         *result = GAME_SESSION_UNSUPPORTED_SAVE;
         goto fail;
     }
-    if (header != SAVE_HEADER_SIZE || b.size < SAVE_HEADER_SIZE) goto fail;
+    unsigned expected_header = version >= 5 ? SAVE_HEADER_SIZE :
+                               version == 4 ? SAVE_HEADER_V4_SIZE : SAVE_HEADER_OLD_SIZE;
+    if (header != expected_header || b.size < header) goto fail;
     uint32_t ground = bytes_read32(&b); uint64_t tick = bytes_read64(&b);
     uint32_t chunk_count = bytes_read32(&b), torch_count = bytes_read32(&b), event_count = bytes_read32(&b);
     uint32_t crc = bytes_read32(&b);
+    uint32_t container_count = version >= 4 ? bytes_read32(&b) : 0;
+    uint64_t dropper_random = version >= 5 ? bytes_read64(&b) : UINT64_C(0x5deece66d);
+    if (dropper_random >> 48) goto fail;
     memset(b.data + SAVE_CRC_OFFSET, 0, 4);
     uint64_t event_size = version >= 3 ? 21 : 20;
     if (crc32_bytes(b.data, b.size) != crc || ground > 65 ||
         (uint64_t)chunk_count * 20 + (uint64_t)torch_count * 86 +
-        (uint64_t)event_count * event_size > b.size - SAVE_HEADER_SIZE)
+        (uint64_t)event_count * event_size + (uint64_t)container_count * 52 > b.size - header)
         goto fail;
     w = world_create((WorldConfig){(int)ground});
     if (!w) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
     w->tick = tick;
+    w->sim->containers.dropper_random = dropper_random;
     for (uint32_t i = 0; i < chunk_count; ++i) {
         uint32_t size = bytes_read32(&b);
         if (!b.ok || size > b.size - b.cursor) goto fail;
@@ -255,15 +283,23 @@ World *save_file_read(const char *path, GameSessionResult *result)
         }
         b.cursor += size;
     }
-    size_t actual_torches = 0;
+    size_t actual_torches = 0, actual_containers = 0;
     for (size_t i = 0; i < w->chunk_count; ++i) {
         Chunk *c = w->chunks[i];
         for (unsigned sec = 0; sec < SECTION_COUNT; ++sec) if (c->sections[sec])
             for (size_t j = 0; j < SECTION_VOLUME; ++j) {
                 BlockState state;
                 if (!state_decode(section_get(c->sections[sec], j), &state)) goto fail;
+                if (state.id == BLOCK_DROPPER && version < 5) goto fail;
                 BlockPos p = {c->key.x * 16 + (int)(j & 15), WORLD_MIN_Y + (int)sec * 16 + (int)(j >> 8),
                               c->key.z * 16 + (int)((j >> 4) & 15)};
+                if (container_is_block((BlockId)state.id)) {
+                    ++actual_containers;
+                    if (version < 4) {
+                        if (state.id == BLOCK_HOPPER) goto fail;
+                        if (!container_attach(w, p, state)) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
+                    }
+                }
                 if (state.id == BLOCK_REDSTONE_WIRE && !wire_supported(w, p)) goto fail;
                 if (state.id == BLOCK_REDSTONE_REPEATER && !repeater_supported(w, p))
                     goto fail;
@@ -330,6 +366,30 @@ World *save_file_read(const char *path, GameSessionResult *result)
             *result = GAME_SESSION_OUT_OF_MEMORY;
             goto fail;
         }
+    }
+    if (version >= 4 && actual_containers != container_count) goto fail;
+    for (uint32_t i = 0; i < container_count; ++i) {
+        BlockPos p = bytes_read_pos(&b);
+        unsigned count = bytes_read8(&b), cooldown = bytes_read8(&b);
+        uint64_t last_tick = bytes_read64(&b);
+        BlockState state = world_get(w, p);
+        if (!b.ok || !container_is_block((BlockId)state.id) || container_runtime(w, p) ||
+            count != container_slot_count((BlockId)state.id) || cooldown > 8 ||
+            cooldown > UINT64_MAX - tick || last_tick > tick ||
+            (state.id != BLOCK_HOPPER && (cooldown || last_tick))) goto fail;
+        if (!container_attach(w, p, state)) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
+        ContainerRuntime *c = container_runtime(w, p);
+        c->cooldown_until = tick + cooldown; c->last_tick = last_tick;
+        for (unsigned j = 0; j < count; ++j) {
+            ContainerStack stack;
+            stack.item = bytes_read32(&b); stack.count = bytes_read8(&b); stack.limit = bytes_read8(&b);
+            if (!b.ok || !container_stack_valid(stack)) goto fail;
+            c->slots[j] = stack;
+        }
+        uint8_t level = state.id == BLOCK_HOPPER ? state.data.hopper.level :
+                        state.id == BLOCK_DROPPER ? state.data.dropper.level :
+                                                   state.data.barrel.level;
+        if (container_level(c) != level) goto fail;
     }
     if (!b.ok || b.cursor != b.size || w->sim->error != RS_OK) goto fail;
     /* Keep only regions with pending simulation work resident until a view is set. */
