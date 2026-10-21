@@ -29,6 +29,7 @@ typedef enum {
     GUI_WORLD,
     GUI_INVENTORY,
     GUI_BARREL,
+    GUI_HOPPER,
     GUI_PAUSE,
     GUI_SAVE_ERROR
 } GuiScreen;
@@ -56,6 +57,10 @@ typedef struct {
     size_t world_name_length;
     char message[MESSAGE_CAPACITY];
     BlockPos barrel_pos;
+    BlockPos hopper_pos;
+    int hopper_slot;
+    uint32_t hopper_item;
+    uint8_t hopper_limit;
     double accumulator;
     bool mouse_captured;
     bool close_latched;
@@ -71,7 +76,7 @@ typedef struct {
 
 enum {
     BARREL_COLUMNS = 5,
-    BARREL_ROWS = 3,
+    BARREL_ROWS = 4,
     BARREL_SLOT_SIZE = 54,
     BARREL_SLOT_GAP = 8
 };
@@ -184,7 +189,7 @@ static BarrelPaletteLayout barrel_palette_layout(void)
 
 static Rectangle barrel_slot_rectangle(BarrelPaletteLayout layout, int level)
 {
-    int index = level - 1;
+    int index = level;
     int column = index % BARREL_COLUMNS;
     int row = index / BARREL_COLUMNS;
     return (Rectangle){
@@ -202,7 +207,7 @@ static void open_barrel_palette(GuiApp *app, BlockPos pos)
     release_mouse(app);
     app->screen = GUI_BARREL;
     snprintf(app->message, sizeof(app->message),
-             "Barrel: choose comparator output 1-15");
+             "Barrel: choose comparator output 0-15");
 }
 
 static void close_barrel_palette(GuiApp *app)
@@ -615,6 +620,18 @@ static VoxelHit update_world(GuiApp *app)
         if (hit.hit && !shift &&
             target == BLOCK_BARREL) {
             open_barrel_palette(app, hit.pos);
+        } else if (hit.hit && !shift && target == BLOCK_HOPPER) {
+            app->hopper_pos = hit.pos;
+            app->hopper_slot = 0;
+            app->hopper_item = 1;
+            app->hopper_limit = 64;
+            ContainerStack first;
+            if (world_get_container_slot(world, hit.pos, 0, &first) == RS_OK && first.count) {
+                app->hopper_item = first.item;
+                app->hopper_limit = first.limit;
+            }
+            app->screen = GUI_HOPPER;
+            release_mouse(app);
         } else if (hit.hit && !shift && target == BLOCK_REDSTONE_WIRE) {
             RsResult result = world_toggle_wire_dot(world, hit.pos);
             if (result == RS_OK || result == RS_UNCHANGED)
@@ -697,7 +714,7 @@ static void update_barrel_palette(GuiApp *app)
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
         BarrelPaletteLayout layout = barrel_palette_layout();
         Vector2 mouse = GetMousePosition();
-        for (int level = 1; level <= 15; ++level) {
+        for (int level = 0; level <= 15; ++level) {
             if (!CheckCollisionPointRec(
                     mouse, barrel_slot_rectangle(layout, level))) continue;
             RsResult result = world_set_barrel_level(
@@ -733,7 +750,7 @@ static void draw_barrel_palette(const GuiApp *app)
                   (int)layout.panel.y + 49, 17,
                   (Color){100, 71, 36, 255});
 
-    for (int level = 1; level <= 15; ++level) {
+    for (int level = 0; level <= 15; ++level) {
         Rectangle slot = barrel_slot_rectangle(layout, level);
         bool hovered = CheckCollisionPointRec(mouse, slot);
         unsigned red = (unsigned)(55 + level*9);
@@ -754,6 +771,75 @@ static void draw_barrel_palette(const GuiApp *app)
     draw_centered("Click: set capacity   E/ESC: close",
                   (int)(layout.panel.y + layout.panel.height - 34), 15,
                   (Color){83, 69, 50, 255});
+}
+
+static void hopper_write_slot(GuiApp *app, int amount)
+{
+    World *world = game_session_world(app->session);
+    ContainerStack stack = {0};
+    if (amount > 0) stack = (ContainerStack){app->hopper_item, (uint8_t)amount, app->hopper_limit};
+    RsResult result = world_set_container_slot(world, app->hopper_pos,
+                                              (size_t)app->hopper_slot, stack);
+    if (result == RS_OK || result == RS_UNCHANGED) result = game_session_flush(app->session);
+    snprintf(app->message, sizeof(app->message), "Hopper slot: %s", rs_result_name(result));
+}
+
+static void update_hopper(GuiApp *app)
+{
+    World *world = game_session_world(app->session);
+    if (world_get(world, app->hopper_pos).id != BLOCK_HOPPER ||
+        IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ESCAPE)) {
+        app->screen = GUI_WORLD;
+        capture_mouse(app);
+        return;
+    }
+    advance_simulation(app);
+}
+
+static void draw_hopper(GuiApp *app)
+{
+    World *world = game_session_world(app->session);
+    BlockState state = world_get(world, app->hopper_pos);
+    float x = (GetScreenWidth() - 440.0f) * 0.5f;
+    float y = (GetScreenHeight() - 370.0f) * 0.5f;
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), (Color){10,18,20,155});
+    DrawRectangleRec((Rectangle){x,y,440,370}, (Color){226,218,196,255});
+    draw_centered("HOPPER", (int)y+18, 26, (Color){73,48,24,255});
+    draw_centered(TextFormat("%s   Signal %u   Cooldown %u",
+                  state.data.hopper.enabled ? "Enabled" : "Locked",
+                  (unsigned)state.data.hopper.level,
+                  (unsigned)world_hopper_cooldown(world, app->hopper_pos)),
+                  (int)y+54, 17, (Color){73,48,24,255});
+    for (int i = 0; i < 5; ++i) {
+        ContainerStack stack;
+        if (world_get_container_slot(world, app->hopper_pos, (size_t)i, &stack) != RS_OK) return;
+        Rectangle rect = {x+22+i*80.0f,y+92,74,70};
+        if (button(rect, TextFormat("%d: %u", i+1, (unsigned)stack.count), true)) {
+            app->hopper_slot = i;
+            if (stack.count) { app->hopper_item = stack.item; app->hopper_limit = stack.limit; }
+        }
+        if (i == app->hopper_slot) DrawRectangleLinesEx(rect, 3, ORANGE);
+        DrawText(TextFormat("Type %u", (unsigned)stack.item), (int)rect.x+5, (int)rect.y+73, 14, DARKGRAY);
+    }
+    if (button((Rectangle){x+22,y+201,60,32}, "Type -", app->hopper_item > 1)) --app->hopper_item;
+    DrawText(TextFormat("Type %u", (unsigned)app->hopper_item), (int)x+92, (int)y+210, 17, DARKGRAY);
+    if (button((Rectangle){x+178,y+201,60,32}, "Type +", app->hopper_item < UINT32_MAX)) ++app->hopper_item;
+    static const uint8_t limits[] = {1,16,64};
+    for (int i = 0; i < 3; ++i) {
+        Rectangle rect = {x+250+i*55.0f,y+201,50,32};
+        if (button(rect, TextFormat("%u", (unsigned)limits[i]), true)) app->hopper_limit = limits[i];
+        if (app->hopper_limit == limits[i]) DrawRectangleLinesEx(rect, 2, ORANGE);
+    }
+    ContainerStack selected;
+    if (world_get_container_slot(world, app->hopper_pos, (size_t)app->hopper_slot, &selected) != RS_OK) return;
+    int amount = selected.count;
+    if (amount > app->hopper_limit) amount = app->hopper_limit;
+    if (button((Rectangle){x+22,y+254,90,36}, "-1", amount > 0)) hopper_write_slot(app, amount-1);
+    if (button((Rectangle){x+124,y+254,90,36}, "+1", amount < app->hopper_limit)) hopper_write_slot(app, amount+1);
+    if (button((Rectangle){x+226,y+254,90,36}, "Fill stack", true)) hopper_write_slot(app, app->hopper_limit);
+    if (button((Rectangle){x+328,y+254,90,36}, "Clear", true)) hopper_write_slot(app, 0);
+    draw_centered("Select slot, item type and stack limit", (int)y+310, 16, DARKGRAY);
+    draw_centered("E / ESC: close", (int)y+338, 16, DARKGRAY);
 }
 
 static void draw_world(GuiApp *app, VoxelHit hit)
@@ -946,6 +1032,7 @@ int gui_run(void)
         else if (app.screen == GUI_WORLD) hit = update_world(&app);
         else if (app.screen == GUI_INVENTORY) update_inventory(&app);
         else if (app.screen == GUI_BARREL) update_barrel_palette(&app);
+        else if (app.screen == GUI_HOPPER) update_hopper(&app);
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
@@ -966,6 +1053,7 @@ int gui_run(void)
                 hotbar_draw(&app.hotbar, &app.inventory);
             }
             if (app.screen == GUI_BARREL) draw_barrel_palette(&app);
+            if (app.screen == GUI_HOPPER) draw_hopper(&app);
             if (app.screen == GUI_PAUSE) draw_pause(&app);
         }
         EndDrawing();

@@ -13,7 +13,7 @@ enum { LINE_CAPACITY = 512, TOKEN_CAPACITY = 8 };
 typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
     COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_CAPACITY,
-    COMMAND_HIT, COMMAND_TICK, COMMAND_STATS,
+    COMMAND_HIT, COMMAND_SLOT, COMMAND_SLOTS, COMMAND_TICK, COMMAND_STATS,
     COMMAND_QUIT
 } CommandKind;
 
@@ -25,6 +25,8 @@ typedef struct {
     uint32_t ticks;
     double hit_u, hit_v;
     bool persistent_projectile;
+    uint32_t slot;
+    ContainerStack stack;
 } Command;
 
 static const char *const direction_names[DIR_COUNT] = {
@@ -139,7 +141,7 @@ static bool parse_ticks(const char *text, uint32_t *ticks)
 
 static bool parse_barrel_level(const char *text, uint32_t *level)
 {
-    return parse_ticks(text, level) && *level >= 1 && *level <= 15;
+    return parse_ticks(text, level) && *level <= 15;
 }
 
 static bool parse_hit_coordinate(const char *text, double *value)
@@ -194,8 +196,21 @@ static bool parse_command(char *tokens[], int count, Command *command)
                parse_hit_coordinate(tokens[4], &command->hit_u) &&
                parse_hit_coordinate(tokens[5], &command->hit_v) &&
                (command->persistent_projectile || strcmp(tokens[6], "other") == 0);
+    } else if (strcmp(name, "slot") == 0 && count == 8) {
+        command->kind = COMMAND_SLOT;
+        uint32_t item, amount, limit;
+        if (!parse_position(tokens, &command->position) ||
+            !parse_ticks(tokens[4], &command->slot) ||
+            !parse_ticks(tokens[5], &item) || !parse_ticks(tokens[6], &amount) ||
+            !parse_ticks(tokens[7], &limit) || amount > 64 || limit > 64)
+            return false;
+        command->stack = (ContainerStack){item, (uint8_t)amount, (uint8_t)limit};
+        return (!amount && !item && !limit) ||
+               (item && amount && amount <= limit && (limit == 1 || limit == 16 || limit == 64));
     } else if (count == 4) {
-        if (strcmp(name, "remove") == 0) {
+        if (strcmp(name, "slots") == 0) {
+            command->kind = COMMAND_SLOTS;
+        } else if (strcmp(name, "remove") == 0) {
             command->kind = COMMAND_REMOVE;
         } else if (strcmp(name, "get") == 0) {
             command->kind = COMMAND_GET;
@@ -220,6 +235,7 @@ static void print_help(FILE *output)
     fputs("place X Y Z BLOCK [DIRECTION]\n"
           "remove X Y Z\nget X Y Z\ndot X Y Z\ndelay X Y Z\n"
           "mode X Y Z\ncapacity X Y Z LEVEL\n"
+          "slots X Y Z\nslot X Y Z INDEX ITEM COUNT LIMIT (zero based; 0 0 0 clears)\n"
           "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
           "tick [COUNT]\nstats\nhelp\nquit\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
@@ -227,7 +243,8 @@ static void print_help(FILE *output)
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
           "Repeater/comparator/observer direction is output; piston direction is its front; barrel direction is its lid; rail direction is the texture top.\n"
-          "Observer, barrel and both piston types accept all six directions; other directional blocks are horizontal. Default north.\n",
+          "Observer, barrel and both piston types accept all six directions. Gates and rails are horizontal; default north.\n"
+          "Hopper direction is its outlet: down or horizontal; default down. Up maps to down.\n",
           output);
 }
 
@@ -299,6 +316,13 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
     case BLOCK_TARGET:
         fprintf(output, " power=%u", (unsigned)state.data.target.power);
         break;
+    case BLOCK_HOPPER:
+        fprintf(output, " facing=%s enabled=%s level=%u cooldown=%u",
+                direction_names[state.data.hopper.facing],
+                state.data.hopper.enabled ? "yes" : "no",
+                (unsigned)state.data.hopper.level,
+                (unsigned)world_hopper_cooldown(world, position));
+        break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);
         fprintf(output, " received=%u strong=%u", (unsigned)power.received,
@@ -340,6 +364,18 @@ static RsResult execute_command(World *world, const Command *command,
         return RS_OK;
     case COMMAND_GET:
         return print_block(world, command->position, output);
+    case COMMAND_SLOTS: {
+        size_t count = world_container_size(world, command->position);
+        if (!count) return RS_INVALID_ARGUMENT;
+        for (size_t i = 0; i < count; ++i) {
+            ContainerStack stack;
+            result = world_get_container_slot(world, command->position, i, &stack);
+            if (result != RS_OK) return result;
+            fprintf(output, "%zu item=%" PRIu32 " count=%u limit=%u\n", i, stack.item,
+                    (unsigned)stack.count, (unsigned)stack.limit);
+        }
+        return RS_OK;
+    }
     case COMMAND_STATS:
         print_stats(world, output);
         return RS_OK;
@@ -375,6 +411,10 @@ static RsResult execute_command(World *world, const Command *command,
         result = world_hit_target(world, command->position,
                                   command->hit_u, command->hit_v,
                                   command->persistent_projectile);
+        break;
+    case COMMAND_SLOT:
+        result = world_set_container_slot(world, command->position,
+                                          command->slot, command->stack);
         break;
     default:
         return RS_INVALID_ARGUMENT;

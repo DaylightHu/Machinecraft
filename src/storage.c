@@ -32,7 +32,10 @@ enum {
     STATE_NOTE_BLOCK_COUNT = 2,
     /* Append state ranges so existing .mcw palettes retain their meaning. */
     STATE_TARGET_FIRST = STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT,
-    STATE_TARGET_COUNT = 16
+    STATE_TARGET_COUNT = 16,
+    STATE_HOPPER_FIRST = STATE_TARGET_FIRST + STATE_TARGET_COUNT,
+    STATE_HOPPER_COUNT = 5 * 2 * 16,
+    STATE_EMPTY_BARREL_FIRST = STATE_HOPPER_FIRST + STATE_HOPPER_COUNT
 };
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -137,8 +140,12 @@ bool state_encode(BlockState s, StateId *id)
     }
     if (s.id == BLOCK_BARREL) {
         if (s.data.barrel.facing >= DIR_COUNT ||
-            s.data.barrel.level < 1 || s.data.barrel.level > 15 ||
+            s.data.barrel.level > 15 ||
             s.data.barrel.open) return false;
+        if (!s.data.barrel.level) {
+            *id = (StateId)(STATE_EMPTY_BARREL_FIRST + s.data.barrel.facing);
+            return true;
+        }
         *id = (StateId)(STATE_BARREL_FIRST + s.data.barrel.facing +
               (unsigned)(s.data.barrel.level - 1)*DIR_COUNT);
         return true;
@@ -152,6 +159,16 @@ bool state_encode(BlockState s, StateId *id)
         if (s.data.target.power > 15) return false;
         *id = (StateId)(STATE_TARGET_FIRST + s.data.target.power);
         return true;
+    }
+    if (s.id == BLOCK_HOPPER) {
+        static const Direction faces[] = {DIR_DOWN, DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH};
+        if (s.data.hopper.level > 15) return false;
+        for (unsigned i = 0; i < 5; ++i) if (s.data.hopper.facing == faces[i]) {
+            *id = (StateId)(STATE_HOPPER_FIRST + i +
+                  (s.data.hopper.enabled ? 5u : 0u) + s.data.hopper.level * 10u);
+            return true;
+        }
+        return false;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
         (s.data.wire.connections & ~0x33u) ||
@@ -273,6 +290,21 @@ bool state_decode(StateId id, BlockState *s)
     if (id >= STATE_TARGET_FIRST && id < STATE_TARGET_FIRST + STATE_TARGET_COUNT) {
         *s = block_default(BLOCK_TARGET);
         s->data.target.power = (uint8_t)(id - STATE_TARGET_FIRST);
+        return true;
+    }
+    if (id >= STATE_HOPPER_FIRST && id < STATE_HOPPER_FIRST + STATE_HOPPER_COUNT) {
+        static const Direction faces[] = {DIR_DOWN, DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH};
+        unsigned value = id - STATE_HOPPER_FIRST;
+        *s = block_default(BLOCK_HOPPER);
+        s->data.hopper.facing = (uint8_t)faces[value % 5];
+        s->data.hopper.enabled = (value % 10) >= 5;
+        s->data.hopper.level = (uint8_t)(value / 10);
+        return true;
+    }
+    if (id >= STATE_EMPTY_BARREL_FIRST && id < STATE_EMPTY_BARREL_FIRST + DIR_COUNT) {
+        *s = block_default(BLOCK_BARREL);
+        s->data.barrel.facing = (uint8_t)(id - STATE_EMPTY_BARREL_FIRST);
+        s->data.barrel.level = 0;
         return true;
     }
     if (id < 16 || id > 8207) return false;

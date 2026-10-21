@@ -4,6 +4,7 @@
 #include "world_internal.h"
 #include "queue.h"
 #include "scheduler.h"
+#include "container.h"
 #include "blocks/block_internal.h"
 typedef struct {
     uint64_t off_times[8], burned_until;
@@ -15,6 +16,7 @@ typedef struct {
 struct Simulator {
     PositionQueue dirty, wire_roots, rail_roots, input_roots;
     Scheduler scheduler;
+    ContainerTable containers;
     PosMap torch_slots;
     TorchRuntime *torches;
     size_t torch_used, torch_capacity, free_torch;

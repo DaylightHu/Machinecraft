@@ -29,6 +29,7 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_NOTE_BLOCK] = &rs_note_block_def,
         [BLOCK_HONEY] = &rs_honey_def,
         [BLOCK_TARGET] = &rs_target_def,
+        [BLOCK_HOPPER] = &rs_hopper_def,
         [BLOCK_PISTON_HEAD] = &rs_piston_head_def,
         [BLOCK_STICKY_PISTON_HEAD] = &rs_sticky_piston_head_def
     };
@@ -62,6 +63,9 @@ BlockState block_default(BlockId id)
     } else if (id == BLOCK_BARREL) {
         state.data.barrel.facing = DIR_NORTH;
         state.data.barrel.level = 1;
+    } else if (id == BLOCK_HOPPER) {
+        state.data.hopper.facing = DIR_DOWN;
+        state.data.hopper.enabled = true;
     }
     return state;
 }

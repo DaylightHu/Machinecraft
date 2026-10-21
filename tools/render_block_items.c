@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../src/hopper_shape.h"
 
 #ifdef _WIN32
 #include <direct.h>
@@ -309,6 +310,73 @@ static bool write_png(const char *path, const Pixel *pixels)
     return ok;
 }
 
+static bool render_hopper(const char *output_directory)
+{
+    const char *paths[] = {"res/textures/block/hopper_outside.png",
+                           "res/textures/block/hopper_inside.png"};
+    SourceImage sources[2] = {0};
+    unsigned char *loaded[2] = {0};
+    for (int i = 0; i < 2; ++i) {
+        int channels;
+        loaded[i] = stbi_load(paths[i], &sources[i].width, &sources[i].height,
+                              &channels, COLOR_CHANNELS);
+        if (!loaded[i]) {
+            fprintf(stderr, "Cannot load %s\n", paths[i]);
+            for (int j = 0; j < 2; ++j) stbi_image_free(loaded[j]);
+            return false;
+        }
+        sources[i].pixels = (const Pixel *)loaded[i];
+    }
+    Pixel *pixels = calloc((size_t)ICON_SIZE*ICON_SIZE, sizeof(*pixels));
+    if (!pixels) { for (int i = 0; i < 2; ++i) stbi_image_free(loaded[i]); return false; }
+    HopperBox boxes[HOPPER_BOX_COUNT];
+    hopper_shape(DIR_DOWN, boxes);
+    const float direction[] = {-1.0f, -1.04f, -1.0f};
+    for (int y = 0; y < ICON_SIZE; ++y) for (int x = 0; x < ICON_SIZE; ++x) {
+        float difference = (x+0.5f-64)/48;
+        float sum = (y+0.5f+89)/26;
+        float origin[] = {(sum+difference)/2, 3, (sum-difference)/2};
+        float nearest = 1000;
+        int selected = -1, selected_face = -1;
+        for (int b = 0; b < HOPPER_BOX_COUNT; ++b) {
+            float enter = -1000, leave = 1000;
+            int face = -1;
+            for (int axis = 0; axis < 3; ++axis) {
+                float first = (boxes[b].maximum[axis]/16-origin[axis])/direction[axis];
+                float last = (boxes[b].minimum[axis]/16-origin[axis])/direction[axis];
+                if (first > enter) { enter = first; face = axis == 0 ? 2 : axis == 1 ? 4 : 0; }
+                if (last < leave) leave = last;
+            }
+            if (enter < 0 || enter > leave || enter >= nearest) continue;
+            nearest = enter;
+            selected = b;
+            selected_face = face;
+        }
+        if (selected < 0) continue;
+        float px = origin[0]+nearest*direction[0];
+        float py = origin[1]+nearest*direction[1];
+        float pz = origin[2]+nearest*direction[2];
+        float u = selected_face == 2 ? 1-pz : px;
+        float v = selected_face == 4 ? pz : 1-py;
+        bool inside = selected == 0 && selected_face == 4;
+        SourceImage source = sources[inside ? 1 : 0];
+        int sx = (int)(u*source.width), sy = (int)(v*source.height);
+        if (sx < 0) sx = 0;
+        if (sy < 0) sy = 0;
+        if (sx >= source.width) sx = source.width-1;
+        if (sy >= source.height) sy = source.height-1;
+        float brightness = inside ? 0.7f : selected_face == 4 ? 1.0f : selected_face == 2 ? 0.88f : 0.76f;
+        pixels[y*ICON_SIZE+x] = shade(source.pixels[sy*source.width+sx], brightness);
+    }
+    char path[512];
+    int length = snprintf(path, sizeof(path), "%s/hopper.png", output_directory);
+    bool ok = length > 0 && (size_t)length < sizeof(path) && write_png(path, pixels);
+    if (ok) printf("Wrote %s\n", path);
+    free(pixels);
+    for (int i = 0; i < 2; ++i) stbi_image_free(loaded[i]);
+    return ok;
+}
+
 static bool render_item(const ItemSpec *item, const char *output_directory)
 {
     const char *const paths[] = {
@@ -411,6 +479,7 @@ int main(int argc, char **argv)
     for (size_t index = 0; index < sizeof(items)/sizeof(items[0]); ++index) {
         if (!render_item(&items[index], output_directory)) complete = false;
     }
+    if (!render_hopper(output_directory)) complete = false;
     return complete ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 

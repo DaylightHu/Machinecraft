@@ -16,6 +16,7 @@ void sim_destroy_internal(World *w)
 {
     Simulator *s = w->sim;
     if (!s) return;
+    container_destroy(w);
     queue_destroy(&s->dirty); queue_destroy(&s->wire_roots);
     queue_destroy(&s->rail_roots); queue_destroy(&s->input_roots);
     scheduler_destroy(&s->scheduler); posmap_destroy(&s->torch_slots);
@@ -44,6 +45,7 @@ bool sim_attach_torch(World *w, BlockPos p)
 }
 void sim_forget_cell(World *w, BlockPos p)
 {
+    container_forget(w, p);
     Simulator *s = w->sim; size_t slot;
     scheduler_cancel(&s->scheduler, p);
     if (posmap_get(&s->torch_slots, p, &slot)) {
@@ -148,7 +150,8 @@ RsResult sim_step(World *w)
         result = sim_flush(w);
         if (result != RS_OK) return result;
     }
-    return RS_OK;
+    container_step(w);
+    return s->error;
 }
 SimStats sim_stats(const World *w)
 {
@@ -164,6 +167,7 @@ static bool near_chunk(BlockPos p, BlockPos chunk)
 }
 bool sim_chunk_pinned(const World *w, BlockPos chunk)
 {
+    if (container_chunk_pinned(w, chunk)) return true;
     const Simulator *s = w->sim;
     for (size_t i = 0; i < s->scheduler.count; ++i) if (near_chunk(s->scheduler.heap[i].pos, chunk)) return true;
     const PositionQueue *queues[] = {

@@ -71,7 +71,8 @@ void wire_refresh_shape(World *world, BlockPos position)
         if (can_ascend && block_supports_wire(world, neighbor) &&
             is_wire(world, block_offset(neighbor, DIR_UP))) {
             connections |= FACE_BIT(face);
-            ascending |= FACE_BIT(face);
+            if (world_get(world, neighbor).id != BLOCK_HOPPER)
+                ascending |= FACE_BIT(face);
         } else if (connects(world, neighbor, face) ||
                    (!block_is_conductor(world, neighbor) &&
                     is_wire(world, block_offset(neighbor, DIR_DOWN)))) {

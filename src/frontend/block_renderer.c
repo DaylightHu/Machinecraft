@@ -1,5 +1,6 @@
 #include "block_renderer.h"
 #include "rlgl.h"
+#include "hopper_shape.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -19,7 +20,9 @@ enum {
     NOTE_BLOCK_TILE = SLIME_TILE + 1,
     HONEY_TILE = NOTE_BLOCK_TILE + 1,
     TARGET_TILE = HONEY_TILE + 1,
-    TILE_COUNT = TARGET_TILE + 1
+    HOPPER_OUTSIDE_TILE = TARGET_TILE + 1,
+    HOPPER_INSIDE_TILE = HOPPER_OUTSIDE_TILE + 1,
+    TILE_COUNT = HOPPER_INSIDE_TILE + 1
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
@@ -161,7 +164,9 @@ static Image create_solid_atlas(void)
         "res/textures/block/slime_block.png",
         "res/textures/block/note_block.png",
         "res/textures/block/honey_block.png",
-        "res/textures/block/target_block.png"
+        "res/textures/block/target_block.png",
+        "res/textures/block/hopper_outside.png",
+        "res/textures/block/hopper_inside.png"
     };
     Image sources[TILE_COUNT] = {0};
     Image atlas = {0};
@@ -1199,11 +1204,20 @@ void block_renderer_draw_rail(const BlockRenderer *renderer, BlockState state,
     rlSetTexture(0);
 }
 
+static int hopper_geometry(const BlockRenderer *renderer, BlockState state,
+                            Vector3 center, BlockGeometry *geometry);
+
 int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
                             unsigned solid_faces,
                             Vector2 uv[BLOCK_GEOMETRY_QUADS][4])
 {
     int count = 0;
+    if (state.id == BLOCK_HOPPER) {
+        BlockGeometry geometry;
+        count = hopper_geometry(renderer, state, (Vector3){0}, &geometry);
+        memcpy(uv, geometry.uv, (size_t)count * sizeof(geometry.uv[0]));
+        return count;
+    }
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
         state.id == BLOCK_GLASS || state.id == BLOCK_SLIME ||
         state.id == BLOCK_NOTE_BLOCK || state.id == BLOCK_HONEY ||
@@ -1284,6 +1298,38 @@ static void box_face_vertices(Vector3 center, Vector3 minimum,
     }
 }
 
+static int hopper_geometry(const BlockRenderer *renderer, BlockState state,
+                            Vector3 center, BlockGeometry *geometry)
+{
+    HopperBox boxes[HOPPER_BOX_COUNT];
+    hopper_shape((Direction)state.data.hopper.facing, boxes);
+    int count = 0;
+    for (int b = 0; b < HOPPER_BOX_COUNT; ++b) {
+        const HopperBox *box = &boxes[b];
+        Vector3 minimum = {box->minimum[0]/16-0.5f, box->minimum[1]/16-0.5f, box->minimum[2]/16-0.5f};
+        Vector3 maximum = {box->maximum[0]/16-0.5f, box->maximum[1]/16-0.5f, box->maximum[2]/16-0.5f};
+        for (int face = 0; face < 6; ++face) {
+            if (!(box->faces & (1u << face))) continue;
+            box_face_vertices(center, minimum, maximum, face, geometry->vertices[count]);
+            int tile = b == 0 && face == 4 ? HOPPER_INSIDE_TILE : HOPPER_OUTSIDE_TILE;
+            for (int v = 0; v < 4; ++v) {
+                Vector3 vertex = geometry->vertices[count][v];
+                float x = vertex.x-center.x+0.5f;
+                float y = vertex.y-center.y+0.5f;
+                float z = vertex.z-center.z+0.5f;
+                float u = face == 0 || face >= 4 ? x : face == 1 ? 1-x : face == 2 ? 1-z : z;
+                float t = face == 4 ? z : face == 5 ? 1-z : 1-y;
+                geometry->uv[count][v] = (Vector2){
+                    (tile*TILE_SIZE+0.5f+u*(TILE_SIZE-1))/renderer->atlas.width,
+                    (0.5f+t*(TILE_SIZE-1))/renderer->atlas.height};
+            }
+            ++count;
+        }
+    }
+    geometry->quads = count;
+    return count;
+}
+
 static void piston_base_bounds(BlockState state, Vector3 *minimum,
                                Vector3 *maximum)
 {
@@ -1346,6 +1392,10 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
                                    Vector3 center, unsigned solid_faces,
                                    BlockGeometry *geometry)
 {
+    if (state.id == BLOCK_HOPPER) {
+        (void)hopper_geometry(renderer, state, center, geometry);
+        return;
+    }
     geometry->quads = block_renderer_build_uv(renderer, state, solid_faces, geometry->uv);
     int count = 0;
     if (state.id == BLOCK_IRON || state.id == BLOCK_REDSTONE_BLOCK ||
