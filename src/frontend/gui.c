@@ -175,7 +175,7 @@ static ContainerLayout container_layout(BlockId id)
                       (rows - 1)*CONTAINER_SLOT_GAP;
     int header = barrel ? 76 : 58;
     int panel_width = barrel ? grid_width + 40 : 480;
-    int panel_height = header + grid_height + (barrel ? 68 : 0) + 90;
+    int panel_height = header + grid_height + (barrel ? 42 : 0) + 18;
     ContainerLayout layout = {0};
     layout.panel = (Rectangle){
         (GetScreenWidth() - panel_width)*0.5f,
@@ -206,7 +206,7 @@ static Rectangle barrel_signal_rectangle(ContainerLayout layout, int level)
     return (Rectangle){
         layout.panel.x + (layout.panel.width - width)*0.5f +
         level*(SIGNAL_BUTTON_SIZE + SIGNAL_BUTTON_GAP),
-        layout.grid_y + layout.rows*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP) + 24,
+        layout.grid_y + layout.rows*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP) + 8,
         SIGNAL_BUTTON_SIZE, 30
     };
 }
@@ -927,10 +927,6 @@ static void draw_container(const GuiApp *app, BlockId id)
             inventory_draw_stack(&app->inventory, stack, slot);
     }
     if (barrel) {
-        int label_y = (int)(layout.grid_y +
-            layout.rows*(CONTAINER_SLOT_SIZE + CONTAINER_SLOT_GAP)) + 4;
-        draw_centered("Set signal: click 0-15 or use Left/Right", label_y, 14,
-                      (Color){83, 69, 50, 255});
         for (int value = 0; value <= 15; ++value) {
             Rectangle shortcut = barrel_signal_rectangle(layout, value);
             bool hovered = point_in(shortcut);
@@ -945,13 +941,6 @@ static void draw_container(const GuiApp *app, BlockId id)
                      (int)shortcut.y + 7, 16, RAYWHITE);
         }
     }
-    int footer_y = (int)(layout.panel.y + layout.panel.height) - 72;
-    draw_centered("Click hotbar: store | Click container: retrieve",
-                  footer_y, 14, DARKGRAY);
-    draw_centered("LMB: 1   Shift+LMB: stack   Shift+RMB: half", footer_y + 22,
-                  14, DARKGRAY);
-    draw_centered("Half rounds up   E/ESC: close", footer_y + 44,
-                  14, DARKGRAY);
     hotbar_draw(&app->hotbar, &app->inventory);
 }
 
@@ -973,24 +962,18 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         DrawLine(cx - 6, cy, cx + 6, cy, BLACK);
         DrawLine(cx, cy - 6, cx, cy + 6, BLACK);
     }
-    InventorySlot selected = hotbar_selected(&app->hotbar);
-    DrawText(TextFormat("Selected: %s%s",
-             inventory_slot_name(selected),
-             game_session_dirty(app->session) ? " | unsaved" : ""),
-             15, 15, 20, DARKBLUE);
-    DrawText(TextFormat("Camera: (%.2f, %.2f, %.2f)",
+    DrawText(TextFormat("Position: (%.2f, %.2f, %.2f)",
              app->camera.position.x,
              app->camera.position.y,
              app->camera.position.z),
-             15, 42, 18, DARKBLUE);
+             15, 15, 18, DARKBLUE);
     if (hit.hit) {
         DrawText(TextFormat("Target: (%d, %d, %d)",
                  hit.pos.x, hit.pos.y, hit.pos.z),
-                 15, 66, 18, DARKBLUE);
+                 15, 39, 18, DARKBLUE);
     } else {
-        DrawText("Target: none", 15, 66, 18, DARKBLUE);
+        DrawText("Target: none", 15, 39, 18, DARKBLUE);
     }
-    DrawText(app->message, 15, 90, 18, DARKBLUE);
     hotbar_draw(&app->hotbar, &app->inventory);
 }
 
