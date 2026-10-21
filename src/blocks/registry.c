@@ -30,6 +30,7 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_HONEY] = &rs_honey_def,
         [BLOCK_TARGET] = &rs_target_def,
         [BLOCK_HOPPER] = &rs_hopper_def,
+        [BLOCK_DROPPER] = &rs_dropper_def,
         [BLOCK_PISTON_HEAD] = &rs_piston_head_def,
         [BLOCK_STICKY_PISTON_HEAD] = &rs_sticky_piston_head_def
     };
@@ -66,6 +67,8 @@ BlockState block_default(BlockId id)
     } else if (id == BLOCK_HOPPER) {
         state.data.hopper.facing = DIR_DOWN;
         state.data.hopper.enabled = true;
+    } else if (id == BLOCK_DROPPER) {
+        state.data.dropper.facing = DIR_NORTH;
     }
     return state;
 }

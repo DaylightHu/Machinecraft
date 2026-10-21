@@ -52,6 +52,7 @@ static const char *common_sources[] = {
     "src/blocks/honey.c",
     "src/blocks/target.c",
     "src/blocks/hopper.c",
+    "src/blocks/dropper.c",
 };
 
 static const char *cli_sources[] = {

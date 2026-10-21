@@ -230,7 +230,7 @@ void world_remove_internal(World *w, BlockPos p)
         }
     }
     if (!world_write_derived(w, p, block_default(BLOCK_AIR))) return;
-    sim_forget_cell(w, p); sim_notify_change(w, p);
+    sim_forget_cell(w, p); sim_notify_replacement(w, p, removed);
 }
 RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
 {
@@ -249,13 +249,13 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
     } else if (id == BLOCK_REDSTONE_REPEATER ||
                id == BLOCK_REDSTONE_COMPARATOR || block_is_rail(id) ||
                id == BLOCK_OBSERVER || block_is_piston_base(id) ||
-               id == BLOCK_BARREL) {
-        if (id != BLOCK_OBSERVER && id != BLOCK_BARREL &&
+               id == BLOCK_BARREL || id == BLOCK_DROPPER) {
+        if (id != BLOCK_OBSERVER && id != BLOCK_BARREL && id != BLOCK_DROPPER &&
             !block_is_piston_base(id) &&
             !direction_horizontal(support))
             return RS_INVALID_ARGUMENT;
         if ((id == BLOCK_OBSERVER || block_is_piston_base(id) ||
-             id == BLOCK_BARREL) &&
+             id == BLOCK_BARREL || id == BLOCK_DROPPER) &&
             (unsigned)support >= DIR_COUNT)
             return RS_INVALID_ARGUMENT;
         if (id == BLOCK_REDSTONE_REPEATER && !repeater_supported(w, p))
@@ -277,7 +277,8 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         (!block_is_piston_base(id) ||
          previous.data.piston.facing == support) &&
         (id != BLOCK_BARREL || previous.data.barrel.facing == support) &&
-        (id != BLOCK_HOPPER || previous.data.hopper.facing == support))
+        (id != BLOCK_HOPPER || previous.data.hopper.facing == support) &&
+        (id != BLOCK_DROPPER || previous.data.dropper.facing == support))
         return RS_UNCHANGED;
     if (id == BLOCK_REDSTONE_TORCH && sim_prepare_torch(w) != RS_OK) return RS_OUT_OF_MEMORY;
     BlockState state = block_default(id);
@@ -294,6 +295,8 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         state.data.barrel.facing = (uint8_t)support;
     if (id == BLOCK_HOPPER)
         state.data.hopper.facing = (uint8_t)support;
+    if (id == BLOCK_DROPPER)
+        state.data.dropper.facing = (uint8_t)support;
     if ((block_is_piston_base((BlockId)previous.id) &&
          previous.data.piston.extended) ||
         block_is_piston_head((BlockId)previous.id)) {
@@ -307,7 +310,7 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         return w->sim->error;
     }
     if (id == BLOCK_REDSTONE_TORCH && !sim_attach_torch(w, p)) { w->sim->error = RS_OUT_OF_MEMORY; return RS_OUT_OF_MEMORY; }
-    sim_notify_change(w, p); return w->sim->error;
+    sim_notify_replacement(w, p, previous); return w->sim->error;
 }
 RsResult world_remove(World *w, BlockPos p)
 {

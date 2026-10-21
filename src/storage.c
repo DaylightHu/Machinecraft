@@ -35,8 +35,13 @@ enum {
     STATE_TARGET_COUNT = 16,
     STATE_HOPPER_FIRST = STATE_TARGET_FIRST + STATE_TARGET_COUNT,
     STATE_HOPPER_COUNT = 5 * 2 * 16,
-    STATE_EMPTY_BARREL_FIRST = STATE_HOPPER_FIRST + STATE_HOPPER_COUNT
+    STATE_EMPTY_BARREL_FIRST = STATE_HOPPER_FIRST + STATE_HOPPER_COUNT,
+    STATE_DROPPER_FIRST = STATE_EMPTY_BARREL_FIRST + DIR_COUNT,
+    STATE_DROPPER_COUNT = DIR_COUNT * 2 * 16
 };
+
+_Static_assert(STATE_DROPPER_FIRST + STATE_DROPPER_COUNT <= STATE_ID_LIMIT,
+               "block states must fit the palette state id");
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
 int floor_mod16(int x) { int r = x % 16; return r < 0 ? r + 16 : r; }
@@ -169,6 +174,14 @@ bool state_encode(BlockState s, StateId *id)
             return true;
         }
         return false;
+    }
+    if (s.id == BLOCK_DROPPER) {
+        if (s.data.dropper.facing >= DIR_COUNT || s.data.dropper.level > 15)
+            return false;
+        *id = (StateId)(STATE_DROPPER_FIRST + s.data.dropper.facing +
+              (s.data.dropper.triggered ? DIR_COUNT : 0) +
+              s.data.dropper.level * (DIR_COUNT * 2));
+        return true;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
         (s.data.wire.connections & ~0x33u) ||
@@ -305,6 +318,14 @@ bool state_decode(StateId id, BlockState *s)
         *s = block_default(BLOCK_BARREL);
         s->data.barrel.facing = (uint8_t)(id - STATE_EMPTY_BARREL_FIRST);
         s->data.barrel.level = 0;
+        return true;
+    }
+    if (id >= STATE_DROPPER_FIRST && id < STATE_DROPPER_FIRST + STATE_DROPPER_COUNT) {
+        unsigned value = id - STATE_DROPPER_FIRST;
+        *s = block_default(BLOCK_DROPPER);
+        s->data.dropper.facing = (uint8_t)(value % DIR_COUNT);
+        s->data.dropper.triggered = (value % (DIR_COUNT * 2)) >= DIR_COUNT;
+        s->data.dropper.level = (uint8_t)(value / (DIR_COUNT * 2));
         return true;
     }
     if (id < 16 || id > 8207) return false;

@@ -30,6 +30,7 @@ typedef enum {
     GUI_INVENTORY,
     GUI_BARREL,
     GUI_HOPPER,
+    GUI_DROPPER,
     GUI_PAUSE,
     GUI_SAVE_ERROR
 } GuiScreen;
@@ -57,7 +58,7 @@ typedef struct {
     size_t world_name_length;
     char message[MESSAGE_CAPACITY];
     BlockPos barrel_pos;
-    BlockPos hopper_pos;
+    BlockPos container_pos;
     double accumulator;
     bool mouse_captured;
     bool close_latched;
@@ -163,10 +164,11 @@ static void capture_mouse(GuiApp *app)
     app->mouse_captured = true;
 }
 
-static ContainerLayout container_layout(bool barrel)
+static ContainerLayout container_layout(BlockId id)
 {
-    int columns = barrel ? 9 : 5;
-    int rows = barrel ? 3 : 1;
+    bool barrel = id == BLOCK_BARREL;
+    int columns = barrel ? 9 : id == BLOCK_HOPPER ? 5 : 3;
+    int rows = id == BLOCK_HOPPER ? 1 : 3;
     int grid_width = columns*CONTAINER_SLOT_SIZE +
                      (columns - 1)*CONTAINER_SLOT_GAP;
     int grid_height = rows*CONTAINER_SLOT_SIZE +
@@ -533,6 +535,7 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                            selected == BLOCK_ACTIVATOR_RAIL;
         Direction placement = (selected == BLOCK_OBSERVER ||
                                selected == BLOCK_BARREL ||
+                               selected == BLOCK_DROPPER ||
                                block_is_piston_base(selected)) ?
                               direction_opposite(
                                   camera_direction(&app->camera)) :
@@ -629,9 +632,10 @@ static VoxelHit update_world(GuiApp *app)
         if (hit.hit && !shift &&
             target == BLOCK_BARREL) {
             open_barrel(app, hit.pos);
-        } else if (hit.hit && !shift && target == BLOCK_HOPPER) {
-            app->hopper_pos = hit.pos;
-            app->screen = GUI_HOPPER;
+        } else if (hit.hit && !shift &&
+                   (target == BLOCK_HOPPER || target == BLOCK_DROPPER)) {
+            app->container_pos = hit.pos;
+            app->screen = target == BLOCK_HOPPER ? GUI_HOPPER : GUI_DROPPER;
             release_mouse(app);
         } else if (hit.hit && !shift && target == BLOCK_REDSTONE_WIRE) {
             RsResult result = world_toggle_wire_dot(world, hit.pos);
@@ -656,7 +660,7 @@ static VoxelHit update_world(GuiApp *app)
         } else {
             if (hotbar_selected(&app->hotbar).kind == INVENTORY_ITEM)
                 snprintf(app->message, sizeof(app->message),
-                         "Open a hopper or barrel to store items");
+                         "Open a hopper, dropper or barrel to store items");
             else apply_edit(app, hit, selected, true, facing);
         }
     }
@@ -768,7 +772,7 @@ static void update_barrel(GuiApp *app)
         return;
     }
 
-    ContainerLayout layout = container_layout(true);
+    ContainerLayout layout = container_layout(BLOCK_BARREL);
     update_container_slots(app, app->barrel_pos, layout);
     int level = -1;
     state = world_get(world, app->barrel_pos);
@@ -795,29 +799,32 @@ static void update_barrel(GuiApp *app)
     advance_simulation(app);
 }
 
-static void update_hopper(GuiApp *app)
+static void update_container(GuiApp *app)
 {
     World *world = game_session_world(app->session);
-    if (world_get(world, app->hopper_pos).id != BLOCK_HOPPER ||
+    BlockId id = app->screen == GUI_DROPPER ? BLOCK_DROPPER : BLOCK_HOPPER;
+    if (world_get(world, app->container_pos).id != id ||
         IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ESCAPE)) {
         app->screen = GUI_WORLD;
         capture_mouse(app);
         return;
     }
-    update_container_slots(app, app->hopper_pos, container_layout(false));
+    update_container_slots(app, app->container_pos, container_layout(id));
     advance_simulation(app);
 }
 
-static void draw_container(const GuiApp *app, bool barrel)
+static void draw_container(const GuiApp *app, BlockId id)
 {
+    bool barrel = id == BLOCK_BARREL;
     World *world = game_session_world(app->session);
-    BlockPos pos = barrel ? app->barrel_pos : app->hopper_pos;
-    ContainerLayout layout = container_layout(barrel);
+    BlockPos pos = barrel ? app->barrel_pos : app->container_pos;
+    ContainerLayout layout = container_layout(id);
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
                   (Color){10, 18, 20, 155});
     DrawRectangleRec(layout.panel, (Color){226, 218, 196, 250});
     DrawRectangleLinesEx(layout.panel, 3.0f, (Color){73, 48, 24, 255});
-    draw_centered(barrel ? "BARREL" : "HOPPER", (int)layout.panel.y + 18,
+    draw_centered(barrel ? "BARREL" : id == BLOCK_HOPPER ? "HOPPER" : "DROPPER",
+                  (int)layout.panel.y + 18,
                   26, (Color){73, 48, 24, 255});
     BlockState state = world_get(world, pos);
     int level = barrel && state.id == BLOCK_BARREL ? state.data.barrel.level : 0;
@@ -1055,7 +1062,8 @@ int gui_run(void)
         else if (app.screen == GUI_WORLD) hit = update_world(&app);
         else if (app.screen == GUI_INVENTORY) update_inventory(&app);
         else if (app.screen == GUI_BARREL) update_barrel(&app);
-        else if (app.screen == GUI_HOPPER) update_hopper(&app);
+        else if (app.screen == GUI_HOPPER || app.screen == GUI_DROPPER)
+            update_container(&app);
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
@@ -1075,8 +1083,9 @@ int gui_run(void)
                                hotbar_selected(&app.hotbar));
                 hotbar_draw(&app.hotbar, &app.inventory);
             }
-            if (app.screen == GUI_BARREL) draw_container(&app, true);
-            if (app.screen == GUI_HOPPER) draw_container(&app, false);
+            if (app.screen == GUI_BARREL) draw_container(&app, BLOCK_BARREL);
+            if (app.screen == GUI_HOPPER) draw_container(&app, BLOCK_HOPPER);
+            if (app.screen == GUI_DROPPER) draw_container(&app, BLOCK_DROPPER);
             if (app.screen == GUI_PAUSE) draw_pause(&app);
         }
         EndDrawing();

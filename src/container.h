@@ -14,15 +14,18 @@ typedef struct {
     PosMap positions;
     ContainerRuntime *items; /* In block-entity insertion order. */
     size_t count, capacity;
+    uint64_t dropper_random;
 } ContainerTable;
 
 bool container_is_block(BlockId id);
+size_t container_slot_count(BlockId id);
 ContainerRuntime *container_runtime(const World *world, BlockPos pos);
 bool container_attach(World *world, BlockPos pos, BlockState state);
 void container_forget(World *world, BlockPos pos);
 void container_destroy(World *world);
 void container_sync_hopper(World *world, BlockPos pos, BlockState state);
 void container_step(World *world);
+void container_dispense(World *world, BlockPos pos);
 uint8_t container_level(const ContainerRuntime *container);
 bool container_stack_valid(ContainerStack stack);
 bool container_chunk_pinned(const World *world, BlockPos chunk);

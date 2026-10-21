@@ -14,7 +14,7 @@ typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
     COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_CAPACITY,
     COMMAND_HIT, COMMAND_SLOT, COMMAND_SLOTS, COMMAND_TICK, COMMAND_STATS,
-    COMMAND_QUIT
+    COMMAND_DROPPER_SEED, COMMAND_QUIT
 } CommandKind;
 
 typedef struct {
@@ -27,6 +27,7 @@ typedef struct {
     bool persistent_projectile;
     uint32_t slot;
     ContainerStack stack;
+    uint64_t seed;
 } Command;
 
 static const char *const direction_names[DIR_COUNT] = {
@@ -144,6 +145,18 @@ static bool parse_barrel_level(const char *text, uint32_t *level)
     return parse_ticks(text, level) && *level <= 15;
 }
 
+static bool parse_seed(const char *text, uint64_t *seed)
+{
+    if (*text == '-') return false;
+    errno = 0;
+    char *end = NULL;
+    uintmax_t parsed = strtoumax(text, &end, 10);
+    if (errno == ERANGE || end == text || *end || parsed > UINT64_MAX)
+        return false;
+    *seed = (uint64_t)parsed;
+    return true;
+}
+
 static bool parse_hit_coordinate(const char *text, double *value)
 {
     errno = 0;
@@ -169,6 +182,9 @@ static bool parse_command(char *tokens[], int count, Command *command)
     } else if (strcmp(name, "tick") == 0 && (count == 1 || count == 2)) {
         command->kind = COMMAND_TICK;
         return count == 1 || parse_ticks(tokens[1], &command->ticks);
+    } else if (strcmp(name, "dropper-seed") == 0 && count == 2) {
+        command->kind = COMMAND_DROPPER_SEED;
+        return parse_seed(tokens[1], &command->seed);
     } else if (strcmp(name, "place") == 0 && (count == 5 || count == 6)) {
         command->kind = COMMAND_PLACE;
         bool valid = parse_position(tokens, &command->position) &&
@@ -181,6 +197,7 @@ static bool parse_command(char *tokens[], int count, Command *command)
              command->block == BLOCK_ACTIVATOR_RAIL ||
              command->block == BLOCK_OBSERVER ||
              command->block == BLOCK_BARREL ||
+             command->block == BLOCK_DROPPER ||
              block_is_piston_base(command->block)))
             command->support = DIR_NORTH;
         return valid;
@@ -237,13 +254,14 @@ static void print_help(FILE *output)
           "mode X Y Z\ncapacity X Y Z LEVEL\n"
           "slots X Y Z\nslot X Y Z INDEX ITEM COUNT LIMIT (zero based; 0 0 0 clears)\n"
           "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
+          "dropper-seed SEED\n"
           "tick [COUNT]\nstats\nhelp\nquit\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         fprintf(output, " %s", block_name(id));
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
           "Repeater/comparator/observer direction is output; piston direction is its front; barrel direction is its lid; rail direction is the texture top.\n"
-          "Observer, barrel and both piston types accept all six directions. Gates and rails are horizontal; default north.\n"
+          "Observer, barrel, dropper and both piston types accept all six directions. Gates and rails are horizontal; default north.\n"
           "Hopper direction is its outlet: down or horizontal; default down. Up maps to down.\n",
           output);
 }
@@ -323,6 +341,12 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 (unsigned)state.data.hopper.level,
                 (unsigned)world_hopper_cooldown(world, position));
         break;
+    case BLOCK_DROPPER:
+        fprintf(output, " facing=%s triggered=%s level=%u",
+                direction_names[state.data.dropper.facing],
+                state.data.dropper.triggered ? "yes" : "no",
+                (unsigned)state.data.dropper.level);
+        break;
     case BLOCK_IRON: {
         SolidPower power = redstone_solid_power(world, position);
         fprintf(output, " received=%u strong=%u", (unsigned)power.received,
@@ -390,6 +414,9 @@ static RsResult execute_command(World *world, const Command *command,
         return RS_OK;
     case COMMAND_PLACE:
         result = world_place(world, command->position, command->block, command->support);
+        break;
+    case COMMAND_DROPPER_SEED:
+        result = world_set_dropper_seed(world, command->seed);
         break;
     case COMMAND_REMOVE:
         result = world_remove(world, command->position);

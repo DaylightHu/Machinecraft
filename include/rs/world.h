@@ -27,7 +27,7 @@ bool world_in_bounds(const World *world, BlockPos pos);
 BlockState world_get(const World *world, BlockPos pos); /* Outside vertical/coordinate limits = air; reads may restore archived chunks. */
 /* direction is the supporting block relative to a torch; the output direction
  * for a repeater/comparator/observer; the push direction for a piston; the lid
- * direction for a barrel; the outlet for a hopper (vertical maps to down);
+ * direction for a barrel; the outlet for a dropper or hopper (hopper up maps to down);
  * and the texture-top direction for a rail. */
 RsResult world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
 RsResult world_remove(World *world, BlockPos pos);
@@ -35,7 +35,7 @@ RsResult world_toggle_wire_dot(World *world, BlockPos pos);
 RsResult world_cycle_repeater_delay(World *world, BlockPos pos);
 RsResult world_toggle_comparator_mode(World *world, BlockPos pos);
 RsResult world_set_barrel_level(World *world, BlockPos pos, uint8_t level);
-/* Five slots in a hopper, 27 in a barrel. Slot numbers are zero based.
+/* Five slots in a hopper, nine in a dropper, 27 in a barrel. Slots are zero based.
  * Empty stacks use {0,0,0}; nonempty stacks require count <= limit.
  * Identities supplied by the caller include any item/tag distinctions. */
 size_t world_container_size(const World *world, BlockPos pos);
@@ -44,6 +44,9 @@ RsResult world_get_container_slot(const World *world, BlockPos pos, size_t slot,
 RsResult world_set_container_slot(World *world, BlockPos pos, size_t slot,
                                   ContainerStack stack);
 uint8_t world_hopper_cooldown(const World *world, BlockPos pos);
+/* Java Random slot selection, shared by this world's droppers. Default seed 0;
+ * saved with the world. A non-container outlet discards the selected item. */
+RsResult world_set_dropper_seed(World *world, uint64_t seed);
 /* Inject a projectile impact without simulating entities. u/v are finite
  * coordinates in [0,1] on the struck face, with the bullseye at (0.5,0.5).
  * persistent_projectile means Java's AbstractArrow, including tridents:

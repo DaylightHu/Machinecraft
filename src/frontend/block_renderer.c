@@ -22,7 +22,12 @@ enum {
     TARGET_TILE = HONEY_TILE + 1,
     HOPPER_OUTSIDE_TILE = TARGET_TILE + 1,
     HOPPER_INSIDE_TILE = HOPPER_OUTSIDE_TILE + 1,
-    TILE_COUNT = HOPPER_INSIDE_TILE + 1
+    DROPPER_FRONT_TILE = HOPPER_INSIDE_TILE + 1,
+    DROPPER_BACK0_TILE = DROPPER_FRONT_TILE + 1,
+    DROPPER_BACK1_TILE = DROPPER_BACK0_TILE + 1,
+    DROPPER_SIDE0_TILE = DROPPER_BACK1_TILE + 1,
+    DROPPER_SIDE1_TILE = DROPPER_SIDE0_TILE + 1,
+    TILE_COUNT = DROPPER_SIDE1_TILE + 1
 };
 enum { OBSERVER_BACK, OBSERVER_FRONT, OBSERVER_SIDE, OBSERVER_TOP };
 enum {
@@ -166,7 +171,12 @@ static Image create_solid_atlas(void)
         "res/textures/block/honey_block.png",
         "res/textures/block/target_block.png",
         "res/textures/block/hopper_outside.png",
-        "res/textures/block/hopper_inside.png"
+        "res/textures/block/hopper_inside.png",
+        "res/textures/block/dropper_front.png",
+        "res/textures/block/dropper_back0.png",
+        "res/textures/block/dropper_back1.png",
+        "res/textures/block/dropper_side0.png",
+        "res/textures/block/dropper_side1.png"
     };
     Image sources[TILE_COUNT] = {0};
     Image atlas = {0};
@@ -744,6 +754,32 @@ static void barrel_face_uv(Texture2D atlas, BlockState state, int face,
                   uv);
 }
 
+static void dropper_face_uv(Texture2D atlas, BlockState state, int face,
+                            Vector2 uv[4])
+{
+    static const Direction directions[6] = {
+        DIR_SOUTH, DIR_NORTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN
+    };
+    static const Direction right[6] = {
+        DIR_EAST, DIR_WEST, DIR_NORTH, DIR_SOUTH, DIR_EAST, DIR_EAST
+    };
+    static const Direction down[6] = {
+        DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_DOWN, DIR_SOUTH, DIR_NORTH
+    };
+    Direction facing = (Direction)state.data.dropper.facing;
+    bool front = directions[face] == facing;
+    bool back = directions[face] == direction_opposite(facing);
+    int tile = front ? DROPPER_FRONT_TILE :
+               back ? DROPPER_BACK0_TILE + state.data.dropper.triggered :
+                      DROPPER_SIDE0_TILE + state.data.dropper.triggered;
+    Direction desired = front || back ?
+        (facing == DIR_UP ? DIR_NORTH : facing == DIR_DOWN ? DIR_SOUTH : DIR_DOWN) :
+        facing;
+    solid_tile_uv(atlas, tile,
+                  direction_turns(right[face], down[face], desired, front || back),
+                  uv);
+}
+
 static int piston_tile_first(BlockId id)
 {
     return id == BLOCK_STICKY_PISTON ||
@@ -1241,6 +1277,10 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
                 observer_face_uv(renderer->atlas, state, face, uv[count++]);
+    } else if (state.id == BLOCK_DROPPER) {
+        for (int face = 0; face < 6; ++face)
+            if (solid_faces & (1u << face))
+                dropper_face_uv(renderer->atlas, state, face, uv[count++]);
     } else if (state.id == BLOCK_BARREL) {
         for (int face = 0; face < 6; ++face)
             if (solid_faces & (1u << face))
@@ -1402,7 +1442,7 @@ void block_renderer_build_geometry(const BlockRenderer *renderer, BlockState sta
         state.id == BLOCK_GLASS || state.id == BLOCK_OBSERVER ||
         state.id == BLOCK_BARREL || state.id == BLOCK_SLIME ||
         state.id == BLOCK_NOTE_BLOCK || state.id == BLOCK_HONEY ||
-        state.id == BLOCK_TARGET) {
+        state.id == BLOCK_TARGET || state.id == BLOCK_DROPPER) {
         for (int face = 0; face < 6; ++face) {
             if (!(solid_faces & (1u << face))) continue;
             for (int vertex = 0; vertex < 4; ++vertex) {
