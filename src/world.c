@@ -44,11 +44,19 @@ static FILE *open_backing_file(void)
 }
 
 WorldConfig world_config_default(void) { return (WorldConfig){.ground_layers = 1}; }
-static void invalidate_reads(World *w)
+static void invalidate_reads(World *w, bool wire_properties_only)
 {
     if (!++w->read_stamp) {
         memset(w->reads, 0, sizeof(w->reads));
+        memset(w->wire_powers, 0, sizeof(w->wire_powers));
         w->read_stamp = 1;
+    }
+    /* SIGNAL_WITHOUT_WIRE cannot depend on dust power or arm properties.
+     * Keep these query results across dust-only writes, never across changes
+     * to an emitter, conductor, block type, or newly inserted chunk. */
+    if (!wire_properties_only && !++w->external_power_stamp) {
+        memset(w->wire_powers, 0, sizeof(w->wire_powers));
+        w->external_power_stamp = 1;
     }
 }
 static BlockPos chunk_key(BlockPos p) { return (BlockPos){floor_div16(p.x), 0, floor_div16(p.z)}; }
@@ -68,7 +76,7 @@ bool world_insert_chunk(World *w, Chunk *c)
     }
     if (!posmap_set(&w->chunk_map, c->key, w->chunk_count)) return false;
     w->chunks[w->chunk_count++] = c;
-    invalidate_reads(w);
+    invalidate_reads(w, false);
     if (c->resident) ++w->loaded_count;
     ++w->topology_revision; return true;
 }
@@ -143,6 +151,7 @@ World *world_create(WorldConfig config)
     if (!w) return NULL;
     w->config = config; w->view_radius = -1;
     w->read_stamp = 1;
+    w->external_power_stamp = 1;
     if (!sim_init_internal(w)) { world_destroy(w); return NULL; }
     return w;
 }
@@ -210,7 +219,8 @@ static bool world_write_state(World *w, BlockPos p, BlockState state,
         section_destroy(c->sections[section]); c->sections[section] = NULL; ++w->topology_revision;
     }
     c->modified = true; c->archive_size = 0; ++w->revision;
-    invalidate_reads(w);
+    invalidate_reads(w, previous.id == BLOCK_REDSTONE_WIRE &&
+                        state.id == BLOCK_REDSTONE_WIRE);
     if (w->observer) w->observer(w->observer_context, p, previous, state);
     return true;
 }

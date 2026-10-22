@@ -41,6 +41,8 @@ uint8_t power_direct(const World *, BlockPos, Direction, SignalMode);
 uint8_t power_received(const World *, BlockPos, SignalMode);
 uint8_t power_conducted(const World *, BlockPos, SignalMode);
 bool block_is_conductor(const World *, BlockPos);
+bool block_face_sturdy(BlockState, Direction);
+bool block_state_supports_wire(BlockState);
 bool block_supports_wire(const World *, BlockPos);
 bool block_supports_torch(const World *, BlockPos);
 bool block_is_diode(const World *, BlockPos);

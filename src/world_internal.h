@@ -10,6 +10,11 @@ typedef struct {
     BlockState state;
     uint64_t stamp;
 } WorldReadEntry;
+typedef struct {
+    BlockPos pos;
+    uint64_t stamp, external_stamp;
+    uint8_t power, external_power;
+} WirePowerEntry;
 struct World {
     WorldConfig config;
     PosMap chunk_map;
@@ -22,8 +27,9 @@ struct World {
     Simulator *sim;
     WorldChangeObserver observer;
     void *observer_context;
-    uint64_t read_stamp;
+    uint64_t read_stamp, external_power_stamp;
     WorldReadEntry reads[WORLD_READ_CACHE_SIZE];
+    WirePowerEntry wire_powers[WORLD_READ_CACHE_SIZE];
 };
 bool world_write_derived(World *world, BlockPos pos, BlockState state);
 enum { UPDATE_NEIGHBORS = 1, UPDATE_CLIENTS = 2, UPDATE_KNOWN_SHAPE = 16,

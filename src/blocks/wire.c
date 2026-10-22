@@ -47,7 +47,9 @@ size_t wire_neighbors(const World *world, BlockPos position, BlockPos output[12]
         }
         BlockPos above = block_offset(neighbor, DIR_UP);
         BlockPos below = block_offset(neighbor, DIR_DOWN);
-        if (can_ascend && block_supports_wire(world, neighbor) && is_wire(world, above)) {
+        /* Incoming power samples differ from the rendered arms: an arm can
+         * climb glass or a hopper, but its upper dust cannot feed this dust. */
+        if (can_ascend && block_is_conductor(world, neighbor) && is_wire(world, above)) {
             output[count++] = above;
         }
         if (!block_is_conductor(world, neighbor) && is_wire(world, below)) {
@@ -62,8 +64,9 @@ static unsigned connecting_side(const World *w, BlockPos p, Direction d, bool as
     BlockPos next = block_offset(p, d);
     BlockState state = world_get(w, next);
     const BlockDef *def = block_definition((BlockId)state.id);
-    if (ascend && def->supports_wire && is_wire(w, block_offset(next, DIR_UP)))
-        return def->full_cube ? 3u : 1u;
+    if (ascend && block_state_supports_wire(state) &&
+        is_wire(w, block_offset(next, DIR_UP)))
+        return block_face_sturdy(state, direction_opposite(d)) ? 3u : 1u;
     return connects(state, d) || (!def->conductor &&
            is_wire(w, block_offset(next, DIR_DOWN))) ? 1u : 0u;
 }

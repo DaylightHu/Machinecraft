@@ -12,10 +12,10 @@ static uint8_t dust(const World *w, BlockPos p)
     return s.id == BLOCK_REDSTONE_WIRE ? s.data.wire.power : 0;
 }
 
-static uint8_t target_strength(const World *w, BlockPos p)
+static uint8_t calculate_strength(const World *w, BlockPos p, uint8_t external)
 {
-    uint8_t external = wire_external_power(w, p), adjacent = 0;
     if (external == 15) return 15;
+    uint8_t adjacent = 0;
     bool ceiling = block_is_conductor(w, block_offset(p, DIR_UP));
     for (unsigned i = 0; i < 4; ++i) {
         BlockPos next = block_offset(p, horizontal[i]);
@@ -30,6 +30,26 @@ static uint8_t target_strength(const World *w, BlockPos p)
     }
     if (adjacent) --adjacent;
     return external > adjacent ? external : adjacent;
+}
+
+static uint8_t target_strength(World *w, BlockPos p)
+{
+    uint32_t hash = (uint32_t)p.x*0x9e3779b1u ^ (uint32_t)p.y*0x85ebca6bu ^
+                    (uint32_t)p.z*0xc2b2ae35u;
+    WirePowerEntry *entry = &w->wire_powers[hash & (WORLD_READ_CACHE_SIZE - 1)];
+    /* Repeated notifications still execute in vanilla order. Only the pure
+     * strength query is memoized; every stored-state write or chunk insertion
+     * invalidates it before any callbacks, using the world read epoch. */
+    if (entry->stamp == w->read_stamp && pos_equal(entry->pos, p))
+        return entry->power;
+    uint8_t external = entry->external_stamp == w->external_power_stamp &&
+                       pos_equal(entry->pos, p) ? entry->external_power :
+                       wire_external_power(w, p);
+    uint8_t power = calculate_strength(w, p, external);
+    if (w->sim->error == RS_OK)
+        *entry = (WirePowerEntry){p, w->read_stamp, w->external_power_stamp,
+                                 power, external};
+    return power;
 }
 
 static unsigned bucket(BlockPos p)

@@ -58,9 +58,27 @@ bool block_is_conductor(const World *world, BlockPos position)
     return block_definition((BlockId)world_get(world, position).id)->conductor;
 }
 
+bool block_face_sturdy(BlockState state, Direction face)
+{
+    if ((unsigned)face >= DIR_COUNT) return false;
+    if (block_is_piston_base((BlockId)state.id) && state.data.piston.extended)
+        return face == direction_opposite((Direction)state.data.piston.facing);
+    if (block_is_piston_head((BlockId)state.id))
+        return face == (Direction)state.data.piston.facing;
+    return block_definition((BlockId)state.id)->full_cube;
+}
+
+bool block_state_supports_wire(BlockState state)
+{
+    /* RedStoneWireBlock.canSurviveOn uses a full top face, with the hopper
+     * as an explicit exception. Extended pistons and heads have one full
+     * face each; neither is an unconditional full cube. */
+    return state.id == BLOCK_HOPPER || block_face_sturdy(state, DIR_UP);
+}
+
 bool block_supports_wire(const World *world, BlockPos position)
 {
-    return block_definition((BlockId)world_get(world, position).id)->supports_wire;
+    return block_state_supports_wire(world_get(world, position));
 }
 
 bool block_supports_torch(const World *world, BlockPos position)
