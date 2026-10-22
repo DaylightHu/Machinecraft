@@ -38,10 +38,10 @@ enum {
 };
 enum { BARREL_SIDE, BARREL_TOP, BARREL_TOP_OPEN };
 enum {
-    WIRE_SHAPES = 16, WIRE_STATES = 2,
+    WIRE_SHAPES = 16, WIRE_STATES = 16,
     WIRE_SIDE_FIRST = WIRE_SHAPES*WIRE_STATES,
     WIRE_TILES = WIRE_SIDE_FIRST + WIRE_STATES,
-    WIRE_COLUMNS = 8,
+    WIRE_COLUMNS = 16,
     WIRE_ROWS = (WIRE_TILES + WIRE_COLUMNS - 1)/WIRE_COLUMNS
 };
 enum {
@@ -211,6 +211,38 @@ static Rectangle wire_tile_rectangle(int tile)
                        (tile/WIRE_COLUMNS)*TILE_SIZE, TILE_SIZE, TILE_SIZE};
 }
 
+static Color wire_color(int power)
+{
+    /* RedStoneWireBlock's color curve. Power changes need no per-frame image
+     * processing: all sixteen levels are baked into the atlas once. */
+    float strength = power/15.0f;
+    float red = strength*0.6f + (power ? 0.4f : 0.3f);
+    float green = strength*strength*0.7f - 0.5f;
+    float blue = strength*strength*0.6f - 0.7f;
+    if (green < 0) green = 0;
+    if (blue < 0) blue = 0;
+    return (Color){(unsigned char)(red*255), (unsigned char)(green*255),
+                   (unsigned char)(blue*255), 255};
+}
+
+static bool wire_mask(Image *image)
+{
+    Color *pixels = LoadImageColors(*image);
+    if (!pixels) return false;
+    /* The supplied powered sprites are already red. Recover a neutral
+     * intensity mask so the color curve also supplies green/blue channels. */
+    for (int i = 0; i < image->width*image->height; ++i) {
+        unsigned char value = pixels[i].r;
+        if (pixels[i].g > value) value = pixels[i].g;
+        if (pixels[i].b > value) value = pixels[i].b;
+        pixels[i] = (Color){value, value, value, pixels[i].a};
+    }
+    UnloadImage(*image);
+    *image = (Image){pixels, TILE_SIZE, TILE_SIZE, 1,
+                     PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+    return true;
+}
+
 static Image create_wire_atlas(void)
 {
     static const char *const paths[] = {
@@ -231,11 +263,15 @@ static Image create_wire_atlas(void)
     for (int index = 0; index < 4; ++index) {
         sources[index] = load_tile(paths[index]);
         if (!sources[index].data) goto cleanup;
+        if ((index & 1) && !wire_mask(&sources[index])) goto cleanup;
     }
     atlas = GenImageColor(WIRE_COLUMNS*TILE_SIZE, WIRE_ROWS*TILE_SIZE, BLANK);
     if (!atlas.data) goto cleanup;
 
-    for (int powered = 0; powered < WIRE_STATES; ++powered) {
+    for (int power = 0; power < WIRE_STATES; ++power) {
+        int powered = power > 0;
+        /* Keep the authored unpowered texture; tint the neutral powered mask. */
+        Color tint = powered ? wire_color(power) : WHITE;
         for (int direction = 0; direction < 4; ++direction) {
             arms[direction] = ImageCopy(sources[2 + powered]);
             if (!arms[direction].data) goto cleanup;
@@ -243,21 +279,21 @@ static Image create_wire_atlas(void)
                 ImageRotateCW(&arms[direction]);
         }
         for (int mask = 0; mask < WIRE_SHAPES; ++mask) {
-            Rectangle destination = wire_tile_rectangle(powered*WIRE_SHAPES + mask);
+            Rectangle destination = wire_tile_rectangle(power*WIRE_SHAPES + mask);
             for (int direction = 0; direction < 4; ++direction) {
                 if (mask & (1 << direction))
-                    ImageDraw(&atlas, arms[direction], full, destination, WHITE);
+                    ImageDraw(&atlas, arms[direction], full, destination, tint);
             }
             /* Opposite pairs form straight lines without a center dot. */
             bool straight = (mask == 3 || mask == 12);
             if (!straight)
-                ImageDraw(&atlas, sources[powered], full, destination, WHITE);
+                ImageDraw(&atlas, sources[powered], full, destination, tint);
         }
 
         /* Climbing strips use a full line without a dot in the middle. */
-        Rectangle side = wire_tile_rectangle(WIRE_SIDE_FIRST + powered);
-        ImageDraw(&atlas, arms[2], full, side, WHITE);
-        ImageDraw(&atlas, arms[3], full, side, WHITE);
+        Rectangle side = wire_tile_rectangle(WIRE_SIDE_FIRST + power);
+        ImageDraw(&atlas, arms[2], full, side, tint);
+        ImageDraw(&atlas, arms[3], full, side, tint);
         for (int direction = 0; direction < 4; ++direction) {
             UnloadImage(arms[direction]);
             arms[direction] = (Image){0};
@@ -937,9 +973,9 @@ void block_renderer_draw_wire(const BlockRenderer *renderer, BlockState state,
         if (state.data.wire.connections & (1u << wire_directions[direction]))
             mask |= 1 << direction;
     }
-    int powered = state.data.wire.power > 0;
+    int power = state.data.wire.power;
     Vector2 uv[4];
-    wire_uv(renderer->wire_atlas, powered*WIRE_SHAPES + mask, uv);
+    wire_uv(renderer->wire_atlas, power*WIRE_SHAPES + mask, uv);
 
     rlCheckRenderBatchLimit(20);
     rlSetTexture(renderer->wire_atlas.id);
@@ -948,7 +984,7 @@ void block_renderer_draw_wire(const BlockRenderer *renderer, BlockState state,
     Vector3 top = {center.x, center.y - 1.0f + wire_offset, center.z};
     emit_wire_face(&cube_faces[4], top, uv, false);
 
-    wire_uv(renderer->wire_atlas, WIRE_SIDE_FIRST + powered, uv);
+    wire_uv(renderer->wire_atlas, WIRE_SIDE_FIRST + power, uv);
     static const int side_faces[] = {3, 2, 1, 0};
     static const Vector3 offsets[] = {{1,0,0}, {-1,0,0}, {0,0,1}, {0,0,-1}};
     for (int direction = 0; direction < 4; ++direction) {
@@ -1303,12 +1339,12 @@ int block_renderer_build_uv(const BlockRenderer *renderer, BlockState state,
         for (int direction = 0; direction < 4; ++direction)
             if (state.data.wire.connections & (1u << wire_directions[direction]))
                 mask |= 1 << direction;
-        int powered = state.data.wire.power > 0;
-        wire_uv(renderer->wire_atlas, powered*WIRE_SHAPES + mask, uv[count++]);
+        int power = state.data.wire.power;
+        wire_uv(renderer->wire_atlas, power*WIRE_SHAPES + mask, uv[count++]);
         for (int direction = 0; direction < 4; ++direction) {
             unsigned bit = 1u << wire_directions[direction];
             if (state.data.wire.up_connections & state.data.wire.connections & bit)
-                wire_uv(renderer->wire_atlas, WIRE_SIDE_FIRST + powered, uv[count++]);
+                wire_uv(renderer->wire_atlas, WIRE_SIDE_FIRST + power, uv[count++]);
         }
     } else if (state.id == BLOCK_REDSTONE_TORCH) {
         int lit = state.data.torch.lit ? 1 : 0;

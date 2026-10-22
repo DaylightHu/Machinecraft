@@ -137,7 +137,7 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
     if (old_part == new_part && new_part == DUST) {
         geometry = wire_sides(before) != wire_sides(after);
         visual = geometry || before.data.wire.connections != after.data.wire.connections ||
-                 (before.data.wire.power > 0) != (after.data.wire.power > 0);
+                 before.data.wire.power != after.data.wire.power;
     } else if (old_part == new_part && new_part == TORCHES) {
         geometry = before.data.torch.support_dir != after.data.torch.support_dir;
         visual = geometry || before.data.torch.lit != after.data.torch.lit;
