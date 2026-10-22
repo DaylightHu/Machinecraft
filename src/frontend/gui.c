@@ -669,7 +669,7 @@ static VoxelHit update_world(GuiApp *app)
         BlockId picked = pickable_block(
             (BlockId)world_get(world, hit.pos).id);
         if (picked != BLOCK_AIR &&
-            hotbar_set_selected_block(&app->hotbar, picked)) {
+            hotbar_pick_block(&app->hotbar, picked)) {
             snprintf(app->message, sizeof(app->message),
                      "Hotbar slot %d: %s", app->hotbar.selected_slot + 1,
                      block_name(picked));

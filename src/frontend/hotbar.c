@@ -115,6 +115,21 @@ bool hotbar_set_selected_block(Hotbar *hotbar, BlockId id)
     });
 }
 
+bool hotbar_pick_block(Hotbar *hotbar, BlockId id)
+{
+    if (!hotbar || id <= BLOCK_AIR || id >= BLOCK_INTERNAL_FIRST)
+        return false;
+
+    for (int slot = 0; slot < HOTBAR_SLOT_COUNT; ++slot) {
+        InventorySlot contents = hotbar->slots[slot];
+        if (contents.kind == INVENTORY_BLOCK && contents.block == id) {
+            hotbar->selected_slot = slot;
+            return true;
+        }
+    }
+    return hotbar_set_selected_block(hotbar, id);
+}
+
 bool hotbar_pick(Hotbar *hotbar, InventorySlot picked)
 {
     InventorySlot selected = hotbar_selected(hotbar);
