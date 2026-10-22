@@ -1,89 +1,132 @@
 #include "wire_solver.h"
 #include "sim_internal.h"
-#include <stdlib.h>
 
-enum { POWER_LEVELS = 16, MAX_WIRE_NEIGHBORS = 12 };
-typedef struct { BlockPos pos; size_t next, previous; uint8_t power; } WireNode;
-typedef struct { WireNode *nodes; size_t count, capacity; PosMap visited; } WireWork;
-static bool add_node(WireWork *work, BlockPos p)
+static const Direction horizontal[] = {DIR_NORTH, DIR_EAST, DIR_SOUTH, DIR_WEST};
+static const Direction values[] = {
+    DIR_DOWN, DIR_UP, DIR_NORTH, DIR_SOUTH, DIR_WEST, DIR_EAST
+};
+
+static uint8_t dust(const World *w, BlockPos p)
 {
-    if (work->count == work->capacity) {
-        size_t capacity = work->capacity ? work->capacity * 2 : 64;
-        if (capacity < work->capacity || capacity > SIZE_MAX / sizeof(WireNode)) return false;
-        WireNode *next = realloc(work->nodes, capacity * sizeof(WireNode));
-        if (!next) return false;
-        work->nodes = next; work->capacity = capacity;
-    }
-    if (!posmap_set(&work->visited, p, work->count)) return false;
-    work->nodes[work->count++] = (WireNode){p, SIZE_MAX, SIZE_MAX, 0}; return true;
+    BlockState s = world_get(w, p);
+    return s.id == BLOCK_REDSTONE_WIRE ? s.data.wire.power : 0;
 }
-static void bucket_remove(WireWork *w, size_t heads[16], size_t i)
+
+static uint8_t target_strength(const World *w, BlockPos p)
 {
-    WireNode *n = &w->nodes[i];
-    if (n->previous == SIZE_MAX) heads[n->power] = n->next;
-    else w->nodes[n->previous].next = n->next;
-    if (n->next != SIZE_MAX) w->nodes[n->next].previous = n->previous;
-    n->next = n->previous = SIZE_MAX;
-}
-static void bucket_insert(WireWork *w, size_t heads[16], size_t i)
-{
-    WireNode *n = &w->nodes[i]; n->previous = SIZE_MAX; n->next = heads[n->power];
-    if (n->next != SIZE_MAX) w->nodes[n->next].previous = i;
-    heads[n->power] = i;
-}
-static bool solve(World *world, WireWork *w, BlockPos root)
-{
-    size_t start = w->count;
-    if (!add_node(w, root)) return false;
-    for (size_t cursor = start; cursor < w->count; ++cursor) {
-        BlockPos neighbors[MAX_WIRE_NEIGHBORS];
-        size_t count = wire_neighbors(world, w->nodes[cursor].pos, neighbors);
-        for (size_t i = 0; i < count; ++i)
-            if (!posmap_get(&w->visited, neighbors[i], NULL) && !add_node(w, neighbors[i])) return false;
+    uint8_t external = wire_external_power(w, p), adjacent = 0;
+    if (external == 15) return 15;
+    bool ceiling = block_is_conductor(w, block_offset(p, DIR_UP));
+    for (unsigned i = 0; i < 4; ++i) {
+        BlockPos next = block_offset(p, horizontal[i]);
+        BlockState neighbor = world_get(w, next);
+        uint8_t level = neighbor.id == BLOCK_REDSTONE_WIRE ? neighbor.data.wire.power : 0;
+        if (level > adjacent) adjacent = level;
+        bool solid = block_definition((BlockId)neighbor.id)->conductor;
+        if (solid && !ceiling) level = dust(w, block_offset(next, DIR_UP));
+        else if (!solid) level = dust(w, block_offset(next, DIR_DOWN));
+        else level = 0;
+        if (level > adjacent) adjacent = level;
     }
-    ++world->sim->stats.components_solved;
-    world->sim->stats.wires_visited += w->count - start;
-    size_t heads[POWER_LEVELS];
-    for (unsigned i = 0; i < POWER_LEVELS; ++i) heads[i] = SIZE_MAX;
-    for (size_t i = start; i < w->count; ++i) {
-        w->nodes[i].power = wire_external_power(world, w->nodes[i].pos);
-        if (w->nodes[i].power) bucket_insert(w, heads, i);
+    if (adjacent) --adjacent;
+    return external > adjacent ? external : adjacent;
+}
+
+static unsigned bucket(BlockPos p)
+{
+    /* Vec3i.hashCode and Java 8 HashMap's spread, default capacity 16.
+     * Seven distinct positions never resize or treeify the HashSet. */
+    uint32_t hash = ((uint32_t)p.y + (uint32_t)p.z*31u)*31u + (uint32_t)p.x;
+    return (hash ^ (hash >> 16)) & 15u;
+}
+
+static void power_neighbors(World *w, BlockPos pos)
+{
+    BlockPos centers[7] = {pos};
+    unsigned char buckets[7];
+    for (unsigned i = 0; i < DIR_COUNT; ++i)
+        centers[i + 1] = block_offset(pos, values[i]);
+    for (unsigned i = 0; i < 7; ++i) buckets[i] = (unsigned char)bucket(centers[i]);
+    /* Stable insertion sort retains insertion order inside each hash bucket.
+     * This reproduces the vanilla set order without allocating a HashSet. */
+    for (unsigned i = 1; i < 7; ++i) {
+        BlockPos p = centers[i];
+        unsigned j = i;
+        unsigned char key = buckets[i];
+        while (j && buckets[j - 1] > key) {
+            centers[j] = centers[j - 1];
+            buckets[j] = buckets[j - 1];
+            --j;
+        }
+        centers[j] = p;
+        buckets[j] = key;
     }
-    for (int level = 15; level > 0; --level) while (heads[level] != SIZE_MAX) {
-        size_t index = heads[level]; bucket_remove(w, heads, index);
-        if (level == 1) continue;
-        BlockPos neighbors[MAX_WIRE_NEIGHBORS];
-        size_t count = wire_neighbors(world, w->nodes[index].pos, neighbors);
-        for (size_t i = 0; i < count; ++i) {
-            /* Keep the component graph undirected, but make power flow match
-             * Java Edition: dust supported by glass or another non-conductor
-             * cannot send power diagonally downward. It can still receive
-             * power from the lower dust, so the same glass step works upward. */
-            if (neighbors[i].y < w->nodes[index].pos.y &&
-                !block_is_conductor(world,
-                    block_offset(w->nodes[index].pos, DIR_DOWN))) continue;
-            size_t next;
-            if (!posmap_get(&w->visited, neighbors[i], &next)) return false;
-            if (w->nodes[next].power >= level - 1) continue;
-            if (w->nodes[next].power) bucket_remove(w, heads, next);
-            w->nodes[next].power = (uint8_t)(level - 1); bucket_insert(w, heads, next);
+    for (unsigned i = 0; i < 7; ++i)
+        sim_update_neighbors_at(w, centers[i], DIR_COUNT);
+}
+
+void wire_update_power(World *w, BlockPos pos, BlockState previous)
+{
+    ++w->sim->stats.wires_visited;
+    uint8_t power = target_strength(w, pos);
+    if (previous.data.wire.power == power) return;
+    if (block_states_equal(world_get(w, pos), previous)) {
+        BlockState state = previous;
+        state.data.wire.power = power;
+        if (!world_set_block(w, pos, state, 2)) return;
+        ++w->sim->stats.wire_changes;
+    }
+    power_neighbors(w, pos);
+}
+
+static void corner_change(World *w, BlockPos p)
+{
+    if (world_get(w, p).id != BLOCK_REDSTONE_WIRE) return;
+    sim_update_neighbors_at(w, p, DIR_COUNT);
+    for (unsigned i = 0; i < DIR_COUNT; ++i)
+        sim_update_neighbors_at(w, block_offset(p, values[i]), DIR_COUNT);
+}
+
+static void neighboring_wires(World *w, BlockPos p)
+{
+    for (unsigned i = 0; i < 4; ++i)
+        corner_change(w, block_offset(p, horizontal[i]));
+    for (unsigned i = 0; i < 4; ++i) {
+        BlockPos n = block_offset(p, horizontal[i]);
+        corner_change(w, block_offset(n, block_is_conductor(w, n) ? DIR_UP : DIR_DOWN));
+    }
+}
+
+void wire_on_place(World *w, BlockPos p, BlockState state)
+{
+    wire_update_power(w, p, state);
+    sim_update_neighbors_at(w, block_offset(p, DIR_UP), DIR_COUNT);
+    sim_update_neighbors_at(w, block_offset(p, DIR_DOWN), DIR_COUNT);
+    neighboring_wires(w, p);
+}
+
+void wire_on_remove(World *w, BlockPos p, BlockState previous)
+{
+    for (unsigned i = 0; i < DIR_COUNT; ++i)
+        sim_update_neighbors_at(w, block_offset(p, values[i]), DIR_COUNT);
+    wire_update_power(w, p, previous);
+    neighboring_wires(w, p);
+}
+
+void wire_indirect_shapes(World *w, BlockPos p, BlockState state,
+                           unsigned flags, unsigned limit)
+{
+    for (unsigned i = 0; i < 4; ++i) {
+        Direction d = horizontal[i];
+        BlockPos n = block_offset(p, d);
+        if (!(state.data.wire.connections & (1u << d)) ||
+            world_get(w, n).id == BLOCK_REDSTONE_WIRE) continue;
+        const Direction vertical[] = {DIR_DOWN, DIR_UP};
+        for (unsigned j = 0; j < 2; ++j) {
+            BlockPos target = block_offset(n, vertical[j]);
+            if (world_get(w, target).id == BLOCK_OBSERVER) continue;
+            Direction back = direction_opposite(d);
+            sim_update_shape_at(w, target, back, block_offset(target, back), flags, limit);
         }
     }
-    for (size_t i = start; i < w->count; ++i) {
-        WireNode *n = &w->nodes[i]; BlockState state = world_get(world, n->pos);
-        if (state.data.wire.power == n->power) continue;
-        state.data.wire.power = n->power;
-        if (!world_write_derived(world, n->pos, state)) return false;
-        ++world->sim->stats.wire_changes; sim_notify_power(world, n->pos);
-    }
-    return true;
-}
-void wire_solver_flush(World *world)
-{
-    WireWork work = {0}; BlockPos root;
-    while (queue_pop(&world->sim->wire_roots, &root)) {
-        if (world_get(world, root).id != BLOCK_REDSTONE_WIRE || posmap_get(&work.visited, root, NULL)) continue;
-        if (!solve(world, &work, root)) { if (world->sim->error == RS_OK) world->sim->error = RS_OUT_OF_MEMORY; break; }
-    }
-    free(work.nodes); posmap_destroy(&work.visited);
 }

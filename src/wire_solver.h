@@ -3,7 +3,10 @@
 
 #include "world_internal.h"
 
-/* Resolves only dirty wire components. Does not advance simulation time. */
-void wire_solver_flush(World *world);
+/* Synchronous vanilla dust updates, retaining intermediate observable values. */
+void wire_update_power(World *, BlockPos, BlockState);
+void wire_on_place(World *, BlockPos, BlockState);
+void wire_on_remove(World *, BlockPos, BlockState);
+void wire_indirect_shapes(World *, BlockPos, BlockState, unsigned, unsigned);
 
 #endif

@@ -99,8 +99,7 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
 {
     World *w = (World *)world;
     Simulator *s = w->sim;
-    if (s->error != RS_OK || s->dirty.count || s->wire_roots.count ||
-        s->rail_roots.count || s->input_roots.count ||
+    if (s->error != RS_OK || s->rail_roots.count || s->hold_updates || s->held_count ||
         s->scheduler.ticking_head != s->scheduler.ticking_count)
         return GAME_SESSION_SIMULATION_ERROR;
     size_t piston_count = s->piston_events.count - s->piston_events.head;

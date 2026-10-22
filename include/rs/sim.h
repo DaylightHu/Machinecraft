@@ -3,7 +3,8 @@
 #include "world.h"
 
 typedef struct {
-    uint64_t neighbor_checks, components_solved, wires_visited;
+    uint64_t neighbor_checks, components_solved; /* components: graph backend passes. */
+    uint64_t wires_visited; /* Individual dust-strength evaluations. */
     uint64_t wire_changes, rail_components_solved, rails_visited;
     uint64_t rail_changes, events_processed;
     size_t pending_events;
@@ -13,7 +14,8 @@ typedef struct {
     uint8_t strong;    /* Direct signal with ALL wire outputs suppressed. */
 } SolidPower;
 
-/* Edits mark work; flush performs zero-delay work without advancing time.
+/* Edits synchronously notify neighbors and update dust; flush drains pending
+ * rail work without advancing time.
  * step flushes edits, advances ONE game tick, then runs due events in
  * priority/insertion order from a frozen due batch, then piston block events,
  * then containers. flush does not execute piston block events or advance time.

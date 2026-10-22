@@ -51,7 +51,8 @@ RsResult world_set_dropper_seed(World *world, uint64_t seed);
  * coordinates in [0,1] on the struck face, with the bullseye at (0.5,0.5).
  * persistent_projectile means Java's AbstractArrow, including tridents:
  * true gives 20 game ticks; false gives 8. Hits during a pending pulse return
- * RS_UNCHANGED without changing its strength or expiry. Edits require flush. */
+ * RS_UNCHANGED without changing its strength or expiry. Neighbor and shape
+ * updates settle synchronously; flush drains any pending rail work. */
 RsResult world_hit_target(World *world, BlockPos pos, double u, double v,
                           bool persistent_projectile);
 uint64_t world_tick(const World *world);

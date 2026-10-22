@@ -62,21 +62,11 @@ static PushReaction piston_reaction(BlockState state)
     return block_definition(id)->push_reaction;
 }
 
-static void piston_reinitialize_moved_block(World *world, BlockPos position,
-                                             BlockState state)
-{
-    if (state.id == BLOCK_OBSERVER && state.data.observer.powered)
-        sim_schedule(world, position, 2);
-    if (block_is_piston_base((BlockId)state.id))
-        sim_mark_input(world, position);
-}
-
 static bool piston_write_cell(World *world, BlockPos position,
                               BlockState state)
 {
     sim_forget_cell(world, position);
-    if (!world_write_derived(world, position, state)) return false;
-    sim_notify_change(world, position);
+    if (!world_set_block(world, position, state, 3 | UPDATE_MOVING)) return false;
     return true;
 }
 
@@ -319,7 +309,6 @@ static bool piston_move_blocks(World *world, BlockPos position,
         if (!piston_write_cell(world, destination, state)) return false;
         if (!piston_write_cell(world, source, block_default(BLOCK_AIR)))
             return false;
-        piston_reinitialize_moved_block(world, destination, state);
     }
 
     if (pushed_block) *pushed_block = resolver.push_count != 0;
@@ -347,8 +336,7 @@ static bool piston_set_extended(World *world, BlockPos position,
         head.data.piston.powered = state.data.piston.powered;
         if (!piston_write_cell(world, head_position, head)) return false;
         state.data.piston.extended = true;
-        if (!world_write_derived(world, position, state)) return false;
-        sim_notify_change(world, position);
+        if (!world_set_block(world, position, state, 3 | UPDATE_MOVING)) return false;
         if (pushed_block) *pushed_block = moved_block;
         return true;
     }
@@ -374,8 +362,7 @@ static bool piston_set_extended(World *world, BlockPos position,
         }
     }
     state.data.piston.extended = false;
-    if (!world_write_derived(world, position, state)) return false;
-    sim_notify_change(world, position);
+    if (!world_set_block(world, position, state, 3 | UPDATE_MOVING)) return false;
     return true;
 }
 
@@ -445,13 +432,17 @@ void piston_trigger_event(World *world, PistonEvent event)
     if (event.type == 0) {
         if (!powered) return;
         bool pushed_block = false;
+        sim_begin_updates(world);
         if (piston_set_extended(world, event.pos, state, true, false, &pushed_block) &&
             pushed_block)
             sim_schedule(world, event.pos, PISTON_MOTION_TICKS);
+        sim_end_updates(world);
     } else {
         if (powered) return;
         sim_cancel(world, event.pos);
+        sim_begin_updates(world);
         (void)piston_set_extended(world, event.pos, state, false, event.type == 1, NULL);
+        sim_end_updates(world);
     }
 }
 
@@ -468,10 +459,10 @@ static void piston_head_neighbor_changed(World *world, BlockPos position)
     BlockPos base_position = block_offset(position,
                                            direction_opposite(facing));
     BlockState base = world_get(world, base_position);
-    if (!block_piston_pair((BlockId)base.id, (BlockId)head.id) ||
-        !base.data.piston.extended ||
-        base.data.piston.facing != head.data.piston.facing)
-        world_remove_internal(world, position);
+    if (block_piston_pair((BlockId)base.id, (BlockId)head.id) &&
+        base.data.piston.extended &&
+        base.data.piston.facing == head.data.piston.facing)
+        sim_mark_input(world, base_position);
 }
 
 static TickAction piston_motion_tick(World *world, BlockPos position)

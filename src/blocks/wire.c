@@ -6,16 +6,15 @@
 #define Z_CONNECTIONS ((uint8_t)(FACE_BIT(DIR_SOUTH) | FACE_BIT(DIR_NORTH)))
 #define HORIZONTAL_CONNECTIONS ((uint8_t)(X_CONNECTIONS | Z_CONNECTIONS))
 
-static const Direction horizontal_faces[] = {DIR_EAST, DIR_WEST, DIR_SOUTH, DIR_NORTH};
+static const Direction horizontal_faces[] = {DIR_NORTH, DIR_EAST, DIR_SOUTH, DIR_WEST};
 
 static bool is_wire(const World *world, BlockPos position)
 {
     return world_get(world, position).id == BLOCK_REDSTONE_WIRE;
 }
 
-static bool connects(const World *world, BlockPos position, Direction face)
+static bool connects(BlockState state, Direction face)
 {
-    BlockState state = world_get(world, position);
     if (state.id == BLOCK_REDSTONE_REPEATER) {
         Direction facing = (Direction)state.data.repeater.facing;
         return facing == face || facing == direction_opposite(face);
@@ -28,7 +27,7 @@ static bool connects(const World *world, BlockPos position, Direction face)
         return state.data.observer.facing == direction_opposite(face);
 
     return state.id == BLOCK_REDSTONE_WIRE ||
-           block_is_signal_source(world, position);
+           block_definition((BlockId)state.id)->signal_source;
 }
 
 bool wire_supported(const World *world, BlockPos position)
@@ -58,45 +57,64 @@ size_t wire_neighbors(const World *world, BlockPos position, BlockPos output[12]
     return count;
 }
 
-void wire_refresh_shape(World *world, BlockPos position)
+static unsigned connecting_side(const World *w, BlockPos p, Direction d, bool ascend)
 {
-    BlockState state = world_get(world, position);
-    uint8_t connections = 0;
-    uint8_t ascending = 0;
-    bool can_ascend = !block_is_conductor(world, block_offset(position, DIR_UP));
+    BlockPos next = block_offset(p, d);
+    BlockState state = world_get(w, next);
+    const BlockDef *def = block_definition((BlockId)state.id);
+    if (ascend && def->supports_wire && is_wire(w, block_offset(next, DIR_UP)))
+        return def->full_cube ? 3u : 1u;
+    return connects(state, d) || (!def->conductor &&
+           is_wire(w, block_offset(next, DIR_DOWN))) ? 1u : 0u;
+}
 
-    for (size_t cursor = 0; cursor < 4; ++cursor) {
-        Direction face = horizontal_faces[cursor];
-        BlockPos neighbor = block_offset(position, face);
-        if (can_ascend && block_supports_wire(world, neighbor) &&
-            is_wire(world, block_offset(neighbor, DIR_UP))) {
-            connections |= FACE_BIT(face);
-            if (world_get(world, neighbor).id != BLOCK_HOPPER)
-                ascending |= FACE_BIT(face);
-        } else if (connects(world, neighbor, face) ||
-                   (!block_is_conductor(world, neighbor) &&
-                    is_wire(world, block_offset(neighbor, DIR_DOWN)))) {
-            connections |= FACE_BIT(face);
-        }
+BlockState wire_connection_state(const World *w, BlockPos p, BlockState state)
+{
+    bool dot = state.data.wire.connections == 0;
+    bool ascend = !block_is_conductor(w, block_offset(p, DIR_UP));
+    uint8_t connections = 0, up = 0;
+    for (unsigned i = 0; i < 4; ++i) {
+        Direction d = horizontal_faces[i];
+        unsigned side = connecting_side(w, p, d, ascend);
+        if (side) connections |= FACE_BIT(d);
+        if (side == 3) up |= FACE_BIT(d);
     }
+    if (!dot || connections) {
+        bool no_x = !(connections & X_CONNECTIONS);
+        bool no_z = !(connections & Z_CONNECTIONS);
+        if (no_z) connections |= X_CONNECTIONS;
+        if (no_x) connections |= Z_CONNECTIONS;
+    }
+    state.data.wire.connections = connections;
+    state.data.wire.up_connections = up;
+    state.data.wire.prefer_dot = connections == 0;
+    return state;
+}
 
-    if (connections || !state.data.wire.prefer_dot) {
-        bool no_x_connection = !(connections & X_CONNECTIONS);
-        bool no_z_connection = !(connections & Z_CONNECTIONS);
-        if (no_z_connection) {
-            connections |= X_CONNECTIONS;
-        }
-        if (no_x_connection) {
-            connections |= Z_CONNECTIONS;
-        }
+BlockState wire_update_shape(const World *w, BlockPos p, BlockState state, Direction d)
+{
+    if (d == DIR_DOWN) return state;
+    if (d == DIR_UP) return wire_connection_state(w, p, state);
+    unsigned side = connecting_side(w, p, d,
+        !block_is_conductor(w, block_offset(p, DIR_UP)));
+    bool connected = (state.data.wire.connections & FACE_BIT(d)) != 0;
+    if (connected == (side != 0) && state.data.wire.connections != HORIZONTAL_CONNECTIONS) {
+        state.data.wire.connections &= (uint8_t)~FACE_BIT(d);
+        state.data.wire.up_connections &= (uint8_t)~FACE_BIT(d);
+        if (side) state.data.wire.connections |= FACE_BIT(d);
+        if (side == 3) state.data.wire.up_connections |= FACE_BIT(d);
+        state.data.wire.prefer_dot = state.data.wire.connections == 0;
+        return state;
     }
-    connections &= HORIZONTAL_CONNECTIONS;
-    if (connections != state.data.wire.connections || ascending != state.data.wire.up_connections) {
-        state.data.wire.connections = connections;
-        state.data.wire.up_connections = ascending;
-        world_write_derived(world, position, state);
-        sim_notify_power(world, position);
-    }
+    state.data.wire.connections = HORIZONTAL_CONNECTIONS;
+    return wire_connection_state(w, p, state);
+}
+
+void wire_refresh_shape(World *w, BlockPos p)
+{
+    BlockState state = world_get(w, p);
+    if (state.id == BLOCK_REDSTONE_WIRE)
+        (void)world_set_block(w, p, wire_connection_state(w, p, state), 2);
 }
 
 uint8_t wire_external_power(const World *world, BlockPos position)
@@ -113,7 +131,9 @@ static uint8_t wire_signal(const World *world, BlockPos position,
         return 0;
     }
     BlockState state = world_get(world, position);
-    bool connected = face == DIR_DOWN || (state.data.wire.connections & FACE_BIT(face));
+    if (!state.data.wire.power) return 0;
+    bool connected = face == DIR_DOWN ||
+        (wire_connection_state(world, position, state).data.wire.connections & FACE_BIT(face));
     return connected ? state.data.wire.power : 0;
 }
 
@@ -123,8 +143,7 @@ static void wire_neighbor(World *world, BlockPos position)
         world_remove_internal(world, position);
         return;
     }
-    wire_refresh_shape(world, position);
-    sim_mark_wire(world, position);
+    wire_update_power(world, position, world_get(world, position));
 }
 
 /* Both query forms are suppressed in SIGNAL_WITHOUT_WIRE mode. */

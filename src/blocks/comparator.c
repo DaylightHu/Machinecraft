@@ -73,7 +73,7 @@ static uint8_t comparator_side_input(const World *world, BlockPos position,
     return best;
 }
 
-static uint8_t comparator_desired_output(const World *world, BlockPos position,
+uint8_t comparator_desired_output(const World *world, BlockPos position,
                                          BlockState state)
 {
     uint8_t rear = comparator_rear_input(world, position, state);

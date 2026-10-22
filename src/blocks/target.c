@@ -40,8 +40,7 @@ RsResult world_hit_target(World *world, BlockPos position, double u, double v,
         return RS_UNCHANGED;
 
     state.data.target.power = target_hit_power(u, v);
-    if (!world_write_derived(world, position, state)) return world->sim->error;
-    sim_notify_change(world, position);
+    if (!world_set_block(world, position, state, 3)) return world->sim->error;
     sim_schedule(world, position, persistent_projectile ?
                  TARGET_ARROW_TICKS : TARGET_OTHER_TICKS);
     return world->sim->error;

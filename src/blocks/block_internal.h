@@ -1,6 +1,7 @@
 #ifndef RS_BLOCK_INTERNAL_H
 #define RS_BLOCK_INTERNAL_H
 #include "world_internal.h"
+#include "../wire_solver.h"
 typedef enum { SIGNAL_ALL, SIGNAL_WITHOUT_WIRE } SignalMode;
 typedef enum {
     PUSH_BLOCK = 0,
@@ -23,7 +24,7 @@ typedef struct {
     AnalogFn analog_output;
     NeighborFn neighbor_changed;
     ObservedFn observed_changed; /* A cell changed directly in the watched neighborhood. */
-    NeighborFn input_changed; /* Called after the zero-delay network settles. */
+    NeighborFn input_changed; /* Synchronous input sampling from a notification. */
     TickFn scheduled_tick;
 } BlockDef;
 const BlockDef *block_definition(BlockId id);
@@ -57,6 +58,10 @@ void rail_refresh_shape(World *, BlockPos);
 size_t wire_neighbors(const World *, BlockPos, BlockPos out[12]);
 uint8_t wire_external_power(const World *, BlockPos);
 void wire_refresh_shape(World *, BlockPos);
+BlockState wire_connection_state(const World *, BlockPos, BlockState);
+BlockState wire_update_shape(const World *, BlockPos, BlockState, Direction);
+bool repeater_is_locked(const World *, BlockPos, BlockState);
+uint8_t comparator_desired_output(const World *, BlockPos, BlockState);
 void torch_check_input(World *, BlockPos);
 void repeater_check_input(World *, BlockPos);
 void comparator_check_input(World *, BlockPos);

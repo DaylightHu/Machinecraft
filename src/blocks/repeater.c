@@ -26,7 +26,7 @@ static bool repeater_input_powered(const World *world, BlockPos position,
     return input.id == BLOCK_REDSTONE_WIRE && input.data.wire.power > 0;
 }
 
-static bool repeater_side_locked(const World *world, BlockPos position,
+bool repeater_is_locked(const World *world, BlockPos position,
                                  BlockState state)
 {
     Direction facing = (Direction)state.data.repeater.facing;
@@ -79,11 +79,7 @@ void repeater_check_input(World *world, BlockPos position)
     BlockState state = world_get(world, position);
     if (state.id != BLOCK_REDSTONE_REPEATER) return;
 
-    bool locked = repeater_side_locked(world, position, state);
-    if (state.data.repeater.locked != locked) {
-        state.data.repeater.locked = locked;
-        if (!world_write_derived(world, position, state)) return;
-    }
+    bool locked = repeater_is_locked(world, position, state);
     if (locked || sim_will_tick(world, position)) return;
 
     bool should_be_powered = repeater_input_powered(world, position, state);
@@ -112,32 +108,20 @@ static void repeater_neighbor(World *world, BlockPos position)
 static TickAction repeater_tick(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
-    TickAction action = {state, false, 0};
-    bool locked = repeater_side_locked(world, position, state);
-    if (state.data.repeater.locked != locked) {
-        action.state.data.repeater.locked = locked;
-        action.changed = true;
-    }
-    if (locked) return action;
-
+    if (repeater_is_locked(world, position, state))
+        return (TickAction){state, false, 0};
     bool input = repeater_input_powered(world, position, state);
     if (state.data.repeater.powered && !input) {
-        action.state.data.repeater.powered = false;
-        action.changed = true;
+        state.data.repeater.powered = false;
+        (void)world_set_block(world, position, state, 2);
     } else if (!state.data.repeater.powered) {
-        /* Vanilla repeaters preserve an input pulse shorter than their delay:
-         * the already scheduled tick turns the output on, then schedules the
-         * corresponding turn-off tick. */
-        action.state.data.repeater.powered = true;
-        action.changed = true;
-        if (!input) {
-            sim_schedule_priority(
-                world, position,
+        state.data.repeater.powered = true;
+        if (world_set_block(world, position, state, 2) && !input)
+            sim_schedule_priority(world, position,
                 (uint32_t)state.data.repeater.delay*REPEATER_DELAY_SCALE,
                 TICK_VERY_HIGH);
-        }
     }
-    return action;
+    return (TickAction){state, false, 0};
 }
 
 const BlockDef rs_repeater_def = {
