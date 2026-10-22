@@ -7,7 +7,7 @@ typedef struct {
     uint64_t wires_visited; /* Individual dust-strength evaluations. */
     uint64_t wire_changes, rail_components_solved, rails_visited;
     uint64_t rail_changes, events_processed;
-    size_t pending_events;
+    size_t pending_events; /* Scheduled ticks, block events and active motions. */
 } SimStats;
 typedef struct {
     uint8_t received;  /* Any incident signal, e.g. dust can turn off a torch. */
@@ -18,7 +18,8 @@ typedef struct {
  * rail work without advancing time.
  * step flushes edits, advances ONE game tick, then runs due events in
  * priority/insertion order from a frozen due batch, then piston block events,
- * then containers. flush does not execute piston block events or advance time.
+ * moving-piston block entities, and containers. flush does not execute these
+ * timed phases or advance time.
  * Each callback's zero-delay consequences settle before the next callback.
  * Torch delay = 2 game ticks (100 ms at 20 TPS). */
 RsResult sim_flush(World *world);

@@ -24,6 +24,20 @@ typedef struct {
 } PistonEvents;
 typedef struct {
     BlockPos pos;
+    BlockState moved_state;
+    uint64_t last_ticked;
+    uint8_t direction;
+    /* Half-step units: 0, 1, 2 are vanilla progress 0, 0.5, 1. */
+    uint8_t progress, previous_progress;
+    bool extending, source, used;
+} PistonMotion;
+typedef struct {
+    PistonMotion *items;
+    size_t count, active, capacity;
+    PosMap slots;
+} PistonMotions;
+typedef struct {
+    BlockPos pos;
     BlockState previous, current;
     unsigned flags, remaining_shapes;
 } StateChange;
@@ -31,6 +45,7 @@ struct Simulator {
     PositionQueue rail_roots;
     Scheduler scheduler;
     PistonEvents piston_events;
+    PistonMotions piston_motions;
     StateChange *held_changes;
     size_t held_count, held_capacity;
     unsigned hold_updates;
@@ -40,6 +55,7 @@ struct Simulator {
     size_t torch_used, torch_capacity, free_torch;
     SimStats stats;
     RsResult error;
+    bool handling_tick;
 };
 bool sim_init_internal(World *);
 void sim_destroy_internal(World *);
@@ -69,6 +85,12 @@ bool sim_has_scheduled_tick(const World *, BlockPos);
 bool sim_will_tick(const World *, BlockPos);
 bool sim_queue_piston_event(World *, PistonEvent);
 void piston_trigger_event(World *, PistonEvent);
+bool sim_prepare_piston_motions(World *, size_t additional);
+bool sim_add_piston_motion(World *, PistonMotion);
+const PistonMotion *sim_piston_motion(const World *, BlockPos);
+void sim_discard_piston_motion(World *, BlockPos);
+bool sim_finish_piston_motion(World *, BlockPos, bool forced);
+void sim_tick_piston_motions(World *);
 TorchRuntime *sim_torch_runtime(const World *, BlockPos);
 bool sim_chunk_pinned(const World *, BlockPos chunk);
 #endif

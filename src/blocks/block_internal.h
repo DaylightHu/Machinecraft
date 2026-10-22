@@ -33,6 +33,7 @@ extern const BlockDef rs_iron_def, rs_redstone_block_def, rs_wire_def, rs_torch_
                       rs_powered_rail_def, rs_activator_rail_def,
                       rs_observer_def, rs_piston_def, rs_sticky_piston_def,
                       rs_piston_head_def, rs_sticky_piston_head_def,
+                      rs_moving_piston_def,
                       rs_barrel_def, rs_slime_def, rs_note_block_def,
                       rs_honey_def, rs_target_def, rs_hopper_def, rs_dropper_def,
                       rs_lamp_def;

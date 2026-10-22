@@ -16,6 +16,7 @@ void block_outline_shape(BlockState state, BlockShape *shape)
     *shape = (BlockShape){0};
     switch ((BlockId)state.id) {
     case BLOCK_AIR: return;
+    case BLOCK_MOVING_PISTON: return;
     case BLOCK_REDSTONE_WIRE: {
         box(shape, 3, 0, 3, 13, 1, 13);
         static const Direction directions[] = {

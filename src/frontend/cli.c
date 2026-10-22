@@ -325,6 +325,21 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 state.data.piston.powered ? "yes" : "no",
                 direction_names[state.data.piston.facing]);
         break;
+    case BLOCK_MOVING_PISTON: {
+        WorldPistonMotion motion;
+        if (world_get_piston_motion(world, position, &motion))
+            fprintf(output,
+                    " payload=%s facing=%s extending=%s source=%s "
+                    "progress=%u/2 previous=%u/2 last_tick=%" PRIu64,
+                    block_name((BlockId)motion.moved_state.id),
+                    direction_names[motion.direction],
+                    motion.extending ? "yes" : "no",
+                    motion.source ? "yes" : "no",
+                    (unsigned)motion.progress,
+                    (unsigned)motion.previous_progress,
+                    motion.last_ticked);
+        break;
+    }
     case BLOCK_BARREL:
         fprintf(output, " capacity=%u facing=%s",
                 (unsigned)state.data.barrel.level,

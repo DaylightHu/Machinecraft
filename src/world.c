@@ -196,6 +196,23 @@ BlockState world_get(const World *w, BlockPos p)
     *entry = (WorldReadEntry){p, state, w->read_stamp};
     return state;
 }
+bool world_get_piston_motion(const World *w, BlockPos p,
+                             WorldPistonMotion *out)
+{
+    if (!w || !out) return false;
+    const PistonMotion *motion = sim_piston_motion(w, p);
+    if (!motion || world_get(w, p).id != BLOCK_MOVING_PISTON) return false;
+    *out = (WorldPistonMotion){
+        .moved_state = motion->moved_state,
+        .last_ticked = motion->last_ticked,
+        .direction = (Direction)motion->direction,
+        .progress = motion->progress,
+        .previous_progress = motion->previous_progress,
+        .extending = motion->extending,
+        .source = motion->source
+    };
+    return true;
+}
 static bool world_write_state(World *w, BlockPos p, BlockState state,
                                BlockState *before, bool *changed)
 {

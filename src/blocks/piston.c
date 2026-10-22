@@ -2,7 +2,6 @@
 #include "sim_internal.h"
 
 enum {
-    PISTON_MOTION_TICKS = 2,
     PISTON_PUSH_LIMIT = 12,
     PISTON_DESTROY_LIMIT = PISTON_PUSH_LIMIT*DIR_COUNT
 };
@@ -68,6 +67,23 @@ static bool piston_write_cell(World *world, BlockPos position,
     sim_forget_cell(world, position);
     if (!world_set_block(world, position, state, 3 | UPDATE_MOVING)) return false;
     return true;
+}
+
+static bool piston_start_motion(World *world, BlockPos position,
+                                BlockState moved_state, Direction direction,
+                                bool extending, bool source, bool sticky)
+{
+    BlockState placeholder = block_default(BLOCK_MOVING_PISTON);
+    placeholder.data.moving_piston.facing = (uint8_t)direction;
+    placeholder.data.moving_piston.sticky = sticky;
+    if (!piston_write_cell(world, position, placeholder)) return false;
+    return sim_add_piston_motion(world, (PistonMotion){
+        .pos = position,
+        .moved_state = moved_state,
+        .direction = (uint8_t)direction,
+        .extending = extending,
+        .source = source
+    });
 }
 
 static int piston_position_index(const BlockPos positions[], size_t count,
@@ -272,97 +288,126 @@ static bool piston_resolve(PistonResolver *resolver)
     return true;
 }
 
-static bool piston_move_blocks(World *world, BlockPos position,
-                               Direction facing, bool extending,
-                               bool *pushed_block)
+static bool piston_apply_resolved(PistonResolver *resolver)
 {
-    PistonResolver resolver = {
-        .world = world,
-        .piston_position = position,
-        .start_position = piston_offset(position, facing,
-                                        extending ? 1 : 2),
-        .piston_direction = facing,
-        .push_direction = extending ? facing : direction_opposite(facing),
-        .extending = extending
-    };
+    World *world = resolver->world;
     BlockState moving[PISTON_PUSH_LIMIT];
 
-    if (pushed_block) *pushed_block = false;
-    if (!piston_resolve(&resolver)) return false;
+    if (!sim_prepare_piston_motions(world, resolver->push_count)) return false;
 
-    for (size_t index = 0; index < resolver.push_count; ++index)
-        moving[index] = world_get(world, resolver.to_push[index]);
+    for (size_t index = 0; index < resolver->push_count; ++index)
+        moving[index] = world_get(world, resolver->to_push[index]);
 
-    for (size_t index = resolver.destroy_count; index > 0; --index) {
-        world_remove_internal(world, resolver.to_destroy[index - 1]);
+    for (size_t index = resolver->destroy_count; index > 0; --index) {
+        world_remove_internal(world, resolver->to_destroy[index - 1]);
         if (world->sim->error != RS_OK) return false;
     }
 
-    for (size_t index = resolver.push_count; index > 0; --index) {
-        BlockPos source = resolver.to_push[index - 1];
+    for (size_t index = resolver->push_count; index > 0; --index) {
+        BlockPos source = resolver->to_push[index - 1];
         BlockPos destination = block_offset(source,
-                                            resolver.push_direction);
+                                            resolver->push_direction);
         BlockState state = moving[index - 1];
         /* A moved target has no reset tick at its new position. Java 1.16.2
          * clears its projectile output when placing it there. */
         if (state.id == BLOCK_TARGET) state.data.target.power = 0;
-        if (!piston_write_cell(world, destination, state)) return false;
+        if (!piston_start_motion(world, destination, state,
+                                 resolver->piston_direction,
+                                 resolver->extending, false, false))
+            return false;
         if (!piston_write_cell(world, source, block_default(BLOCK_AIR)))
             return false;
     }
-
-    if (pushed_block) *pushed_block = resolver.push_count != 0;
     return true;
 }
 
-static bool piston_set_extended(World *world, BlockPos position,
-                                BlockState state, bool extended,
-                                bool pull_block, bool *pushed_block)
+static bool piston_extend(World *world, BlockPos position, BlockState state)
 {
     Direction facing = (Direction)state.data.piston.facing;
     BlockPos head_position = block_offset(position, facing);
     BlockId base_id = (BlockId)state.id;
     BlockId head_id = base_id == BLOCK_STICKY_PISTON ?
                       BLOCK_STICKY_PISTON_HEAD : BLOCK_PISTON_HEAD;
+    PistonResolver resolver = {
+        .world = world,
+        .piston_position = position,
+        .start_position = head_position,
+        .piston_direction = facing,
+        .push_direction = facing,
+        .extending = true
+    };
 
-    if (pushed_block) *pushed_block = false;
+    if (!piston_resolve(&resolver) ||
+        !sim_prepare_piston_motions(world, resolver.push_count + 1) ||
+        !piston_apply_resolved(&resolver))
+        return false;
+    BlockState head = block_default(head_id);
+    head.data.piston.facing = state.data.piston.facing;
+    head.data.piston.powered = state.data.piston.powered;
+    if (!piston_start_motion(world, head_position, head, facing, true, true,
+                             base_id == BLOCK_STICKY_PISTON))
+        return false;
+    state.data.piston.extended = true;
+    return world_set_block(world, position, state, 3 | UPDATE_MOVING);
+}
 
-    if (extended) {
-        bool moved_block = false;
-        if (!piston_move_blocks(world, position, facing, true,
-                                &moved_block)) return false;
-        BlockState head = block_default(head_id);
-        head.data.piston.facing = state.data.piston.facing;
-        head.data.piston.powered = state.data.piston.powered;
-        if (!piston_write_cell(world, head_position, head)) return false;
-        state.data.piston.extended = true;
-        if (!world_set_block(world, position, state, 3 | UPDATE_MOVING)) return false;
-        if (pushed_block) *pushed_block = moved_block;
-        return true;
-    }
+static bool piston_retract(World *world, BlockPos position, BlockState state,
+                           bool pull_block)
+{
+    Direction facing = (Direction)state.data.piston.facing;
+    BlockPos head_position = block_offset(position, facing);
+    BlockId base_id = (BlockId)state.id;
 
-    BlockState head = world_get(world, head_position);
-    bool had_head = block_piston_pair(base_id, (BlockId)head.id) &&
-                    head.data.piston.facing == state.data.piston.facing;
-    if (had_head) {
-        if (!piston_write_cell(world, head_position,
-                               block_default(BLOCK_AIR))) return false;
-    }
+    /* Retraction always creates a source moving piston, and can create up to
+     * twelve cargo motions. Reserve before the first observable write. */
+    if (!sim_prepare_piston_motions(world, PISTON_PUSH_LIMIT + 1)) return false;
 
-    if (base_id == BLOCK_STICKY_PISTON && had_head && pull_block) {
+    (void)sim_finish_piston_motion(world, head_position, true);
+    if (world->sim->error != RS_OK) return false;
+
+    state.data.piston.extended = false;
+    if (!piston_start_motion(world, position, state, facing, false, true,
+                             base_id == BLOCK_STICKY_PISTON))
+        return false;
+
+    if (base_id == BLOCK_STICKY_PISTON) {
         BlockPos source = block_offset(head_position, facing);
-        if (world_in_bounds(world, source)) {
-            BlockState pulled = world_get(world, source);
-            if (piston_reaction(pulled) == PUSH_NORMAL) {
-                if (!piston_move_blocks(world, position, facing, false,
-                                        NULL) &&
-                    world->sim->error != RS_OK)
-                    return false;
+        const PistonMotion *motion = sim_piston_motion(world, source);
+        BlockState placeholder = world_get(world, source);
+        bool intercepted = placeholder.id == BLOCK_MOVING_PISTON && motion &&
+                           motion->direction == facing && motion->extending;
+        if (intercepted) {
+            (void)sim_finish_piston_motion(world, source, true);
+            return world->sim->error == RS_OK;
+        }
+
+        if (pull_block && world_in_bounds(world, source) &&
+            piston_reaction(world_get(world, source)) == PUSH_NORMAL) {
+            /* moveBlocks removes the completed head before resolving the
+             * backwards move; otherwise the head itself blocks the cargo. */
+            if (world_get(world, head_position).id != BLOCK_AIR &&
+                !piston_write_cell(world, head_position,
+                                   block_default(BLOCK_AIR)))
+                return false;
+            PistonResolver resolver = {
+                .world = world,
+                .piston_position = position,
+                .start_position = source,
+                .piston_direction = facing,
+                .push_direction = direction_opposite(facing),
+                .extending = false
+            };
+            if (piston_resolve(&resolver)) {
+                return piston_apply_resolved(&resolver);
             }
         }
     }
-    state.data.piston.extended = false;
-    if (!world_set_block(world, position, state, 3 | UPDATE_MOVING)) return false;
+
+    BlockState head = world_get(world, head_position);
+    if (head.id != BLOCK_AIR) {
+        if (!piston_write_cell(world, head_position,
+                               block_default(BLOCK_AIR))) return false;
+    }
     return true;
 }
 
@@ -392,6 +437,20 @@ static bool piston_update_indicator(World *world, BlockPos position,
     return true;
 }
 
+static bool piston_extension_is_short(const World *world, BlockPos position,
+                                      Direction facing)
+{
+    BlockPos moving_position = piston_offset(position, facing, 2);
+    BlockState placeholder = world_get(world, moving_position);
+    const PistonMotion *motion = sim_piston_motion(world, moving_position);
+    return placeholder.id == BLOCK_MOVING_PISTON &&
+           placeholder.data.moving_piston.facing == facing && motion &&
+           motion->direction == facing && motion->extending &&
+           (motion->previous_progress < 1 ||
+            motion->last_ticked == world->tick ||
+            world->sim->handling_tick);
+}
+
 void piston_check_input(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
@@ -410,10 +469,10 @@ void piston_check_input(World *world, BlockPos position)
             (void)sim_queue_piston_event(world,
                 (PistonEvent){position, state.id, 0, (uint8_t)facing});
     } else if (!powered && state.data.piston.extended) {
-        /* A retraction requested while extension is still moving is event 2
-         * in Java 1.16.2. Sticky pistons retract but leave the moved block. */
+        /* Java checks the extending moving block entity two cells ahead. Its
+         * getProgress(0) value is previous_progress, not the render value. */
         bool extension_in_progress =
-            sim_has_scheduled_tick(world, position) || sim_will_tick(world, position);
+            piston_extension_is_short(world, position, facing);
         (void)sim_queue_piston_event(world,
             (PistonEvent){position, state.id, extension_in_progress ? 2 : 1,
                            (uint8_t)facing});
@@ -431,17 +490,13 @@ void piston_trigger_event(World *world, PistonEvent event)
      * rechecks the actual power when the block-event FIFO reaches this entry. */
     if (event.type == 0) {
         if (!powered) return;
-        bool pushed_block = false;
         sim_begin_updates(world);
-        if (piston_set_extended(world, event.pos, state, true, false, &pushed_block) &&
-            pushed_block)
-            sim_schedule(world, event.pos, PISTON_MOTION_TICKS);
+        (void)piston_extend(world, event.pos, state);
         sim_end_updates(world);
     } else {
         if (powered) return;
-        sim_cancel(world, event.pos);
         sim_begin_updates(world);
-        (void)piston_set_extended(world, event.pos, state, false, event.type == 1, NULL);
+        (void)piston_retract(world, event.pos, state, event.type == 1);
         sim_end_updates(world);
     }
 }
@@ -469,9 +524,8 @@ static TickAction piston_motion_tick(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
     TickAction action = {state, false, 0};
-    /* The event marks the end of the two-game-tick movement interval. The
-     * compact renderer has no moving block entity, so no state write is
-     * needed here; absence of the pending event is the completed state. */
+    /* Compatibility only: version-6 saves used a no-op scheduled piston tick
+     * as a motion marker. New motions are sparse block-entity state. */
     return action;
 }
 

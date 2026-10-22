@@ -39,10 +39,13 @@ enum {
     STATE_DROPPER_FIRST = STATE_EMPTY_BARREL_FIRST + DIR_COUNT,
     STATE_DROPPER_COUNT = DIR_COUNT * 2 * 16,
     STATE_LAMP_FIRST = STATE_DROPPER_FIRST + STATE_DROPPER_COUNT,
-    STATE_LAMP_COUNT = 2
+    STATE_LAMP_COUNT = 2,
+    STATE_MOVING_PISTON_FIRST = STATE_LAMP_FIRST + STATE_LAMP_COUNT,
+    STATE_MOVING_PISTON_COUNT = DIR_COUNT * 2
 };
 
-_Static_assert(STATE_LAMP_FIRST + STATE_LAMP_COUNT <= STATE_ID_LIMIT,
+_Static_assert(STATE_MOVING_PISTON_FIRST + STATE_MOVING_PISTON_COUNT <=
+               STATE_ID_LIMIT,
                "block states must fit the palette state id");
 
 int floor_div16(int x) { int q = x / 16; return q - (x % 16 < 0); }
@@ -187,6 +190,13 @@ bool state_encode(BlockState s, StateId *id)
     }
     if (s.id == BLOCK_REDSTONE_LAMP) {
         *id = (StateId)(STATE_LAMP_FIRST + (s.data.lamp.lit ? 1u : 0u));
+        return true;
+    }
+    if (s.id == BLOCK_MOVING_PISTON) {
+        if (s.data.moving_piston.facing >= DIR_COUNT) return false;
+        *id = (StateId)(STATE_MOVING_PISTON_FIRST +
+              s.data.moving_piston.facing +
+              (s.data.moving_piston.sticky ? DIR_COUNT : 0));
         return true;
     }
     if (s.id != BLOCK_REDSTONE_WIRE || s.data.wire.power > 15 ||
@@ -337,6 +347,14 @@ bool state_decode(StateId id, BlockState *s)
     if (id >= STATE_LAMP_FIRST && id < STATE_LAMP_FIRST + STATE_LAMP_COUNT) {
         *s = block_default(BLOCK_REDSTONE_LAMP);
         s->data.lamp.lit = id != STATE_LAMP_FIRST;
+        return true;
+    }
+    if (id >= STATE_MOVING_PISTON_FIRST &&
+        id < STATE_MOVING_PISTON_FIRST + STATE_MOVING_PISTON_COUNT) {
+        unsigned value = id - STATE_MOVING_PISTON_FIRST;
+        *s = block_default(BLOCK_MOVING_PISTON);
+        s->data.moving_piston.facing = (uint8_t)(value % DIR_COUNT);
+        s->data.moving_piston.sticky = value >= DIR_COUNT;
         return true;
     }
     if (id < 16 || id > 8207) return false;

@@ -15,6 +15,7 @@ typedef enum {
     BLOCK_INTERNAL_FIRST,
     BLOCK_PISTON_HEAD = BLOCK_INTERNAL_FIRST,
     BLOCK_STICKY_PISTON_HEAD,
+    BLOCK_MOVING_PISTON,
     BLOCK_COUNT
 } BlockId;
 
@@ -62,6 +63,10 @@ typedef struct {
             bool powered;
             bool extended;
         } piston;
+        struct {
+            uint8_t facing;
+            bool sticky;
+        } moving_piston;
         struct {
             uint8_t facing;         /* Direction of the configurable lid. */
             uint8_t level;          /* Derived comparator fullness, 0..15. */

@@ -19,6 +19,7 @@ void sim_destroy_internal(World *w)
     container_destroy(w);
     queue_destroy(&s->rail_roots);
     free(s->piston_events.items); posmap_destroy(&s->piston_events.pending);
+    free(s->piston_motions.items); posmap_destroy(&s->piston_motions.slots);
     free(s->held_changes);
     scheduler_destroy(&s->scheduler); posmap_destroy(&s->torch_slots);
     free(s->torches); free(s); w->sim = NULL;
@@ -47,9 +48,10 @@ bool sim_attach_torch(World *w, BlockPos p)
 void sim_forget_cell(World *w, BlockPos p)
 {
     container_forget(w, p);
+    sim_discard_piston_motion(w, p);
     Simulator *s = w->sim; size_t slot;
-    /* Vanilla scheduled block ticks survive replacement. Piston entries are
-     * this engine's motion markers, not vanilla scheduled block ticks. */
+    /* Keep accepting version-6 saves, where piston entries were no-op motion
+     * markers represented as scheduled block ticks. */
     scheduler_cancel(&s->scheduler, p, BLOCK_PISTON);
     scheduler_cancel(&s->scheduler, p, BLOCK_STICKY_PISTON);
     if (posmap_get(&s->torch_slots, p, &slot)) {
@@ -194,8 +196,11 @@ RsResult sim_step(World *w)
     if (w->tick == UINT64_MAX) return RS_INTERNAL_ERROR;
     Simulator *s = w->sim;
     ++w->tick;
-    if (!scheduler_begin_tick(&s->scheduler, w->tick))
+    s->handling_tick = true;
+    if (!scheduler_begin_tick(&s->scheduler, w->tick)) {
+        s->handling_tick = false;
         return s->error = RS_OUT_OF_MEMORY;
+    }
     ScheduledEvent event;
     while (scheduler_next_tick(&s->scheduler, &event)) {
         BlockState state = world_get(w, event.pos);
@@ -212,7 +217,10 @@ RsResult sim_step(World *w)
         if (state.id == BLOCK_OBSERVER)
             sim_update_output_neighbors(w, event.pos, (Direction)state.data.observer.facing);
         result = sim_flush(w);
-        if (result != RS_OK) return result;
+        if (result != RS_OK) {
+            s->handling_tick = false;
+            return result;
+        }
     }
     /* ServerLevel runs block events after the complete scheduled-tick batch,
      * before block entities. A block event may append more events to this FIFO. */
@@ -222,8 +230,17 @@ RsResult sim_step(World *w)
         piston_trigger_event(w, piston);
         ++s->stats.events_processed;
         result = sim_flush(w);
-        if (result != RS_OK) return result;
+        if (result != RS_OK) {
+            s->handling_tick = false;
+            return result;
+        }
     }
+    /* ServerLevel clears handlingTick before ticking block entities. */
+    s->handling_tick = false;
+    sim_tick_piston_motions(w);
+    if (s->error != RS_OK) return s->error;
+    result = sim_flush(w);
+    if (result != RS_OK) return result;
     container_step(w);
     return s->error;
 }
@@ -235,7 +252,8 @@ SimStats sim_stats(const World *w)
         stats = s->stats;
         stats.pending_events = s->scheduler.count +
             s->scheduler.ticking_count - s->scheduler.ticking_head +
-            s->piston_events.count - s->piston_events.head;
+            s->piston_events.count - s->piston_events.head +
+            s->piston_motions.active;
     }
     return stats;
 }
@@ -254,6 +272,9 @@ bool sim_chunk_pinned(const World *w, BlockPos chunk)
         if (near_chunk(s->scheduler.ticking[i].pos, chunk)) return true;
     for (size_t i = s->piston_events.head; i < s->piston_events.count; ++i)
         if (near_chunk(s->piston_events.items[i].pos, chunk)) return true;
+    for (size_t i = 0; i < s->piston_motions.count; ++i)
+        if (s->piston_motions.items[i].used &&
+            near_chunk(s->piston_motions.items[i].pos, chunk)) return true;
     for (size_t i = s->rail_roots.head; i < s->rail_roots.count; ++i)
         if (near_chunk(s->rail_roots.items[i], chunk)) return true;
     return false;

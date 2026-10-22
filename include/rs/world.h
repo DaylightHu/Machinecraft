@@ -18,6 +18,14 @@ enum { CHUNK_SIZE = 16, SECTION_VOLUME = 4096, WORLD_MIN_Y = -64,
 typedef struct { int ground_layers; } WorldConfig;
 typedef ItemStack ContainerStack;
 typedef void (*WorldSectionVisitor)(void *context, BlockPos origin);
+typedef struct {
+    BlockState moved_state;
+    uint64_t last_ticked;
+    Direction direction; /* Piston facing; retracting cargo moves opposite. */
+    /* Discrete half-block units: 0, 1, 2 mean progress 0, 0.5, 1. */
+    uint8_t progress, previous_progress;
+    bool extending, source;
+} WorldPistonMotion;
 
 /* Fixed iron ground, no RNG, no seed, no immovable bedrock. */
 WorldConfig world_config_default(void);
@@ -25,6 +33,9 @@ World *world_create(WorldConfig config);
 void world_destroy(World *world);
 bool world_in_bounds(const World *world, BlockPos pos);
 BlockState world_get(const World *world, BlockPos pos); /* Outside vertical/coordinate limits = air; reads may restore archived chunks. */
+/* Returns false unless pos contains an active moving-piston placeholder. */
+bool world_get_piston_motion(const World *world, BlockPos pos,
+                             WorldPistonMotion *motion);
 /* direction is the supporting block relative to a torch; the output direction
  * for a repeater/comparator/observer; the push direction for a piston; the lid
  * direction for a barrel; the outlet for a dropper or hopper (hopper up maps to down);
