@@ -70,6 +70,7 @@ const PistonMotion *sim_piston_motion(const World *world, BlockPos position)
 bool sim_add_piston_motion(World *world, PistonMotion motion)
 {
     BlockState placeholder;
+    StateId moved_id;
     bool source_payload = motion.extending ?
         block_is_piston_head((BlockId)motion.moved_state.id) :
         block_is_piston_base((BlockId)motion.moved_state.id);
@@ -78,10 +79,12 @@ bool sim_add_piston_motion(World *world, PistonMotion motion)
         (unsigned)motion.direction >= DIR_COUNT ||
         motion.moved_state.id == BLOCK_AIR ||
         motion.moved_state.id == BLOCK_MOVING_PISTON ||
+        !state_encode(motion.moved_state, &moved_id) ||
         (!motion.source && motion.moved_state.id >= BLOCK_INTERNAL_FIRST) ||
         (motion.source &&
          (!source_payload ||
-          motion.moved_state.data.piston.facing != motion.direction ||
+          (motion.extending &&
+           motion.moved_state.data.piston.facing != motion.direction) ||
           (!motion.extending && motion.moved_state.data.piston.extended))) ||
         motion.progress > 2 || motion.previous_progress > motion.progress ||
         motion.progress - motion.previous_progress > 1) {

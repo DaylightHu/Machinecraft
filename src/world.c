@@ -252,12 +252,24 @@ bool world_write_visual(World *w, BlockPos p, BlockState state)
 bool world_set_block_depth(World *w, BlockPos p, BlockState state,
                            unsigned flags, unsigned remaining_shapes)
 {
+    if (state.id == BLOCK_HOPPER || state.id == BLOCK_DROPPER ||
+        state.id == BLOCK_BARREL) {
+        ContainerRuntime *container = container_runtime(w, p);
+        if (container && container->id == state.id) {
+            uint8_t level = container_level(container);
+            if (state.id == BLOCK_HOPPER) state.data.hopper.level = level;
+            else if (state.id == BLOCK_DROPPER) state.data.dropper.level = level;
+            else state.data.barrel.level = level;
+        }
+    }
     BlockState previous;
     bool changed;
     if (!world_write_state(w, p, state, &previous, &changed)) return false;
     if (!changed) return true;
     if (block_states_equal(previous, state)) return true;
     if (scheduler_block_type(previous) != scheduler_block_type(state)) {
+        if (previous.id == BLOCK_MOVING_PISTON)
+            (void)sim_finish_piston_motion(w, p, true);
         sim_forget_cell(w, p);
         if (state.id == BLOCK_REDSTONE_TORCH && !sim_attach_torch(w, p)) {
             w->sim->error = RS_OUT_OF_MEMORY;
@@ -278,29 +290,6 @@ bool world_set_block(World *w, BlockPos p, BlockState state, unsigned flags)
 }
 void world_remove_internal(World *w, BlockPos p)
 {
-    BlockState removed = world_get(w, p);
-    if (removed.id == BLOCK_AIR) return;
-    if (block_is_piston_base((BlockId)removed.id) &&
-        removed.data.piston.extended) {
-        Direction facing = (Direction)removed.data.piston.facing;
-        BlockPos head_pos = block_offset(p, facing);
-        BlockState head = world_get(w, head_pos);
-        if (block_piston_pair((BlockId)removed.id, (BlockId)head.id) &&
-            head.data.piston.facing == removed.data.piston.facing) {
-            if (!world_set_block(w, head_pos, block_default(BLOCK_AIR), 3))
-                return;
-        }
-    } else if (block_is_piston_head((BlockId)removed.id)) {
-        Direction facing = (Direction)removed.data.piston.facing;
-        BlockPos base_pos = block_offset(p, direction_opposite(facing));
-        BlockState base = world_get(w, base_pos);
-        if (block_piston_pair((BlockId)base.id, (BlockId)removed.id) &&
-            base.data.piston.extended &&
-            base.data.piston.facing == removed.data.piston.facing) {
-            if (!world_set_block(w, base_pos, block_default(BLOCK_AIR), 3))
-                return;
-        }
-    }
     (void)world_set_block(w, p, block_default(BLOCK_AIR), 3);
 }
 RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
@@ -380,12 +369,6 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
     }
     if (id == BLOCK_REDSTONE_REPEATER)
         state.data.repeater.locked = repeater_is_locked(w, p, state);
-    if ((block_is_piston_base((BlockId)previous.id) &&
-         previous.data.piston.extended) ||
-        block_is_piston_head((BlockId)previous.id)) {
-        world_remove_internal(w, p);
-        if (w->sim->error != RS_OK) return w->sim->error;
-    }
     if (!world_set_block(w, p, state, 3)) return w->sim->error;
     if (id == BLOCK_REDSTONE_REPEATER || id == BLOCK_REDSTONE_COMPARATOR) {
         Direction rear = direction_opposite((Direction)(id == BLOCK_REDSTONE_REPEATER ?
@@ -404,8 +387,26 @@ RsResult world_remove(World *w, BlockPos p)
 {
     if (!w) return RS_INVALID_ARGUMENT;
     if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
-    if (world_get(w, p).id == BLOCK_AIR) return RS_UNCHANGED;
-    world_remove_internal(w, p); return w->sim->error;
+    BlockState removed = world_get(w, p);
+    if (removed.id == BLOCK_AIR) return RS_UNCHANGED;
+    if (block_is_piston_head((BlockId)removed.id)) {
+        Direction facing = (Direction)removed.data.piston.facing;
+        BlockPos behind = block_offset(p, direction_opposite(facing));
+        BlockState base = world_get(w, behind);
+        if (block_piston_pair((BlockId)base.id, (BlockId)removed.id) &&
+            base.data.piston.extended && base.data.piston.facing == facing)
+            world_remove_internal(w, behind);
+        if (w->sim->error != RS_OK) return w->sim->error;
+    }
+    world_remove_internal(w, p);
+    if (removed.id == BLOCK_MOVING_PISTON && w->sim->error == RS_OK) {
+        Direction facing = (Direction)removed.data.moving_piston.facing;
+        BlockPos behind = block_offset(p, direction_opposite(facing));
+        BlockState base = world_get(w, behind);
+        if (block_is_piston_base((BlockId)base.id) && base.data.piston.extended)
+            (void)world_set_block(w, behind, block_default(BLOCK_AIR), 3);
+    }
+    return w->sim->error;
 }
 RsResult world_toggle_wire_dot(World *w, BlockPos p)
 {

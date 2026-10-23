@@ -129,7 +129,6 @@ static bool piston_links_valid(const World *w)
                  (!block_is_piston_head((BlockId)motion->moved_state.id) ||
                   motion->moved_state.data.piston.facing != motion->direction) :
                  (!block_is_piston_base((BlockId)motion->moved_state.id) ||
-                  motion->moved_state.data.piston.facing != motion->direction ||
                   motion->moved_state.data.piston.extended)))
             return false;
     }
@@ -152,35 +151,6 @@ static bool piston_links_valid(const World *w)
                 if (state.id == BLOCK_MOVING_PISTON) {
                     ++moving_count;
                     if (!sim_piston_motion(w, position)) return false;
-                }
-                if (block_is_piston_base((BlockId)state.id) &&
-                    state.data.piston.extended) {
-                    Direction facing = (Direction)state.data.piston.facing;
-                    BlockPos head_position = block_offset(position, facing);
-                    BlockState head = world_get(w, head_position);
-                    if (block_piston_pair((BlockId)state.id,
-                                          (BlockId)head.id) &&
-                        head.data.piston.facing == state.data.piston.facing)
-                        continue;
-                    const PistonMotion *motion =
-                        sim_piston_motion(w, head_position);
-                    if (head.id != BLOCK_MOVING_PISTON || !motion ||
-                        !motion->source || !motion->extending ||
-                        motion->direction != facing ||
-                        !block_piston_pair((BlockId)state.id,
-                                           (BlockId)motion->moved_state.id) ||
-                        motion->moved_state.data.piston.facing != facing)
-                        return false;
-                }
-                if (block_is_piston_head((BlockId)state.id)) {
-                    Direction facing = (Direction)state.data.piston.facing;
-                    BlockState base = world_get(
-                        w, block_offset(position, direction_opposite(facing)));
-                    if (!block_piston_pair((BlockId)base.id,
-                                           (BlockId)state.id) ||
-                        !base.data.piston.extended ||
-                        base.data.piston.facing != state.data.piston.facing)
-                        return false;
                 }
             }
         }

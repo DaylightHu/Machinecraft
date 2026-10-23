@@ -64,9 +64,9 @@ static unsigned connecting_side(const World *w, BlockPos p, Direction d, bool as
     BlockPos next = block_offset(p, d);
     BlockState state = world_get(w, next);
     const BlockDef *def = block_definition((BlockId)state.id);
-    if (ascend && block_state_supports_wire(state) &&
+    if (ascend && block_supports_wire(w, next) &&
         is_wire(w, block_offset(next, DIR_UP)))
-        return block_face_sturdy(state, direction_opposite(d)) ? 3u : 1u;
+        return block_face_sturdy(w, next, direction_opposite(d)) ? 3u : 1u;
     return connects(state, d) || (!def->conductor &&
            is_wire(w, block_offset(next, DIR_DOWN))) ? 1u : 0u;
 }

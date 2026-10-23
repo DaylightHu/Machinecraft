@@ -106,6 +106,17 @@ static void removed(World *w, StateChange c, bool changed_type)
             sim_update_neighbors_at(w, block_offset(c.pos, DIR_DOWN), DIR_COUNT);
         }
         break;
+    case BLOCK_PISTON_HEAD:
+    case BLOCK_STICKY_PISTON_HEAD:
+        if (changed_type && !block_is_piston_head((BlockId)c.current.id)) {
+            Direction facing = (Direction)c.previous.data.piston.facing;
+            BlockPos behind = block_offset(c.pos, direction_opposite(facing));
+            BlockState base = world_get(w, behind);
+            if (block_piston_pair((BlockId)base.id, (BlockId)c.previous.id) &&
+                base.data.piston.extended && base.data.piston.facing == facing)
+                world_remove_internal(w, behind);
+        }
+        break;
     default: break;
     }
     if (changed_type && container_is_block((BlockId)c.previous.id))

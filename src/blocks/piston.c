@@ -317,9 +317,6 @@ static bool piston_apply_resolved(PistonResolver *resolver)
         BlockPos destination = block_offset(source,
                                             resolver->push_direction);
         BlockState state = moving[index - 1];
-        /* A moved target has no reset tick at its new position. Java 1.16.2
-         * clears its projectile output when placing it there. */
-        if (state.id == BLOCK_TARGET) state.data.target.power = 0;
         if (!piston_start_motion(world, destination, state,
                                  resolver->piston_direction,
                                  resolver->extending, false, false))
@@ -381,7 +378,7 @@ static bool piston_extend(World *world, BlockPos position, BlockState state)
 }
 
 static bool piston_retract(World *world, BlockPos position, BlockState state,
-                           bool pull_block)
+                           bool pull_block, Direction carried_facing)
 {
     Direction facing = (Direction)state.data.piston.facing;
     BlockPos head_position = block_offset(position, facing);
@@ -394,7 +391,8 @@ static bool piston_retract(World *world, BlockPos position, BlockState state,
     (void)sim_finish_piston_motion(world, head_position, true);
     if (world->sim->error != RS_OK) return false;
 
-    state.data.piston.extended = false;
+    state = block_default(base_id);
+    state.data.piston.facing = (uint8_t)carried_facing;
     if (!piston_start_motion(world, position, state, facing, false, true,
                              base_id == BLOCK_STICKY_PISTON))
         return false;
@@ -522,8 +520,13 @@ void piston_trigger_event(World *world, PistonEvent event)
         if (!powered) return;
         (void)piston_extend(world, event.pos, state);
     } else {
-        if (powered) return;
-        (void)piston_retract(world, event.pos, state, event.type == 1);
+        if (powered) {
+            state.data.piston.extended = true;
+            (void)world_set_block(world, event.pos, state, UPDATE_CLIENTS);
+            return;
+        }
+        (void)piston_retract(world, event.pos, state, event.type == 1,
+                             (Direction)event.facing);
     }
 }
 

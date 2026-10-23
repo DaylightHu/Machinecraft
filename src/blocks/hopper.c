@@ -15,7 +15,6 @@ static void hopper_input(World *world, BlockPos pos)
         state.data.hopper.enabled = enabled;
         if (!world_write_derived(world, pos, state)) return;
     }
-    container_sync_hopper(world, pos, state);
 }
 
 const BlockDef rs_hopper_def = {
