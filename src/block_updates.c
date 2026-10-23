@@ -21,6 +21,10 @@ bool block_states_equal(BlockState a, BlockState b)
         return a.data.wire.power == b.data.wire.power &&
                a.data.wire.connections == b.data.wire.connections &&
                a.data.wire.up_connections == b.data.wire.up_connections;
+    if (a.id == BLOCK_REDSTONE_COMPARATOR)
+        return a.data.comparator.facing == b.data.comparator.facing &&
+               a.data.comparator.subtract == b.data.comparator.subtract &&
+               a.data.comparator.powered == b.data.comparator.powered;
     if (block_is_piston_base((BlockId)a.id) || block_is_piston_head((BlockId)a.id))
         return a.data.piston.facing == b.data.piston.facing &&
                a.data.piston.extended == b.data.piston.extended;

@@ -41,10 +41,15 @@ enum {
     STATE_LAMP_FIRST = STATE_DROPPER_FIRST + STATE_DROPPER_COUNT,
     STATE_LAMP_COUNT = 2,
     STATE_MOVING_PISTON_FIRST = STATE_LAMP_FIRST + STATE_LAMP_COUNT,
-    STATE_MOVING_PISTON_COUNT = DIR_COUNT * 2
+    STATE_MOVING_PISTON_COUNT = DIR_COUNT * 2,
+    /* v2..v7 comparator IDs above stored only effective output. Append the
+     * independent POWERED/cache combinations; never shift existing ranges. */
+    STATE_COMPARATOR_V8_FIRST =
+        STATE_MOVING_PISTON_FIRST + STATE_MOVING_PISTON_COUNT,
+    STATE_COMPARATOR_V8_COUNT = 256
 };
 
-_Static_assert(STATE_MOVING_PISTON_FIRST + STATE_MOVING_PISTON_COUNT <=
+_Static_assert(STATE_COMPARATOR_V8_FIRST + STATE_COMPARATOR_V8_COUNT <=
                STATE_ID_LIMIT,
                "block states must fit the palette state id");
 
@@ -108,9 +113,10 @@ bool state_encode(BlockState s, StateId *id)
         unsigned facing;
         if (!horizontal_index(s.data.comparator.facing, &facing) ||
             s.data.comparator.output > 15) return false;
-        *id = (StateId)(STATE_COMPARATOR_FIRST + facing +
+        *id = (StateId)(STATE_COMPARATOR_V8_FIRST + facing +
               (unsigned)s.data.comparator.output*4u +
-              (s.data.comparator.subtract ? 64u : 0u));
+              (s.data.comparator.subtract ? 64u : 0u) +
+              (s.data.comparator.powered ? 128u : 0u));
         return true;
     }
     if (s.id == BLOCK_POWERED_RAIL || s.id == BLOCK_ACTIVATOR_RAIL) {
@@ -235,6 +241,19 @@ bool state_decode(StateId id, BlockState *s)
         s->data.comparator.facing = (uint8_t)horizontal_face(value);
         s->data.comparator.output = (uint8_t)((value >> 2) & 15u);
         s->data.comparator.subtract = (value & 64u) != 0;
+        /* Preserve legacy effective output without resampling inputs or
+         * disturbing pending ticks. Suppressed rear caches were not saved. */
+        s->data.comparator.powered = s->data.comparator.output != 0;
+        return true;
+    }
+    if (id >= STATE_COMPARATOR_V8_FIRST &&
+        id < STATE_COMPARATOR_V8_FIRST + STATE_COMPARATOR_V8_COUNT) {
+        unsigned value = id - STATE_COMPARATOR_V8_FIRST;
+        *s = block_default(BLOCK_REDSTONE_COMPARATOR);
+        s->data.comparator.facing = (uint8_t)horizontal_face(value);
+        s->data.comparator.output = (uint8_t)((value >> 2) & 15u);
+        s->data.comparator.subtract = (value & 64u) != 0;
+        s->data.comparator.powered = (value & 128u) != 0;
         return true;
     }
     StateId rail_first;

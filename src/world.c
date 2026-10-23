@@ -390,7 +390,7 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         BlockPos input = block_offset(p, rear);
         BlockState source = world_get(w, input);
         bool powered = id == BLOCK_REDSTONE_COMPARATOR ?
-            comparator_desired_output(w, p, state) > 0 :
+            comparator_should_turn_on(w, p, state) :
             power_signal(w, input, direction_opposite(rear), SIGNAL_ALL) > 0 ||
             (source.id == BLOCK_REDSTONE_WIRE && source.data.wire.power > 0);
         if (powered) sim_schedule(w, p, 1);
@@ -448,7 +448,7 @@ RsResult world_toggle_comparator_mode(World *w, BlockPos p)
     if (state.id != BLOCK_REDSTONE_COMPARATOR) return RS_INVALID_ARGUMENT;
     state.data.comparator.subtract = !state.data.comparator.subtract;
     if (!world_write_derived(w, p, state)) return w->sim->error;
-    sim_mark_input(w, p); return w->sim->error;
+    comparator_refresh_output(w, p); return w->sim->error;
 }
 RsResult world_set_barrel_level(World *w, BlockPos p, uint8_t level)
 {

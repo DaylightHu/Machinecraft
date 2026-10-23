@@ -37,8 +37,9 @@ enum { UPDATE_NEIGHBORS = 1, UPDATE_CLIENTS = 2, UPDATE_KNOWN_SHAPE = 16,
 bool world_set_block(World *, BlockPos, BlockState, unsigned flags);
 bool world_set_block_depth(World *, BlockPos, BlockState, unsigned flags,
                            unsigned remaining_shapes);
-/* Writes a stored/rendered state which does not exist in vanilla's observable
- * block state. Used for cosmetic input indicators without firing observers. */
+/* Writes auxiliary cell data (input indicators, inventory fullness, comparator
+ * output cache) without vanilla block-state callbacks. Read/power caches and
+ * the storage observer are still updated. */
 bool world_write_visual(World *world, BlockPos pos, BlockState state);
 void world_remove_internal(World *world, BlockPos pos);
 Chunk *world_find_chunk(const World *world, BlockPos key);

@@ -1139,7 +1139,7 @@ static void comparator_uv(Texture2D atlas, BlockState state,
                           Vector2 uv[REDSTONE_GATE_GEOMETRY_QUADS][4])
 {
     int column = state.data.comparator.subtract ? 1 : 0;
-    int row = state.data.comparator.output > 0 ? 1 : 0;
+    int row = state.data.comparator.powered ? 1 : 0;
     redstone_gate_top_uv(atlas, column, row,
                          (Direction)state.data.comparator.facing, uv[0]);
     for (int face = 1; face < REDSTONE_GATE_GEOMETRY_QUADS; ++face)

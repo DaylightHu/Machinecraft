@@ -77,10 +77,21 @@ uint8_t comparator_desired_output(const World *world, BlockPos position,
                                          BlockState state)
 {
     uint8_t rear = comparator_rear_input(world, position, state);
-    uint8_t side = comparator_side_input(world, position, state);
-    if (state.data.comparator.subtract)
+    if (state.data.comparator.subtract) {
+        uint8_t side = comparator_side_input(world, position, state);
         return rear > side ? (uint8_t)(rear - side) : 0;
-    return rear >= side ? rear : 0;
+    }
+    /* Compare mode stores the rear input even while POWERED is false. */
+    return rear;
+}
+
+bool comparator_should_turn_on(const World *world, BlockPos position,
+                                BlockState state)
+{
+    uint8_t rear = comparator_rear_input(world, position, state);
+    if (!rear) return false;
+    uint8_t side = comparator_side_input(world, position, state);
+    return rear > side || (rear == side && !state.data.comparator.subtract);
 }
 
 static uint8_t comparator_signal(const World *world, BlockPos position,
@@ -88,7 +99,8 @@ static uint8_t comparator_signal(const World *world, BlockPos position,
 {
     (void)mode;
     BlockState state = world_get(world, position);
-    return face == (Direction)state.data.comparator.facing ?
+    return state.data.comparator.powered &&
+           face == (Direction)state.data.comparator.facing ?
            state.data.comparator.output : 0;
 }
 
@@ -114,7 +126,9 @@ void comparator_check_input(World *world, BlockPos position)
     if (state.id != BLOCK_REDSTONE_COMPARATOR) return;
     if (sim_will_tick(world, position)) return;
     if (state.data.comparator.output !=
-        comparator_desired_output(world, position, state)) {
+        comparator_desired_output(world, position, state) ||
+        state.data.comparator.powered !=
+        comparator_should_turn_on(world, position, state)) {
         TickPriority priority = comparator_should_prioritize(
             world, position, state) ? TICK_HIGH : TICK_NORMAL;
         sim_schedule_priority(world, position, COMPARATOR_DELAY, priority);
@@ -130,16 +144,34 @@ static void comparator_neighbor(World *world, BlockPos position)
     sim_mark_input(world, position);
 }
 
-static TickAction comparator_tick(World *world, BlockPos position)
+void comparator_refresh_output(World *world, BlockPos position)
 {
     BlockState state = world_get(world, position);
-    TickAction action = {state, false, 0};
+    if (state.id != BLOCK_REDSTONE_COMPARATOR) return;
+    uint8_t previous = state.data.comparator.output;
     uint8_t output = comparator_desired_output(world, position, state);
-    if (state.data.comparator.output != output) {
-        action.state.data.comparator.output = output;
-        action.changed = true;
+    state.data.comparator.output = output;
+    /* Keep the cache packed with the cell for storage/read locality, but do
+     * not run block-state callbacks. This write still invalidates both world
+     * read and external-power caches before notifying downstream dust. */
+    if (!world_write_visual(world, position, state)) return;
+    if (previous != output || !state.data.comparator.subtract) {
+        bool powered = comparator_should_turn_on(world, position, state);
+        if (state.data.comparator.powered != powered) {
+            state.data.comparator.powered = powered;
+            if (!world_set_block(world, position, state, UPDATE_CLIENTS)) return;
+        }
+        /* Java compare mode notifies even when neither POWERED nor the cache
+         * changed. A pending tick can therefore wake a BUD with zero output. */
+        sim_update_output_neighbors(world, position,
+            (Direction)state.data.comparator.facing);
     }
-    return action;
+}
+
+static TickAction comparator_tick(World *world, BlockPos position)
+{
+    comparator_refresh_output(world, position);
+    return (TickAction){world_get(world, position), false, 0};
 }
 
 const BlockDef rs_comparator_def = {

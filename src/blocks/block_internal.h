@@ -65,6 +65,8 @@ BlockState wire_connection_state(const World *, BlockPos, BlockState);
 BlockState wire_update_shape(const World *, BlockPos, BlockState, Direction);
 bool repeater_is_locked(const World *, BlockPos, BlockState);
 uint8_t comparator_desired_output(const World *, BlockPos, BlockState);
+bool comparator_should_turn_on(const World *, BlockPos, BlockState);
+void comparator_refresh_output(World *, BlockPos);
 void torch_check_input(World *, BlockPos);
 void repeater_check_input(World *, BlockPos);
 void comparator_check_input(World *, BlockPos);

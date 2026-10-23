@@ -46,8 +46,9 @@ typedef struct {
         } repeater;
         struct {
             uint8_t facing;         /* Horizontal output direction. */
-            uint8_t output;         /* Stored analog output, 0..15. */
+            uint8_t output;         /* Block-entity cache, 0..15; not a block property. */
             bool subtract;          /* false: compare, true: subtract. */
+            bool powered;          /* Gates the cache; independent of its value. */
         } comparator;
         struct {
             uint8_t facing;         /* Texture top; uphill direction on slopes. */

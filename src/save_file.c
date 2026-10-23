@@ -14,7 +14,7 @@
 #endif
 
 enum {
-    SAVE_VERSION = 7,
+    SAVE_VERSION = 8,
     SAVE_VERSION_LEGACY = 2,
     SAVE_HEADER_SIZE = 60,
     SAVE_HEADER_V6_SIZE = 56,
@@ -386,7 +386,8 @@ World *save_file_read(const char *path, GameSessionResult *result)
     if (b.size < 12 || memcmp(b.data, save_magic, 8)) goto fail;
     b.cursor = 8;
     unsigned version = bytes_read16(&b), header = bytes_read16(&b);
-    if (version != SAVE_VERSION && version != 6 && version != 5 && version != 4 && version != 3 &&
+    if (version != SAVE_VERSION && version != 7 && version != 6 &&
+        version != 5 && version != 4 && version != 3 &&
         version != SAVE_VERSION_LEGACY) {
         *result = GAME_SESSION_UNSUPPORTED_SAVE;
         goto fail;

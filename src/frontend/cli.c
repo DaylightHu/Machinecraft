@@ -295,10 +295,13 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 state.data.repeater.locked ? "yes" : "no");
         break;
     case BLOCK_REDSTONE_COMPARATOR:
-        fprintf(output, " output=%u facing=%s mode=%s",
-                (unsigned)state.data.comparator.output,
+        fprintf(output, " output=%u facing=%s mode=%s powered=%s stored_output=%u",
+                state.data.comparator.powered ?
+                    (unsigned)state.data.comparator.output : 0u,
                 direction_names[state.data.comparator.facing],
-                state.data.comparator.subtract ? "subtract" : "compare");
+                state.data.comparator.subtract ? "subtract" : "compare",
+                state.data.comparator.powered ? "on" : "off",
+                (unsigned)state.data.comparator.output);
         break;
     case BLOCK_POWERED_RAIL:
     case BLOCK_ACTIVATOR_RAIL:

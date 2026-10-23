@@ -148,8 +148,7 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
     } else if (old_part == new_part && new_part == COMPARATORS) {
         visual = before.data.comparator.facing != after.data.comparator.facing ||
                  before.data.comparator.subtract != after.data.comparator.subtract ||
-                 (before.data.comparator.output > 0) !=
-                 (after.data.comparator.output > 0);
+                 before.data.comparator.powered != after.data.comparator.powered;
     } else if (old_part == new_part &&
                (new_part == POWERED_RAILS || new_part == ACTIVATOR_RAILS)) {
         geometry = before.data.rail.facing != after.data.rail.facing ||
