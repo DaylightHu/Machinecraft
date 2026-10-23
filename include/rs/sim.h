@@ -20,8 +20,9 @@ typedef struct {
  * flush reports the current status without advancing time.
  * step checks that status, advances ONE game tick, then runs due events in
  * priority/insertion order from a frozen due batch, then piston block events,
- * moving-piston block entities, and containers. flush does not execute these
- * timed phases or advance time.
+ * then moving pistons and hoppers in one block-entity insertion order. Entries
+ * created during that last phase first tick on the next game tick. flush does
+ * not execute these timed phases or advance time.
  * Each callback's zero-delay consequences settle before the next callback.
  * Torch delay = 2 game ticks (100 ms at 20 TPS). */
 RsResult sim_flush(World *world);

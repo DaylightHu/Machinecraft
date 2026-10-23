@@ -16,6 +16,7 @@ void sim_destroy_internal(World *w)
     Simulator *s = w->sim;
     if (!s) return;
     container_destroy(w);
+    free(s->block_entities.items);
     free(s->piston_events.items); posmap_destroy(&s->piston_events.pending);
     free(s->piston_motions.items); posmap_destroy(&s->piston_motions.slots);
     free(s->held_changes);
@@ -92,19 +93,27 @@ void sim_notify_analog(World *w, BlockPos p)
         }
     }
 }
-void sim_schedule(World *w, BlockPos p, uint32_t delay)
-{
-    sim_schedule_priority(w, p, delay, TICK_NORMAL);
-}
-
-void sim_schedule_priority(World *w, BlockPos p, uint32_t delay,
-                           TickPriority priority)
+static void schedule_state(World *w, BlockPos p, BlockState state,
+                            uint32_t delay, TickPriority priority)
 {
     if (!delay || UINT64_MAX - w->tick < delay) { w->sim->error = RS_INTERNAL_ERROR; return; }
     if (!scheduler_add_priority(&w->sim->scheduler, p,
-                                scheduler_block_type(world_get(w, p)), w->tick + delay,
+                                scheduler_block_type(state), w->tick + delay,
                                 priority))
         w->sim->error = RS_OUT_OF_MEMORY;
+}
+void sim_schedule(World *w, BlockPos p, uint32_t delay)
+{
+    schedule_state(w, p, world_get(w, p), delay, TICK_NORMAL);
+}
+void sim_schedule_state(World *w, BlockPos p, BlockState state, uint32_t delay)
+{
+    schedule_state(w, p, state, delay, TICK_NORMAL);
+}
+void sim_schedule_priority(World *w, BlockPos p, uint32_t delay,
+                           TickPriority priority)
+{
+    schedule_state(w, p, world_get(w, p), delay, priority);
 }
 void sim_cancel(World *w, BlockPos p)
 {
@@ -172,6 +181,123 @@ static bool pop_piston_event(PistonEvents *q, PistonEvent *event)
     if (q->head == q->count) q->head = q->count = 0;
     return true;
 }
+
+static size_t *block_entity_slot(const World *w, BlockEntityTick entity)
+{
+    if (entity.block == BLOCK_HOPPER) {
+        ContainerRuntime *c = container_runtime(w, entity.pos);
+        return c && c->id == BLOCK_HOPPER ? &c->tick_slot : NULL;
+    }
+    size_t index;
+    if (entity.block == BLOCK_MOVING_PISTON &&
+        posmap_get(&w->sim->piston_motions.slots, entity.pos, &index))
+        return &w->sim->piston_motions.items[index].tick_slot;
+    return NULL;
+}
+
+static bool compact_block_entities(World *w)
+{
+    BlockEntityTicks *ticks = &w->sim->block_entities;
+    if (ticks->active == ticks->count) return true;
+    size_t output = 0;
+    for (size_t i = 0; i < ticks->count; ++i) {
+        BlockEntityTick entity = ticks->items[i];
+        if (!entity.used) continue;
+        size_t *slot = block_entity_slot(w, entity);
+        if (!slot) { w->sim->error = RS_INTERNAL_ERROR; return false; }
+        ticks->items[output] = entity;
+        *slot = output++;
+    }
+    ticks->count = output;
+    return true;
+}
+
+bool sim_prepare_block_entities(World *w, size_t additional)
+{
+    if (!w || w->sim->error != RS_OK) return false;
+    BlockEntityTicks *ticks = &w->sim->block_entities;
+    if (additional <= ticks->capacity - ticks->count) return true;
+    if (!ticks->ticking && ticks->active < ticks->count &&
+        !compact_block_entities(w)) return false;
+    if (additional <= ticks->capacity - ticks->count) return true;
+    if (additional > SIZE_MAX - ticks->count) goto fail;
+    size_t needed = ticks->count + additional;
+    size_t capacity = ticks->capacity ? ticks->capacity : 16;
+    while (capacity < needed) {
+        if (capacity > SIZE_MAX/2) { capacity = needed; break; }
+        capacity *= 2;
+    }
+    if (capacity > SIZE_MAX/sizeof(*ticks->items)) goto fail;
+    BlockEntityTick *next = realloc(ticks->items, capacity*sizeof(*next));
+    if (!next) goto fail;
+    ticks->items = next; ticks->capacity = capacity;
+    return true;
+fail:
+    w->sim->error = RS_OUT_OF_MEMORY;
+    return false;
+}
+
+bool sim_add_block_entity(World *w, BlockPos pos, BlockId block, size_t *slot)
+{
+    if (!slot || (block != BLOCK_HOPPER && block != BLOCK_MOVING_PISTON)) {
+        w->sim->error = RS_INTERNAL_ERROR;
+        return false;
+    }
+    if (!sim_prepare_block_entities(w, 1)) return false;
+    BlockEntityTicks *ticks = &w->sim->block_entities;
+    *slot = ticks->count;
+    ticks->items[ticks->count++] = (BlockEntityTick){pos, (uint8_t)block, true};
+    ++ticks->active;
+    return true;
+}
+
+void sim_discard_block_entity(World *w, size_t slot)
+{
+    BlockEntityTicks *ticks = &w->sim->block_entities;
+    if (slot >= ticks->count) { w->sim->error = RS_INTERNAL_ERROR; return; }
+    if (ticks->items[slot].used) {
+        ticks->items[slot].used = false;
+        --ticks->active;
+    }
+}
+
+bool sim_block_entity_order_valid(const World *w)
+{
+    const BlockEntityTicks *ticks = &w->sim->block_entities;
+    size_t count = 0, expected = w->sim->piston_motions.active;
+    for (size_t i = 0; i < w->sim->containers.count; ++i)
+        if (w->sim->containers.items[i].id == BLOCK_HOPPER) ++expected;
+    for (size_t i = 0; i < ticks->count; ++i) {
+        BlockEntityTick entity = ticks->items[i];
+        if (!entity.used) continue;
+        size_t *slot = block_entity_slot(w, entity);
+        if (!slot || *slot != i || world_get(w, entity.pos).id != entity.block)
+            return false;
+        ++count;
+    }
+    return count == ticks->active && count == expected;
+}
+
+static void tick_block_entities(World *w)
+{
+    BlockEntityTicks *ticks = &w->sim->block_entities;
+    size_t limit = ticks->count;
+    ticks->ticking = true;
+    /* Level.tickBlockEntities walks one insertion-ordered list. Entries
+     * created during this phase are appended but wait until the next tick. */
+    for (size_t i = 0; i < limit && w->sim->error == RS_OK; ++i) {
+        BlockEntityTick entity = ticks->items[i];
+        if (!entity.used) continue;
+        if (entity.block == BLOCK_MOVING_PISTON)
+            sim_tick_piston_motion(w, entity.pos);
+        else
+            container_tick_hopper(w, entity.pos);
+        (void)sim_flush(w);
+    }
+    ticks->ticking = false;
+    if (w->sim->error == RS_OK) (void)compact_block_entities(w);
+}
+
 RsResult sim_flush(World *w)
 {
     if (!w) return RS_INVALID_ARGUMENT;
@@ -225,11 +351,7 @@ RsResult sim_step(World *w)
     }
     /* ServerLevel clears handlingTick before ticking block entities. */
     s->handling_tick = false;
-    sim_tick_piston_motions(w);
-    if (s->error != RS_OK) return s->error;
-    result = sim_flush(w);
-    if (result != RS_OK) return result;
-    container_step(w);
+    tick_block_entities(w);
     return s->error;
 }
 SimStats sim_stats(const World *w)

@@ -14,7 +14,7 @@ typedef struct { BlockState state; bool changed; uint32_t next_delay; } TickActi
 typedef uint8_t (*SignalFn)(const World *, BlockPos, Direction, SignalMode);
 typedef uint8_t (*AnalogFn)(const World *, BlockPos);
 typedef void (*NeighborFn)(World *, BlockPos);
-typedef void (*ObservedFn)(World *, BlockPos, BlockPos);
+typedef void (*ObservedFn)(World *, BlockPos, BlockState, BlockPos);
 typedef TickAction (*TickFn)(World *, BlockPos);
 typedef struct {
     const char *name;
@@ -23,7 +23,7 @@ typedef struct {
     SignalFn signal, direct_signal;
     AnalogFn analog_output;
     NeighborFn neighbor_changed;
-    ObservedFn observed_changed; /* A cell changed directly in the watched neighborhood. */
+    ObservedFn observed_changed; /* Incoming shape update, also for a carried state. */
     NeighborFn input_changed; /* Synchronous input sampling from a notification. */
     TickFn scheduled_tick;
 } BlockDef;

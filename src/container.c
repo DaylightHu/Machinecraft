@@ -88,6 +88,7 @@ bool container_attach(World *w, BlockPos pos, BlockState state)
 {
     if (!container_is_block((BlockId)state.id)) return false;
     if (container_runtime(w, pos)) return true;
+    if (state.id == BLOCK_HOPPER && !sim_prepare_block_entities(w, 1)) return false;
     ContainerTable *t = &w->sim->containers;
     if (t->count == t->capacity) {
         size_t capacity = t->capacity ? t->capacity * 2 : 16;
@@ -101,11 +102,16 @@ bool container_attach(World *w, BlockPos pos, BlockState state)
     if (!slots) return false;
     if (!posmap_set(&t->positions, pos, t->count)) { free(slots); return false; }
     ContainerRuntime *c = &t->items[t->count++];
-    *c = (ContainerRuntime){.pos = pos, .slots = slots, .id = state.id};
+    *c = (ContainerRuntime){.pos = pos, .slots = slots, .id = state.id,
+                            .tick_slot = SIZE_MAX};
     if (state.id == BLOCK_BARREL) fill_barrel(c, state.data.barrel.level);
     else if (state.id == BLOCK_HOPPER) {
         c->facing = state.data.hopper.facing;
         c->enabled = state.data.hopper.enabled;
+        if (!sim_add_block_entity(w, pos, BLOCK_HOPPER, &c->tick_slot)) {
+            free(slots); posmap_remove(&t->positions, pos); --t->count;
+            return false;
+        }
     }
     return true;
 }
@@ -115,6 +121,8 @@ void container_forget(World *w, BlockPos pos)
     ContainerTable *t = &w->sim->containers;
     size_t index;
     if (!posmap_get(&t->positions, pos, &index)) return;
+    if (t->items[index].id == BLOCK_HOPPER)
+        sim_discard_block_entity(w, t->items[index].tick_slot);
     free(t->items[index].slots);
     posmap_remove(&t->positions, pos);
     --t->count;
@@ -286,24 +294,19 @@ static bool can_work(const World *w, const ContainerRuntime *c)
     return (!empty(c) && !full(dest)) || (!full(c) && !empty(above));
 }
 
-void container_step(World *w)
+void container_tick_hopper(World *w, BlockPos pos)
 {
-    ContainerTable *t = &w->sim->containers;
-    for (size_t i = 0; i < t->count && w->sim->error == RS_OK; ++i) {
-        ContainerRuntime *c = &t->items[i];
-        if (c->id != BLOCK_HOPPER) continue;
-        c->last_tick = w->tick;
-        if (c->cooldown_until > w->tick || !can_work(w, c)) continue;
-        ContainerRuntime *dest = container_runtime(w, block_offset(c->pos, (Direction)c->facing));
-        bool moved = !empty(c) && move_one(w, c, dest);
-        if (!full(c)) {
-            ContainerRuntime *above = container_runtime(w, block_offset(c->pos, DIR_UP));
-            moved = move_one(w, above, c) || moved;
-        }
-        if (moved) c->cooldown_until = after(w, 8);
-        /* Each block entity's redstone consequences settle before the next. */
-        (void)sim_flush(w);
+    ContainerRuntime *c = container_runtime(w, pos);
+    if (!c || c->id != BLOCK_HOPPER) return;
+    c->last_tick = w->tick;
+    if (c->cooldown_until > w->tick || !can_work(w, c)) return;
+    ContainerRuntime *dest = container_runtime(w, block_offset(c->pos, (Direction)c->facing));
+    bool moved = !empty(c) && move_one(w, c, dest);
+    if (!full(c)) {
+        ContainerRuntime *above = container_runtime(w, block_offset(c->pos, DIR_UP));
+        moved = move_one(w, above, c) || moved;
     }
+    if (moved) c->cooldown_until = after(w, 8);
 }
 
 bool container_chunk_pinned(const World *w, BlockPos chunk)

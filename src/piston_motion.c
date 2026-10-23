@@ -25,6 +25,7 @@ static bool compact_motions(World *world)
 bool sim_prepare_piston_motions(World *world, size_t additional)
 {
     if (!world || world->sim->error != RS_OK) return false;
+    if (!sim_prepare_block_entities(world, additional)) return false;
     PistonMotions *table = &world->sim->piston_motions;
     if (additional > SIZE_MAX - table->active) goto fail;
 
@@ -106,6 +107,11 @@ bool sim_add_piston_motion(World *world, PistonMotion motion)
         world->sim->error = RS_OUT_OF_MEMORY;
         return false;
     }
+    if (!sim_add_block_entity(world, motion.pos, BLOCK_MOVING_PISTON,
+                               &motion.tick_slot)) {
+        posmap_remove(&table->slots, motion.pos);
+        return false;
+    }
     table->items[table->count++] = motion;
     ++table->active;
     return true;
@@ -119,6 +125,7 @@ void sim_discard_piston_motion(World *world, BlockPos position)
     if (!posmap_get(&table->slots, position, &slot)) return;
     posmap_remove(&table->slots, position);
     if (table->items[slot].used) {
+        sim_discard_block_entity(world, table->items[slot].tick_slot);
         table->items[slot].used = false;
         --table->active;
     }
@@ -128,12 +135,22 @@ bool sim_finish_piston_motion(World *world, BlockPos position, bool forced)
 {
     const PistonMotion *found = sim_piston_motion(world, position);
     if (!found) return false;
+    /* finalTick does nothing once progressO has already reached 1. */
+    if (forced && found->previous_progress >= 2) return true;
     PistonMotion motion = *found;
     sim_discard_piston_motion(world, position);
 
     if (world_get(world, position).id != BLOCK_MOVING_PISTON) return true;
-    BlockState settled = forced && motion.source ?
-                         block_default(BLOCK_AIR) : motion.moved_state;
+    BlockState settled = forced && motion.source ? block_default(BLOCK_AIR) :
+        sim_update_from_neighbor_shapes(world, position, motion.moved_state);
+    if (world->sim->error != RS_OK) return true;
+    if (!forced && settled.id == BLOCK_AIR) {
+        /* Normal completion installs the carried state with vanilla flags 84
+         * (including MOVING and KNOWN_SHAPE), then destroys it with flags 3. */
+        if (world_set_block(world, position, motion.moved_state, 84))
+            world_remove_internal(world, position);
+        return true;
+    }
     unsigned flags = forced ? UPDATE_NEIGHBORS | UPDATE_CLIENTS :
                               UPDATE_NEIGHBORS | UPDATE_CLIENTS | UPDATE_MOVING;
     if (!world_set_block(world, position, settled, flags)) return true;
@@ -143,28 +160,20 @@ bool sim_finish_piston_motion(World *world, BlockPos position, bool forced)
     return true;
 }
 
-void sim_tick_piston_motions(World *world)
+void sim_tick_piston_motion(World *world, BlockPos position)
 {
     PistonMotions *table = &world->sim->piston_motions;
-    size_t limit = table->count;
-    for (size_t index = 0;
-         index < limit && world->sim->error == RS_OK; ++index) {
-        PistonMotion *motion = &table->items[index];
-        if (!motion->used) continue;
-        if (world_get(world, motion->pos).id != BLOCK_MOVING_PISTON) {
-            sim_discard_piston_motion(world, motion->pos);
-            continue;
-        }
-
-        motion->last_ticked = world->tick;
-        motion->previous_progress = motion->progress;
-        if (motion->previous_progress >= 2) {
-            BlockPos position = motion->pos;
-            (void)sim_finish_piston_motion(world, position, false);
-            if (world->sim->error == RS_OK) (void)sim_flush(world);
-        } else {
-            ++motion->progress;
-        }
+    size_t index;
+    if (!posmap_get(&table->slots, position, &index)) return;
+    PistonMotion *motion = &table->items[index];
+    if (world_get(world, position).id != BLOCK_MOVING_PISTON) {
+        sim_discard_piston_motion(world, position);
+        return;
     }
-    (void)compact_motions(world);
+    motion->last_ticked = world->tick;
+    motion->previous_progress = motion->progress;
+    if (motion->previous_progress >= 2)
+        (void)sim_finish_piston_motion(world, position, false);
+    else
+        ++motion->progress;
 }

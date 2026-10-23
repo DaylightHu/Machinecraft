@@ -155,11 +155,9 @@ static void placed(World *w, StateChange c, bool changed_type)
     }
 }
 
-void sim_update_shape_at(World *w, BlockPos pos, Direction toward,
-                          BlockPos source, unsigned flags, unsigned limit)
+static BlockState update_shape(World *w, BlockPos pos, BlockState state,
+                                Direction toward, BlockPos source)
 {
-    if (w->sim->error != RS_OK || !world_in_bounds(w, pos)) return;
-    BlockState previous = world_get(w, pos), state = previous;
     if (state.id == BLOCK_REDSTONE_WIRE)
         state = wire_update_shape(w, pos, state, toward);
     else if (state.id == BLOCK_REDSTONE_REPEATER) {
@@ -178,8 +176,26 @@ void sim_update_shape_at(World *w, BlockPos pos, Direction toward,
                 state = block_default(BLOCK_AIR);
         }
     }
-    const BlockDef *d = block_definition((BlockId)previous.id);
-    if (d->observed_changed) d->observed_changed(w, pos, source);
+    const BlockDef *d = block_definition((BlockId)state.id);
+    if (d->observed_changed) d->observed_changed(w, pos, state, source);
+    return state;
+}
+
+BlockState sim_update_from_neighbor_shapes(World *w, BlockPos pos, BlockState state)
+{
+    /* Block.updateFromNeighbourShapes evaluates a carried state while its
+     * world cell still contains MOVING_PISTON, in W/E/N/S/D/U order. */
+    for (unsigned i = 0; i < DIR_COUNT && w->sim->error == RS_OK; ++i)
+        state = update_shape(w, pos, state, shapes[i], block_offset(pos, shapes[i]));
+    return state;
+}
+
+void sim_update_shape_at(World *w, BlockPos pos, Direction toward,
+                          BlockPos source, unsigned flags, unsigned limit)
+{
+    if (w->sim->error != RS_OK || !world_in_bounds(w, pos)) return;
+    BlockState previous = world_get(w, pos);
+    BlockState state = update_shape(w, pos, previous, toward, source);
     if (!block_states_equal(previous, state))
         (void)world_set_block_depth(w, pos, state,
             state.id == BLOCK_AIR ? 3 : flags & ~32u, limit);

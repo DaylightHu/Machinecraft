@@ -14,9 +14,10 @@
 #endif
 
 enum {
-    SAVE_VERSION = 8,
+    SAVE_VERSION = 9,
     SAVE_VERSION_LEGACY = 2,
-    SAVE_HEADER_SIZE = 60,
+    SAVE_HEADER_SIZE = 64,
+    SAVE_HEADER_V7_SIZE = 60,
     SAVE_HEADER_V6_SIZE = 56,
     SAVE_HEADER_V5_SIZE = 52,
     SAVE_HEADER_V4_SIZE = 44,
@@ -198,12 +199,13 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     World *w = (World *)world;
     Simulator *s = w->sim;
     if (s->error != RS_OK || s->hold_updates || s->held_count ||
+        s->block_entities.ticking || !sim_block_entity_order_valid(w) ||
         s->scheduler.ticking_head != s->scheduler.ticking_count ||
         !piston_links_valid(w))
         return GAME_SESSION_SIMULATION_ERROR;
     size_t piston_count = s->piston_events.count - s->piston_events.head;
     size_t motion_count = s->piston_motions.active;
-    if (w->chunk_count > UINT32_MAX || s->torch_slots.count > UINT32_MAX || s->torch_used > UINT32_MAX || s->scheduler.count > UINT32_MAX || s->containers.count > UINT32_MAX || piston_count > UINT32_MAX || motion_count > UINT32_MAX)
+    if (w->chunk_count > UINT32_MAX || s->torch_slots.count > UINT32_MAX || s->torch_used > UINT32_MAX || s->scheduler.count > UINT32_MAX || s->containers.count > UINT32_MAX || piston_count > UINT32_MAX || motion_count > UINT32_MAX || s->block_entities.active > UINT32_MAX)
         return GAME_SESSION_SIMULATION_ERROR;
     Chunk **chunks = w->chunk_count ? malloc(w->chunk_count * sizeof(Chunk *)) : NULL;
     TorchRuntime **torches = s->torch_used ? malloc(s->torch_used * sizeof(TorchRuntime *)) : NULL;
@@ -227,6 +229,7 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     bytes_u64(&b, s->containers.dropper_random);
     bytes_u32(&b, (uint32_t)piston_count);
     bytes_u32(&b, (uint32_t)motion_count);
+    bytes_u32(&b, (uint32_t)s->block_entities.active);
     GameSessionResult result = GAME_SESSION_OK;
     for (size_t i = 0; i < chunk_count; ++i) {
         ByteBuffer snapshot; bytes_init(&snapshot);
@@ -298,6 +301,11 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
         bytes_u8(&b, motion->previous_progress);
         bytes_u8(&b, (uint8_t)((motion->extending ? 1u : 0u) |
                                (motion->source ? 2u : 0u)));
+    }
+    for (size_t i = 0; i < s->block_entities.count; ++i) {
+        BlockEntityTick entity = s->block_entities.items[i];
+        if (!entity.used) continue;
+        bytes_pos(&b, entity.pos); bytes_u8(&b, entity.block);
     }
     if (!b.ok) { result = GAME_SESSION_OUT_OF_MEMORY; goto cleanup; }
     uint32_t crc = crc32_bytes(b.data, b.size);
@@ -386,13 +394,14 @@ World *save_file_read(const char *path, GameSessionResult *result)
     if (b.size < 12 || memcmp(b.data, save_magic, 8)) goto fail;
     b.cursor = 8;
     unsigned version = bytes_read16(&b), header = bytes_read16(&b);
-    if (version != SAVE_VERSION && version != 7 && version != 6 &&
+    if (version != SAVE_VERSION && version != 8 && version != 7 && version != 6 &&
         version != 5 && version != 4 && version != 3 &&
         version != SAVE_VERSION_LEGACY) {
         *result = GAME_SESSION_UNSUPPORTED_SAVE;
         goto fail;
     }
-    unsigned expected_header = version >= 7 ? SAVE_HEADER_SIZE :
+    unsigned expected_header = version >= 9 ? SAVE_HEADER_SIZE :
+                               version >= 7 ? SAVE_HEADER_V7_SIZE :
                                version == 6 ? SAVE_HEADER_V6_SIZE :
                                version == 5 ? SAVE_HEADER_V5_SIZE :
                                version == 4 ? SAVE_HEADER_V4_SIZE : SAVE_HEADER_OLD_SIZE;
@@ -404,13 +413,15 @@ World *save_file_read(const char *path, GameSessionResult *result)
     uint64_t dropper_random = version >= 5 ? bytes_read64(&b) : UINT64_C(0x5deece66d);
     uint32_t piston_count = version >= 6 ? bytes_read32(&b) : 0;
     uint32_t motion_count = version >= 7 ? bytes_read32(&b) : 0;
+    uint32_t entity_count = version >= 9 ? bytes_read32(&b) : 0;
     if (dropper_random >> 48) goto fail;
     memset(b.data + SAVE_CRC_OFFSET, 0, 4);
     uint64_t event_size = version >= 6 ? 22 : version >= 3 ? 21 : 20;
     if (crc32_bytes(b.data, b.size) != crc || ground > 65 ||
         (uint64_t)chunk_count * 20 + (uint64_t)torch_count * 86 +
         (uint64_t)event_count * event_size + (uint64_t)container_count * 52 +
-        (uint64_t)piston_count * 15 + (uint64_t)motion_count * 17 >
+        (uint64_t)piston_count * 15 + (uint64_t)motion_count * 17 +
+        (uint64_t)entity_count * 13 >
         b.size - header)
         goto fail;
     w = world_create((WorldConfig){(int)ground});
@@ -558,8 +569,48 @@ World *save_file_read(const char *path, GameSessionResult *result)
             !sim_add_piston_motion(w, motion))
             goto fail;
     }
+    BlockEntityTicks *entities = &w->sim->block_entities;
+    if (version >= 9) {
+        if (entity_count != entities->active) goto fail;
+        for (size_t i = 0; i < w->sim->piston_motions.count; ++i)
+            w->sim->piston_motions.items[i].tick_slot = SIZE_MAX;
+        for (size_t i = 0; i < w->sim->containers.count; ++i)
+            w->sim->containers.items[i].tick_slot = SIZE_MAX;
+        for (uint32_t i = 0; i < entity_count; ++i) {
+            BlockEntityTick entity = {.pos = bytes_read_pos(&b), .used = true};
+            entity.block = bytes_read8(&b);
+            size_t *slot = NULL, index;
+            if (entity.block == BLOCK_MOVING_PISTON &&
+                posmap_get(&w->sim->piston_motions.slots, entity.pos, &index))
+                slot = &w->sim->piston_motions.items[index].tick_slot;
+            else if (entity.block == BLOCK_HOPPER) {
+                ContainerRuntime *c = container_runtime(w, entity.pos);
+                if (c && c->id == BLOCK_HOPPER) slot = &c->tick_slot;
+            }
+            if (!b.ok || !slot || *slot != SIZE_MAX) goto fail;
+            *slot = i; entities->items[i] = entity;
+        }
+    } else {
+        /* v2..v8 recorded only separate motion/container orders. Preserve
+         * their historical motions-first interpretation when importing. */
+        size_t index = 0;
+        for (size_t i = 0; i < w->sim->piston_motions.count; ++i) {
+            PistonMotion *motion = &w->sim->piston_motions.items[i];
+            if (!motion->used) continue;
+            motion->tick_slot = index;
+            entities->items[index++] = (BlockEntityTick){motion->pos, BLOCK_MOVING_PISTON, true};
+        }
+        for (size_t i = 0; i < w->sim->containers.count; ++i) {
+            ContainerRuntime *c = &w->sim->containers.items[i];
+            if (c->id != BLOCK_HOPPER) continue;
+            c->tick_slot = index;
+            entities->items[index++] = (BlockEntityTick){c->pos, BLOCK_HOPPER, true};
+        }
+    }
+    entities->count = entities->active;
     if (!b.ok || b.cursor != b.size || w->sim->error != RS_OK ||
         w->sim->piston_motions.active != motion_count ||
+        !sim_block_entity_order_valid(w) ||
         !piston_links_valid(w))
         goto fail;
     /* Keep only regions with pending simulation work resident until a view is set. */
