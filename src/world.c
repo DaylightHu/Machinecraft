@@ -269,7 +269,6 @@ bool world_set_block_depth(World *w, BlockPos p, BlockState state,
         }
     }
     StateChange change = {p, previous, state, flags, remaining_shapes};
-    if (w->sim->hold_updates) return sim_hold_change(w, change);
     sim_state_changed(w, change);
     return w->sim->error == RS_OK;
 }

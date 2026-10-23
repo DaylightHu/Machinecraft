@@ -191,7 +191,7 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
 {
     World *w = (World *)world;
     Simulator *s = w->sim;
-    if (s->error != RS_OK || s->hold_updates || s->held_count ||
+    if (s->error != RS_OK ||
         s->block_entities.ticking || !sim_block_entity_order_valid(w) ||
         s->scheduler.ticking_head != s->scheduler.ticking_count ||
         !piston_links_valid(w))

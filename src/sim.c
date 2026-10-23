@@ -19,7 +19,6 @@ void sim_destroy_internal(World *w)
     free(s->block_entities.items);
     free(s->piston_events.items); posmap_destroy(&s->piston_events.pending);
     free(s->piston_motions.items); posmap_destroy(&s->piston_motions.slots);
-    free(s->held_changes);
     scheduler_destroy(&s->scheduler); posmap_destroy(&s->torch_slots);
     free(s->torches); free(s); w->sim = NULL;
 }

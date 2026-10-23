@@ -1,7 +1,5 @@
 #include "sim_internal.h"
 
-#include <stdlib.h>
-
 static const Direction neighbors[] = {
     DIR_WEST, DIR_EAST, DIR_DOWN, DIR_UP, DIR_NORTH, DIR_SOUTH
 };
@@ -128,7 +126,7 @@ static void placed(World *w, StateChange c, bool changed_type)
         break;
     case BLOCK_PISTON:
     case BLOCK_STICKY_PISTON:
-        if (changed_type || (c.flags & UPDATE_MOVING)) piston_check_input(w, c.pos);
+        if (changed_type) piston_check_input(w, c.pos);
         break;
     case BLOCK_HOPPER:
         if (changed_type) sim_mark_input(w, c.pos);
@@ -178,8 +176,11 @@ static BlockState update_shape(World *w, BlockPos pos, BlockState state,
         Direction facing = (Direction)state.data.piston.facing;
         if (toward == direction_opposite(facing)) {
             BlockState base = world_get(w, source);
-            if (!block_piston_pair((BlockId)base.id, (BlockId)state.id) ||
-                !base.data.piston.extended || base.data.piston.facing != facing)
+            bool fitted = block_piston_pair((BlockId)base.id, (BlockId)state.id) &&
+                          base.data.piston.extended && base.data.piston.facing == facing;
+            bool moving = base.id == BLOCK_MOVING_PISTON &&
+                          base.data.moving_piston.facing == facing;
+            if (!fitted && !moving)
                 state = block_default(BLOCK_AIR);
         }
     }
@@ -208,6 +209,13 @@ void sim_update_shape_at(World *w, BlockPos pos, Direction toward,
             state.id == BLOCK_AIR ? 3 : flags & ~32u, limit);
 }
 
+void sim_update_neighbor_shapes(World *w, BlockPos pos, unsigned flags, unsigned limit)
+{
+    for (unsigned i = 0; i < DIR_COUNT; ++i)
+        sim_update_shape_at(w, block_offset(pos, shapes[i]),
+            direction_opposite(shapes[i]), pos, flags, limit);
+}
+
 void sim_state_changed(World *w, StateChange c)
 {
     bool changed_type = scheduler_block_type(c.previous) != scheduler_block_type(c.current);
@@ -224,38 +232,8 @@ void sim_state_changed(World *w, StateChange c)
         unsigned flags = c.flags & ~33u, limit = c.remaining_shapes - 1;
         if (c.previous.id == BLOCK_REDSTONE_WIRE)
             wire_indirect_shapes(w, c.pos, c.previous, flags, limit);
-        for (unsigned i = 0; i < DIR_COUNT; ++i)
-            sim_update_shape_at(w, block_offset(c.pos, shapes[i]),
-                direction_opposite(shapes[i]), c.pos, flags, limit);
+        sim_update_neighbor_shapes(w, c.pos, flags, limit);
         if (c.current.id == BLOCK_REDSTONE_WIRE)
             wire_indirect_shapes(w, c.pos, c.current, flags, limit);
     }
-}
-
-bool sim_hold_change(World *w, StateChange change)
-{
-    Simulator *s = w->sim;
-    if (s->held_count == s->held_capacity) {
-        size_t cap = s->held_capacity ? s->held_capacity*2 : 32;
-        if (cap < s->held_capacity || cap > SIZE_MAX/sizeof(*s->held_changes))
-            goto fail;
-        StateChange *next = realloc(s->held_changes, cap*sizeof(*next));
-        if (!next) goto fail;
-        s->held_changes = next; s->held_capacity = cap;
-    }
-    s->held_changes[s->held_count++] = change;
-    return true;
-fail:
-    s->error = RS_OUT_OF_MEMORY;
-    return false;
-}
-
-void sim_begin_updates(World *w) { ++w->sim->hold_updates; }
-void sim_end_updates(World *w)
-{
-    Simulator *s = w->sim;
-    if (!s->hold_updates || --s->hold_updates) return;
-    for (size_t i = 0; i < s->held_count && s->error == RS_OK; ++i)
-        sim_state_changed(w, s->held_changes[i]);
-    s->held_count = 0;
 }
