@@ -27,6 +27,9 @@ bool block_states_equal(BlockState a, BlockState b)
         return a.data.note_block.note == b.data.note_block.note &&
                a.data.note_block.instrument == b.data.note_block.instrument &&
                a.data.note_block.powered == b.data.note_block.powered;
+    if (a.id == BLOCK_BARREL)
+        return a.data.barrel.facing == b.data.barrel.facing &&
+               a.data.barrel.open == b.data.barrel.open;
     if (block_is_rail((BlockId)a.id))
         return a.data.rail.powered == b.data.rail.powered &&
                a.data.rail.ascending == b.data.rail.ascending &&
@@ -64,7 +67,7 @@ void sim_update_output_neighbors(World *w, BlockPos pos, Direction output)
     sim_update_neighbors_at(w, front, direction_opposite(output));
 }
 
-static void torch_neighbors(World *w, BlockPos pos)
+void sim_update_neighbors_around(World *w, BlockPos pos)
 {
     for (unsigned i = 0; i < DIR_COUNT; ++i)
         sim_update_neighbors_at(w, block_offset(pos, values[i]), DIR_COUNT);
@@ -78,7 +81,7 @@ static void removed(World *w, StateChange c, bool changed_type)
         if (changed_type && !moving) wire_on_remove(w, c.pos, c.previous);
         break;
     case BLOCK_REDSTONE_TORCH:
-        if (!moving) torch_neighbors(w, c.pos);
+        if (!moving) sim_update_neighbors_around(w, c.pos);
         break;
     case BLOCK_REDSTONE_REPEATER:
     case BLOCK_REDSTONE_COMPARATOR:
@@ -116,7 +119,7 @@ static void placed(World *w, StateChange c, bool changed_type)
         if (changed_type) wire_on_place(w, c.pos, c.current);
         break;
     case BLOCK_REDSTONE_TORCH:
-        torch_neighbors(w, c.pos);
+        sim_update_neighbors_around(w, c.pos);
         break;
     case BLOCK_REDSTONE_REPEATER:
     case BLOCK_REDSTONE_COMPARATOR:

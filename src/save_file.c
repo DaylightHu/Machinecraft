@@ -14,7 +14,7 @@
 #endif
 
 enum {
-    SAVE_VERSION = 10,
+    SAVE_VERSION = 11,
     SAVE_HEADER_SIZE = 64,
     SAVE_CRC_OFFSET = 36
 };
@@ -255,12 +255,11 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     for (size_t i = 0; i < s->containers.count; ++i) {
         const ContainerRuntime *c = &s->containers.items[i];
         size_t count = world_container_size(w, c->pos);
-        uint64_t cooldown = c->cooldown_until > w->tick ? c->cooldown_until - w->tick : 0;
-        if (cooldown > 8 || c->last_tick > w->tick) {
+        if (c->cooldown > 8 || c->last_tick > w->tick) {
             result = GAME_SESSION_SIMULATION_ERROR; goto cleanup;
         }
         bytes_pos(&b, c->pos); bytes_u8(&b, (uint8_t)count);
-        bytes_u8(&b, (uint8_t)cooldown); bytes_u64(&b, c->last_tick);
+        bytes_u8(&b, c->cooldown); bytes_u64(&b, c->last_tick);
         for (size_t j = 0; j < count; ++j) {
             ContainerStack stack = c->slots[j];
             if (!container_stack_valid(stack)) {
@@ -448,18 +447,22 @@ World *save_file_read(const char *path, GameSessionResult *result)
                 }
             }
     }
-    if (actual_torches != torch_count) goto fail;
+    if (actual_torches > torch_count) goto fail;
+    size_t loaded_torches = 0;
     for (uint32_t i = 0; i < torch_count; ++i) {
         BlockPos p = bytes_read_pos(&b);
         TorchRuntime runtime = {.pos = p, .used = true};
         runtime.off_count = bytes_read8(&b); runtime.off_head = bytes_read8(&b);
         runtime.burned_until = bytes_read64(&b);
         for (unsigned j = 0; j < 8; ++j) runtime.off_times[j] = bytes_read64(&b);
-        if (!b.ok || world_get(w, p).id != BLOCK_REDSTONE_TORCH ||
+        if (!b.ok || !world_in_bounds(w, p) ||
             sim_torch_runtime(w, p) || !runtime_valid(w, &runtime)) goto fail;
+        if (world_get(w, p).id == BLOCK_REDSTONE_TORCH) ++loaded_torches;
+        else if (!runtime.off_count) goto fail;
         if (!sim_attach_torch(w, p)) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
         *sim_torch_runtime(w, p) = runtime;
     }
+    if (actual_torches != loaded_torches) goto fail;
     for (uint32_t i = 0; i < event_count; ++i) {
         BlockPos p = bytes_read_pos(&b); uint64_t time = bytes_read64(&b);
         TickPriority priority = (TickPriority)bytes_read8(&b);
@@ -482,11 +485,11 @@ World *save_file_read(const char *path, GameSessionResult *result)
         BlockState state = world_get(w, p);
         if (!b.ok || !container_is_block((BlockId)state.id) || container_runtime(w, p) ||
             count != container_slot_count((BlockId)state.id) || cooldown > 8 ||
-            cooldown > UINT64_MAX - tick || last_tick > tick ||
+            last_tick > tick ||
             (state.id != BLOCK_HOPPER && (cooldown || last_tick))) goto fail;
         if (!container_attach(w, p, state)) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
         ContainerRuntime *c = container_runtime(w, p);
-        c->cooldown_until = tick + cooldown; c->last_tick = last_tick;
+        c->cooldown = (uint8_t)cooldown; c->last_tick = last_tick;
         for (unsigned j = 0; j < count; ++j) {
             ContainerStack stack;
             stack.item = bytes_read32(&b); stack.count = bytes_read8(&b); stack.limit = bytes_read8(&b);

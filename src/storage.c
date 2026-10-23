@@ -27,7 +27,7 @@ enum {
     STATE_STICKY_PISTON_HEAD_COUNT = DIR_COUNT * 2,
     STATE_BARREL_FIRST =
         STATE_STICKY_PISTON_HEAD_FIRST + STATE_STICKY_PISTON_HEAD_COUNT,
-    STATE_BARREL_COUNT = DIR_COUNT * 16,
+    STATE_BARREL_COUNT = DIR_COUNT * 16 * 2,
     STATE_NOTE_BLOCK_FIRST = STATE_BARREL_FIRST + STATE_BARREL_COUNT,
     STATE_NOTE_BLOCK_COUNT = NOTE_COUNT * NOTE_INSTRUMENT_COUNT * 2,
     STATE_TARGET_FIRST = STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT,
@@ -149,10 +149,10 @@ bool state_encode(BlockState s, StateId *id)
     }
     if (s.id == BLOCK_BARREL) {
         if (s.data.barrel.facing >= DIR_COUNT ||
-            s.data.barrel.level > 15 ||
-            s.data.barrel.open) return false;
+            s.data.barrel.level > 15) return false;
         *id = (StateId)(STATE_BARREL_FIRST + s.data.barrel.facing +
-              (unsigned)s.data.barrel.level*DIR_COUNT);
+              (unsigned)s.data.barrel.level*DIR_COUNT +
+              (s.data.barrel.open ? DIR_COUNT*16 : 0));
         return true;
     }
     if (s.id == BLOCK_NOTE_BLOCK) {
@@ -306,7 +306,8 @@ bool state_decode(StateId id, BlockState *s)
         unsigned value = id - STATE_BARREL_FIRST;
         *s = block_default(BLOCK_BARREL);
         s->data.barrel.facing = (uint8_t)(value % DIR_COUNT);
-        s->data.barrel.level = (uint8_t)(value / DIR_COUNT);
+        s->data.barrel.level = (uint8_t)((value / DIR_COUNT) % 16);
+        s->data.barrel.open = value >= DIR_COUNT*16;
         return true;
     }
     if (id >= STATE_NOTE_BLOCK_FIRST &&

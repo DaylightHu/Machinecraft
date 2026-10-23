@@ -346,9 +346,10 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
         break;
     }
     case BLOCK_BARREL:
-        fprintf(output, " capacity=%u facing=%s",
+        fprintf(output, " capacity=%u facing=%s open=%s",
                 (unsigned)state.data.barrel.level,
-                direction_names[state.data.barrel.facing]);
+                direction_names[state.data.barrel.facing],
+                state.data.barrel.open ? "yes" : "no");
         break;
     case BLOCK_NOTE_BLOCK:
         fprintf(output, " powered=%s note=%u instrument=%s",

@@ -22,9 +22,26 @@ void sim_destroy_internal(World *w)
     scheduler_destroy(&s->scheduler); posmap_destroy(&s->torch_slots);
     free(s->torches); free(s); w->sim = NULL;
 }
+static void discard_torch(Simulator *s, size_t slot)
+{
+    posmap_remove(&s->torch_slots, s->torches[slot].pos);
+    s->torches[slot].used = false;
+    s->torches[slot].next_free = s->free_torch;
+    s->free_torch = slot;
+}
+static bool torch_history_recent(const World *w, const TorchRuntime *t)
+{
+    return t->off_count &&
+           w->tick - t->off_times[(t->off_head + 7u) % 8u] <= 60;
+}
 RsResult sim_prepare_torch(World *w)
 {
     Simulator *s = w->sim;
+    if (s->free_torch == SIZE_MAX && s->torch_used == s->torch_capacity)
+        for (size_t i = 0; i < s->torch_used; ++i)
+            if (s->torches[i].used && !torch_history_recent(w, &s->torches[i]) &&
+                world_get(w, s->torches[i].pos).id != BLOCK_REDSTONE_TORCH)
+                discard_torch(s, i);
     if (!posmap_reserve(&s->torch_slots, s->torch_slots.count + 1)) return RS_OUT_OF_MEMORY;
     if (s->free_torch != SIZE_MAX || s->torch_used < s->torch_capacity) return RS_OK;
     size_t capacity = s->torch_capacity ? s->torch_capacity * 2 : 8;
@@ -36,6 +53,11 @@ RsResult sim_prepare_torch(World *w)
 bool sim_attach_torch(World *w, BlockPos p)
 {
     Simulator *s = w->sim;
+    TorchRuntime *existing = sim_torch_runtime(w, p);
+    if (existing) {
+        existing->burned_until = 0;
+        return true;
+    }
     if (sim_prepare_torch(w) != RS_OK) return false;
     size_t slot = s->free_torch != SIZE_MAX ? s->free_torch : s->torch_used;
     if (!posmap_set(&s->torch_slots, p, slot)) return false;
@@ -48,10 +70,9 @@ void sim_forget_cell(World *w, BlockPos p)
     container_forget(w, p);
     sim_discard_piston_motion(w, p);
     Simulator *s = w->sim; size_t slot;
-    if (posmap_get(&s->torch_slots, p, &slot)) {
-        s->torches[slot].used = false; s->torches[slot].next_free = s->free_torch;
-        s->free_torch = slot; posmap_remove(&s->torch_slots, p);
-    }
+    if (posmap_get(&s->torch_slots, p, &slot) &&
+        !torch_history_recent(w, &s->torches[slot]))
+        discard_torch(s, slot);
 }
 TorchRuntime *sim_torch_runtime(const World *w, BlockPos p)
 {

@@ -81,9 +81,15 @@ bool block_supports_wire(const World *world, BlockPos position)
     return block_state_supports_wire(world_get(world, position));
 }
 
-bool block_supports_torch(const World *world, BlockPos position)
+bool block_supports_torch(const World *world, BlockPos position, Direction face)
 {
-    return block_definition((BlockId)world_get(world, position).id)->full_cube;
+    BlockState state = world_get(world, position);
+    if (face != DIR_UP) return block_face_sturdy(state, face);
+    if (block_is_piston_base((BlockId)state.id) && state.data.piston.extended)
+        return state.data.piston.facing != DIR_UP;
+    if (block_is_piston_head((BlockId)state.id))
+        return state.data.piston.facing/2 == DIR_UP/2;
+    return block_definition((BlockId)state.id)->full_cube;
 }
 
 bool block_is_diode(const World *world, BlockPos position)

@@ -6,8 +6,10 @@
 typedef struct {
     BlockPos pos;
     ContainerStack *slots;
-    uint64_t cooldown_until, last_tick;
+    uint64_t last_tick;
     size_t tick_slot;
+    unsigned openers;
+    uint8_t cooldown;
     uint8_t id, facing;
     bool enabled;
 } ContainerRuntime;

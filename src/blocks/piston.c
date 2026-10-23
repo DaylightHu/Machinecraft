@@ -94,6 +94,8 @@ static int piston_position_index(const BlockPos positions[], size_t count,
     return -1;
 }
 
+#include "piston_order.h"
+
 static BlockPos piston_offset(BlockPos position, Direction direction,
                               size_t distance)
 {
@@ -293,14 +295,14 @@ static bool piston_apply_resolved(PistonResolver *resolver)
     World *world = resolver->world;
     BlockState moving[PISTON_PUSH_LIMIT];
     BlockState destroyed[PISTON_DESTROY_LIMIT];
-    bool vacated[PISTON_PUSH_LIMIT];
+    size_t vacated[PISTON_PUSH_LIMIT];
+    size_t vacated_count = piston_vacated_order(resolver, vacated);
 
     if (!sim_prepare_piston_motions(world,
             resolver->push_count + (resolver->extending ? 1u : 0u))) return false;
 
     for (size_t index = 0; index < resolver->push_count; ++index) {
         moving[index] = world_get(world, resolver->to_push[index]);
-        vacated[index] = true;
     }
 
     for (size_t index = resolver->destroy_count; index > 0; --index) {
@@ -314,9 +316,6 @@ static bool piston_apply_resolved(PistonResolver *resolver)
         BlockPos source = resolver->to_push[index - 1];
         BlockPos destination = block_offset(source,
                                             resolver->push_direction);
-        int occupied = piston_position_index(resolver->to_push,
-                                              resolver->push_count, destination);
-        if (occupied >= 0) vacated[occupied] = false;
         BlockState state = moving[index - 1];
         /* A moved target has no reset tick at its new position. Java 1.16.2
          * clears its projectile output when placing it there. */
@@ -334,18 +333,15 @@ static bool piston_apply_resolved(PistonResolver *resolver)
         BlockState head = block_default(sticky ? BLOCK_STICKY_PISTON_HEAD : BLOCK_PISTON_HEAD);
         head.data.piston.facing = (uint8_t)resolver->piston_direction;
         head.data.piston.powered = base.data.piston.powered;
-        int occupied = piston_position_index(resolver->to_push,
-                                              resolver->push_count, head_position);
-        if (occupied >= 0) vacated[occupied] = false;
         if (!piston_start_motion(world, head_position, head,
                 resolver->piston_direction, true, true, sticky)) return false;
     }
-    for (size_t index = 0; index < resolver->push_count; ++index)
-        if (vacated[index] && !piston_write_cell(world, resolver->to_push[index],
-                                                block_default(BLOCK_AIR), 82))
+    for (size_t i = 0; i < vacated_count; ++i)
+        if (!piston_write_cell(world, resolver->to_push[vacated[i]],
+                                block_default(BLOCK_AIR), 82))
             return false;
-    for (size_t index = 0; index < resolver->push_count; ++index) {
-        if (!vacated[index]) continue;
+    for (size_t i = 0; i < vacated_count; ++i) {
+        size_t index = vacated[i];
         BlockPos position = resolver->to_push[index];
         if (moving[index].id == BLOCK_REDSTONE_WIRE)
             wire_indirect_shapes(world, position, moving[index], 2, UPDATE_SHAPE_LIMIT);

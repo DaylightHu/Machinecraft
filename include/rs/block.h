@@ -79,7 +79,7 @@ typedef struct {
         struct {
             uint8_t facing;         /* Direction of the configurable lid. */
             uint8_t level;          /* Derived comparator fullness, 0..15. */
-            bool open;              /* Renderer-only; never stored in World. */
+            bool open;
         } barrel;
         struct {
             bool powered;

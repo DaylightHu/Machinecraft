@@ -74,7 +74,6 @@ BlockState block_default(BlockId id)
         state.data.moving_piston.facing = DIR_NORTH;
     } else if (id == BLOCK_BARREL) {
         state.data.barrel.facing = DIR_NORTH;
-        state.data.barrel.level = 1;
     } else if (id == BLOCK_HOPPER) {
         state.data.hopper.facing = DIR_DOWN;
         state.data.hopper.enabled = true;

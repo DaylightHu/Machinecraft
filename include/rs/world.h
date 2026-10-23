@@ -47,6 +47,8 @@ RsResult world_cycle_repeater_delay(World *world, BlockPos pos);
 RsResult world_toggle_comparator_mode(World *world, BlockPos pos);
 RsResult world_cycle_note(World *world, BlockPos pos);
 RsResult world_set_barrel_level(World *world, BlockPos pos, uint8_t level);
+RsResult world_open_barrel(World *world, BlockPos pos);
+RsResult world_close_barrel(World *world, BlockPos pos);
 /* Five slots in a hopper, nine in a dropper, 27 in a barrel. Slots are zero based.
  * Empty stacks use {0,0,0}; nonempty stacks require count <= limit.
  * Identities supplied by the caller include any item/tag distinctions. */

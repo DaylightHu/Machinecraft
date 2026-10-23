@@ -45,7 +45,7 @@ bool block_is_conductor(const World *, BlockPos);
 bool block_face_sturdy(BlockState, Direction);
 bool block_state_supports_wire(BlockState);
 bool block_supports_wire(const World *, BlockPos);
-bool block_supports_torch(const World *, BlockPos);
+bool block_supports_torch(const World *, BlockPos, Direction);
 bool block_is_diode(const World *, BlockPos);
 bool block_is_signal_source(const World *, BlockPos);
 bool block_has_analog_output(const World *, BlockPos);

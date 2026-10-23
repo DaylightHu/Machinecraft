@@ -100,6 +100,7 @@ static void repeater_neighbor(World *world, BlockPos position)
 {
     if (!repeater_supported(world, position)) {
         world_remove_internal(world, position);
+        sim_update_neighbors_around(world, position);
         return;
     }
     sim_mark_input(world, position);

@@ -11,7 +11,8 @@ enum {
 bool torch_supported(const World *world, BlockPos position, Direction support)
 {
     return (support == DIR_DOWN || direction_horizontal(support)) &&
-           block_supports_torch(world, block_offset(position, support));
+           block_supports_torch(world, block_offset(position, support),
+                                 direction_opposite(support));
 }
 
 static bool input_powered(const World *world, BlockPos position)

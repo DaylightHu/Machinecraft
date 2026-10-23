@@ -214,8 +214,13 @@ static Rectangle barrel_signal_rectangle(ContainerLayout layout, int level)
 
 static void open_barrel(GuiApp *app, BlockPos pos)
 {
+    RsResult result = world_open_barrel(game_session_world(app->session), pos);
+    if (result != RS_OK) {
+        snprintf(app->message, sizeof(app->message),
+                 "Open barrel: %s", rs_result_name(result));
+        return;
+    }
     app->barrel_pos = pos;
-    world_renderer_set_barrel_open(app->world_renderer, pos, true);
     release_mouse(app);
     app->screen = GUI_BARREL;
     snprintf(app->message, sizeof(app->message),
@@ -224,8 +229,7 @@ static void open_barrel(GuiApp *app, BlockPos pos)
 
 static void close_barrel(GuiApp *app)
 {
-    world_renderer_set_barrel_open(app->world_renderer,
-                                   app->barrel_pos, false);
+    (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
     app->screen = GUI_WORLD;
     capture_mouse(app);
 }
@@ -1149,8 +1153,7 @@ int gui_run(void)
             app.screen != GUI_SAVE_ERROR) {
             app.close_latched = true;
             if (app.screen == GUI_BARREL) {
-                world_renderer_set_barrel_open(app.world_renderer,
-                                               app.barrel_pos, false);
+                (void)world_close_barrel(game_session_world(app.session), app.barrel_pos);
                 app.screen = GUI_WORLD;
             }
             if (app.session && game_session_dirty(app.session))

@@ -204,8 +204,7 @@ RsResult container_set_barrel_level(World *w, BlockPos pos, uint8_t level)
 uint8_t world_hopper_cooldown(const World *w, BlockPos pos)
 {
     ContainerRuntime *c = container_runtime(w, pos);
-    if (!c || c->id != BLOCK_HOPPER || c->cooldown_until <= w->tick) return 0;
-    return (uint8_t)(c->cooldown_until - w->tick);
+    return c && c->id == BLOCK_HOPPER ? c->cooldown : 0;
 }
 
 static bool empty(const ContainerRuntime *c)
@@ -222,11 +221,6 @@ static bool full(const ContainerRuntime *c)
     for (size_t i = 0; i < container_slot_count(c->id); ++i)
         if (!c->slots[i].count || c->slots[i].count < c->slots[i].limit) return false;
     return true;
-}
-
-static uint64_t after(const World *w, unsigned ticks)
-{
-    return UINT64_MAX - w->tick < ticks ? UINT64_MAX : w->tick + ticks;
 }
 
 static bool move_slot(World *w, ContainerRuntime *source, ContainerRuntime *dest,
@@ -246,7 +240,7 @@ static bool move_slot(World *w, ContainerRuntime *source, ContainerRuntime *dest
         if (was_empty && dest->id == BLOCK_HOPPER) {
             unsigned delay = source->id == BLOCK_HOPPER &&
                              dest->last_tick >= source->last_tick ? 7 : 8;
-            dest->cooldown_until = after(w, delay);
+            dest->cooldown = (uint8_t)delay;
         }
         contents_changed(w, source);
         contents_changed(w, dest);
@@ -298,15 +292,16 @@ void container_tick_hopper(World *w, BlockPos pos)
 {
     ContainerRuntime *c = container_runtime(w, pos);
     if (!c || c->id != BLOCK_HOPPER) return;
+    if (c->cooldown) --c->cooldown;
     c->last_tick = w->tick;
-    if (c->cooldown_until > w->tick || !can_work(w, c)) return;
+    if (c->cooldown || !can_work(w, c)) return;
     ContainerRuntime *dest = container_runtime(w, block_offset(c->pos, (Direction)c->facing));
     bool moved = !empty(c) && move_one(w, c, dest);
     if (!full(c)) {
         ContainerRuntime *above = container_runtime(w, block_offset(c->pos, DIR_UP));
         moved = move_one(w, above, c) || moved;
     }
-    if (moved) c->cooldown_until = after(w, 8);
+    if (moved) c->cooldown = 8;
 }
 
 bool container_chunk_pinned(const World *w, BlockPos chunk)
@@ -318,7 +313,7 @@ bool container_chunk_pinned(const World *w, BlockPos chunk)
         int64_t dx = (int64_t)floor_div16(c->pos.x) - chunk.x;
         int64_t dz = (int64_t)floor_div16(c->pos.z) - chunk.z;
         if (dx < -1 || dx > 1 || dz < -1 || dz > 1) continue;
-        if (c->cooldown_until > w->tick || can_work(w, c)) return true;
+        if (c->cooldown || can_work(w, c)) return true;
     }
     return false;
 }
