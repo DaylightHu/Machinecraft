@@ -694,7 +694,6 @@ static VoxelHit update_world(GuiApp *app)
         }
     }
 
-    advance_simulation(app);
     return hit;
 }
 
@@ -722,7 +721,6 @@ static void update_inventory(GuiApp *app)
                      inventory_slot_name(selected));
     }
 
-    advance_simulation(app);
 }
 
 static bool write_container_slot(World *world, BlockPos pos, size_t index,
@@ -894,7 +892,6 @@ static void update_barrel(GuiApp *app)
         snprintf(app->message, sizeof(app->message), "Barrel signal %d: %s",
                  level, rs_result_name(result));
     }
-    advance_simulation(app);
 }
 
 static void update_container(GuiApp *app)
@@ -908,7 +905,6 @@ static void update_container(GuiApp *app)
         return;
     }
     update_container_slots(app, app->container_pos, container_layout(id));
-    advance_simulation(app);
 }
 
 static void draw_container(const GuiApp *app, BlockId id)
@@ -1163,6 +1159,7 @@ int gui_run(void)
         }
         if (!app.running) break;
 
+        GameSession *frame_session = app.session;
         VoxelHit hit = {0};
         if (app.screen == GUI_TITLE) update_title(&app);
         else if (app.screen == GUI_WORLD) hit = update_world(&app);
@@ -1170,6 +1167,12 @@ int gui_run(void)
         else if (app.screen == GUI_BARREL) update_barrel(&app);
         else if (app.screen == GUI_HOPPER || app.screen == GUI_DROPPER)
             update_container(&app);
+
+        if (app.session && app.session == frame_session &&
+            app.screen >= GUI_WORLD && app.screen <= GUI_DROPPER) {
+            advance_simulation(&app);
+            if (!app.running) break;
+        }
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
