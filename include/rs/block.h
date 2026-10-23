@@ -15,6 +15,7 @@ typedef enum {
     BLOCK_INTERNAL_FIRST,
     BLOCK_PISTON_HEAD = BLOCK_INTERNAL_FIRST,
     BLOCK_STICKY_PISTON_HEAD,
+    BLOCK_MOVING_PISTON,
     BLOCK_COUNT
 } BlockId;
 
@@ -45,8 +46,9 @@ typedef struct {
         } repeater;
         struct {
             uint8_t facing;         /* Horizontal output direction. */
-            uint8_t output;         /* Stored analog output, 0..15. */
+            uint8_t output;         /* Block-entity cache, 0..15; not a block property. */
             bool subtract;          /* false: compare, true: subtract. */
+            bool powered;          /* Gates the cache; independent of its value. */
         } comparator;
         struct {
             uint8_t facing;         /* Texture top; uphill direction on slopes. */
@@ -62,6 +64,10 @@ typedef struct {
             bool powered;
             bool extended;
         } piston;
+        struct {
+            uint8_t facing;
+            bool sticky;
+        } moving_piston;
         struct {
             uint8_t facing;         /* Direction of the configurable lid. */
             uint8_t level;          /* Derived comparator fullness, 0..15. */

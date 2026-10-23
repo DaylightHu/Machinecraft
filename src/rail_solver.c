@@ -1,109 +1,57 @@
 #include "rail_solver.h"
 #include "sim_internal.h"
 
-#include <stdlib.h>
+enum { RAIL_RANGE = 8 };
 
-enum { RAIL_RANGE = 8, MAX_RAIL_NEIGHBORS = 6 };
+static bool find_power(const World *, BlockPos, BlockState, bool, unsigned);
 
-typedef struct {
-    BlockPos pos;
-    uint8_t distance;
-} RailNode;
-
-typedef struct {
-    RailNode *nodes;
-    size_t count, capacity;
-    PosMap visited;
-} RailWork;
-
-static bool add_node(RailWork *work, BlockPos position)
+static bool same_rail_with_power(const World *world, BlockPos pos, BlockId kind,
+                                  bool x_axis, bool forward, unsigned depth)
 {
-    if (work->count == work->capacity) {
-        size_t capacity = work->capacity ? work->capacity*2 : 64;
-        if (capacity < work->capacity ||
-            capacity > SIZE_MAX/sizeof(*work->nodes)) return false;
-        RailNode *next = realloc(work->nodes, capacity*sizeof(*next));
-        if (!next) return false;
-        work->nodes = next;
-        work->capacity = capacity;
-    }
-    if (!posmap_set(&work->visited, position, work->count)) return false;
-    work->nodes[work->count++] = (RailNode){position, UINT8_MAX};
-    return true;
+    BlockState state = world_get(world, pos);
+    if (state.id != kind ||
+        (state.data.rail.facing/2 == DIR_EAST/2) != x_axis ||
+        !state.data.rail.powered)
+        return false;
+    /* Vanilla follows only already-powered rails. A graph reachability
+     * solution would erase the intermediate states seen by other blocks. */
+    return power_received(world, pos, SIGNAL_ALL) > 0 ||
+           find_power(world, pos, state, forward, depth + 1);
 }
 
-static bool solve_component(World *world, RailWork *work, BlockPos root)
+static bool find_power(const World *world, BlockPos pos, BlockState state,
+                        bool forward, unsigned depth)
 {
-    size_t start = work->count;
-    if (!add_node(work, root)) return false;
-
-    for (size_t cursor = start; cursor < work->count; ++cursor) {
-        BlockPos neighbors[MAX_RAIL_NEIGHBORS];
-        size_t count = rail_neighbors(world, work->nodes[cursor].pos, true,
-                                      neighbors);
-        for (size_t index = 0; index < count; ++index)
-            if (!posmap_get(&work->visited, neighbors[index], NULL) &&
-                !add_node(work, neighbors[index])) return false;
+    if (depth >= RAIL_RANGE) return false;
+    bool x_axis = state.data.rail.facing/2 == DIR_EAST/2;
+    Direction direction = x_axis ? (forward ? DIR_WEST : DIR_EAST) :
+                                  (forward ? DIR_SOUTH : DIR_NORTH);
+    BlockPos next = block_offset(pos, direction);
+    bool may_descend = true;
+    if (state.data.rail.ascending && state.data.rail.facing == direction) {
+        ++next.y;
+        may_descend = false;
     }
-
-    ++world->sim->stats.rail_components_solved;
-    world->sim->stats.rails_visited += work->count - start;
-
-    size_t *queue = malloc((work->count - start)*sizeof(*queue));
-    if (!queue) return false;
-    size_t head = 0, tail = 0;
-    for (size_t index = start; index < work->count; ++index) {
-        if (power_received(world, work->nodes[index].pos, SIGNAL_ALL) == 0)
-            continue;
-        work->nodes[index].distance = 0;
-        queue[tail++] = index;
-    }
-
-    while (head < tail) {
-        size_t index = queue[head++];
-        uint8_t distance = work->nodes[index].distance;
-        if (distance >= RAIL_RANGE) continue;
-        BlockPos neighbors[MAX_RAIL_NEIGHBORS];
-        size_t count = rail_neighbors(world, work->nodes[index].pos, true,
-                                      neighbors);
-        for (size_t neighbor = 0; neighbor < count; ++neighbor) {
-            size_t next;
-            if (!posmap_get(&work->visited, neighbors[neighbor], &next)) {
-                free(queue);
-                return false;
-            }
-            if (work->nodes[next].distance <= distance + 1) continue;
-            work->nodes[next].distance = (uint8_t)(distance + 1);
-            queue[tail++] = next;
-        }
-    }
-    free(queue);
-
-    for (size_t index = start; index < work->count; ++index) {
-        BlockState state = world_get(world, work->nodes[index].pos);
-        bool powered = work->nodes[index].distance <= RAIL_RANGE;
-        if (state.data.rail.powered == powered) continue;
-        state.data.rail.powered = powered;
-        if (!world_write_derived(world, work->nodes[index].pos, state))
-            return false;
-        ++world->sim->stats.rail_changes;
-    }
-    return true;
+    if (same_rail_with_power(world, next, (BlockId)state.id,
+                             x_axis, forward, depth))
+        return true;
+    return may_descend &&
+           same_rail_with_power(world, block_offset(next, DIR_DOWN),
+                                 (BlockId)state.id, x_axis, forward, depth);
 }
 
-void rail_solver_flush(World *world)
+void rail_update_power(World *world, BlockPos pos, BlockState state)
 {
-    RailWork work = {0};
-    BlockPos root;
-    while (queue_pop(&world->sim->rail_roots, &root)) {
-        if (!block_is_rail((BlockId)world_get(world, root).id) ||
-            posmap_get(&work.visited, root, NULL)) continue;
-        if (!solve_component(world, &work, root)) {
-            if (world->sim->error == RS_OK)
-                world->sim->error = RS_OUT_OF_MEMORY;
-            break;
-        }
-    }
-    free(work.nodes);
-    posmap_destroy(&work.visited);
+    ++world->sim->stats.rails_visited;
+    bool powered = power_received(world, pos, SIGNAL_ALL) > 0 ||
+                   find_power(world, pos, state, true, 0) ||
+                   find_power(world, pos, state, false, 0);
+    if (state.data.rail.powered == powered) return;
+    state.data.rail.powered = powered;
+    if (!world_set_block(world, pos, state, UPDATE_NEIGHBORS | UPDATE_CLIENTS))
+        return;
+    ++world->sim->stats.rail_changes;
+    sim_update_neighbors_at(world, block_offset(pos, DIR_DOWN), DIR_COUNT);
+    if (state.data.rail.ascending)
+        sim_update_neighbors_at(world, block_offset(pos, DIR_UP), DIR_COUNT);
 }

@@ -53,11 +53,6 @@ void torch_check_input(World *world, BlockPos position)
 
 static void torch_neighbor(World *world, BlockPos position)
 {
-    BlockState state = world_get(world, position);
-    if (!torch_supported(world, position, (Direction)state.data.torch.support_dir)) {
-        world_remove_internal(world, position);
-        return;
-    }
     sim_mark_input(world, position);
 }
 

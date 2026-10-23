@@ -10,12 +10,11 @@ static void note_block_check_input(World *world, BlockPos position)
     if (state.data.note_block.powered == powered) return;
 
     state.data.note_block.powered = powered;
-    if (!world_write_derived(world, position, state)) return;
+    if (!world_set_block(world, position, state, 3)) return;
 
     /* Both edges are real block-state transitions. This wakes observers and
      * keeps neighboring redstone synchronized, while deliberately producing
      * no sound, pitch state, instrument state, or particle. */
-    sim_notify_change(world, position);
 }
 
 const BlockDef rs_note_block_def = {

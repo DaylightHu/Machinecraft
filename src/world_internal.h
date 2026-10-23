@@ -4,6 +4,17 @@
 #include "chunk.h"
 #include "posmap.h"
 typedef struct Simulator Simulator;
+enum { WORLD_READ_CACHE_SIZE = 64 };
+typedef struct {
+    BlockPos pos;
+    BlockState state;
+    uint64_t stamp;
+} WorldReadEntry;
+typedef struct {
+    BlockPos pos;
+    uint64_t stamp, external_stamp;
+    uint8_t power, external_power;
+} WirePowerEntry;
 struct World {
     WorldConfig config;
     PosMap chunk_map;
@@ -16,10 +27,19 @@ struct World {
     Simulator *sim;
     WorldChangeObserver observer;
     void *observer_context;
+    uint64_t read_stamp, external_power_stamp;
+    WorldReadEntry reads[WORLD_READ_CACHE_SIZE];
+    WirePowerEntry wire_powers[WORLD_READ_CACHE_SIZE];
 };
 bool world_write_derived(World *world, BlockPos pos, BlockState state);
-/* Writes a stored/rendered state which does not exist in vanilla's observable
- * block state. Used for cosmetic input indicators without firing observers. */
+enum { UPDATE_NEIGHBORS = 1, UPDATE_CLIENTS = 2, UPDATE_KNOWN_SHAPE = 16,
+       UPDATE_MOVING = 64, UPDATE_SHAPE_LIMIT = 512 };
+bool world_set_block(World *, BlockPos, BlockState, unsigned flags);
+bool world_set_block_depth(World *, BlockPos, BlockState, unsigned flags,
+                           unsigned remaining_shapes);
+/* Writes auxiliary cell data (input indicators, inventory fullness, comparator
+ * output cache) without vanilla block-state callbacks. Read/power caches and
+ * the storage observer are still updated. */
 bool world_write_visual(World *world, BlockPos pos, BlockState state);
 void world_remove_internal(World *world, BlockPos pos);
 Chunk *world_find_chunk(const World *world, BlockPos key);

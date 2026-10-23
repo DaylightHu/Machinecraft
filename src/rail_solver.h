@@ -3,6 +3,7 @@
 
 #include "world_internal.h"
 
-void rail_solver_flush(World *world);
+/* Synchronous PoweredRailBlock.updateState, including ordered notifications. */
+void rail_update_power(World *world, BlockPos pos, BlockState state);
 
 #endif

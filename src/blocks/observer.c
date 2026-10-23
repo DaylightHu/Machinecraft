@@ -13,17 +13,17 @@ static uint8_t observer_signal(const World *world, BlockPos position,
 }
 
 static void observer_observed_changed(World *world, BlockPos position,
-                                      BlockPos changed)
+                                      BlockState state, BlockPos changed)
 {
-    BlockState state = world_get(world, position);
+    /* Shape evaluation can run while this cell still holds MOVING_PISTON. */
     if (state.id != BLOCK_OBSERVER || state.data.observer.powered ||
-        sim_has_scheduled_tick(world, position)) return;
+        scheduler_pending(&world->sim->scheduler, position, BLOCK_OBSERVER)) return;
 
     Direction output = (Direction)state.data.observer.facing;
     if ((unsigned)output >= DIR_COUNT) return;
     BlockPos watched = block_offset(position, direction_opposite(output));
     if (pos_equal(watched, changed))
-        sim_schedule(world, position, OBSERVER_DELAY);
+        sim_schedule_state(world, position, state, OBSERVER_DELAY);
 }
 
 static TickAction observer_tick(World *world, BlockPos position)

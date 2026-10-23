@@ -21,6 +21,7 @@ InventorySlot hotbar_selected(const Hotbar *hotbar);
 BlockId hotbar_selected_block(const Hotbar *hotbar);
 bool hotbar_set_selected(Hotbar *hotbar, InventorySlot slot);
 bool hotbar_set_selected_block(Hotbar *hotbar, BlockId id);
+bool hotbar_pick_block(Hotbar *hotbar, BlockId id);
 bool hotbar_pick(Hotbar *hotbar, InventorySlot picked);
 void hotbar_draw(const Hotbar *hotbar, const Inventory *inventory);
 #endif

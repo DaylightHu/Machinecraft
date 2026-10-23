@@ -8,6 +8,13 @@ static const BlockDef air = {
     .push_reaction = PUSH_IGNORE
 };
 
+const BlockDef rs_moving_piston_def = {
+    .name = "moving_piston",
+    /* MOVING_PISTON is an inert, unbreakable placeholder in vanilla. The
+     * carried state lives in the simulator's sparse piston-motion table. */
+    .push_reaction = PUSH_BLOCK
+};
+
 const BlockDef *block_definition(BlockId id)
 {
     static const BlockDef *const definitions[BLOCK_COUNT] = {
@@ -33,7 +40,8 @@ const BlockDef *block_definition(BlockId id)
         [BLOCK_DROPPER] = &rs_dropper_def,
         [BLOCK_REDSTONE_LAMP] = &rs_lamp_def,
         [BLOCK_PISTON_HEAD] = &rs_piston_head_def,
-        [BLOCK_STICKY_PISTON_HEAD] = &rs_sticky_piston_head_def
+        [BLOCK_STICKY_PISTON_HEAD] = &rs_sticky_piston_head_def,
+        [BLOCK_MOVING_PISTON] = &rs_moving_piston_def
     };
     return (unsigned)id < BLOCK_COUNT ? definitions[id] : &air;
 }
@@ -62,6 +70,8 @@ BlockState block_default(BlockId id)
         state.data.observer.facing = DIR_NORTH;
     } else if (block_is_piston_base(id) || block_is_piston_head(id)) {
         state.data.piston.facing = DIR_NORTH;
+    } else if (id == BLOCK_MOVING_PISTON) {
+        state.data.moving_piston.facing = DIR_NORTH;
     } else if (id == BLOCK_BARREL) {
         state.data.barrel.facing = DIR_NORTH;
         state.data.barrel.level = 1;

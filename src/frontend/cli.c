@@ -260,7 +260,7 @@ static void print_help(FILE *output)
         fprintf(output, " %s", block_name(id));
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
-          "Repeater/comparator/observer direction is output; piston direction is its front; barrel direction is its lid; rail direction is the texture top.\n"
+          "Repeater/comparator/observer direction is output; piston direction is its front; barrel direction is its lid; rail direction selects its horizontal axis.\n"
           "Observer, barrel, dropper and both piston types accept all six directions. Gates and rails are horizontal; default north.\n"
           "Hopper direction is its outlet: down or horizontal; default down. Up maps to down.\n",
           output);
@@ -295,10 +295,13 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 state.data.repeater.locked ? "yes" : "no");
         break;
     case BLOCK_REDSTONE_COMPARATOR:
-        fprintf(output, " output=%u facing=%s mode=%s",
-                (unsigned)state.data.comparator.output,
+        fprintf(output, " output=%u facing=%s mode=%s powered=%s stored_output=%u",
+                state.data.comparator.powered ?
+                    (unsigned)state.data.comparator.output : 0u,
                 direction_names[state.data.comparator.facing],
-                state.data.comparator.subtract ? "subtract" : "compare");
+                state.data.comparator.subtract ? "subtract" : "compare",
+                state.data.comparator.powered ? "on" : "off",
+                (unsigned)state.data.comparator.output);
         break;
     case BLOCK_POWERED_RAIL:
     case BLOCK_ACTIVATOR_RAIL:
@@ -325,6 +328,21 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 state.data.piston.powered ? "yes" : "no",
                 direction_names[state.data.piston.facing]);
         break;
+    case BLOCK_MOVING_PISTON: {
+        WorldPistonMotion motion;
+        if (world_get_piston_motion(world, position, &motion))
+            fprintf(output,
+                    " payload=%s facing=%s extending=%s source=%s "
+                    "progress=%u/2 previous=%u/2 last_tick=%" PRIu64,
+                    block_name((BlockId)motion.moved_state.id),
+                    direction_names[motion.direction],
+                    motion.extending ? "yes" : "no",
+                    motion.source ? "yes" : "no",
+                    (unsigned)motion.progress,
+                    (unsigned)motion.previous_progress,
+                    motion.last_ticked);
+        break;
+    }
     case BLOCK_BARREL:
         fprintf(output, " capacity=%u facing=%s",
                 (unsigned)state.data.barrel.level,

@@ -3,20 +3,26 @@
 #include "world.h"
 
 typedef struct {
-    uint64_t neighbor_checks, components_solved, wires_visited;
-    uint64_t wire_changes, rail_components_solved, rails_visited;
+    uint64_t neighbor_checks, components_solved; /* components: graph backend passes. */
+    uint64_t wires_visited; /* Individual dust-strength evaluations. */
+    uint64_t wire_changes;
+    uint64_t rail_components_solved; /* Graph passes; zero for synchronous rails. */
+    uint64_t rails_visited; /* Individual synchronous rail-state evaluations. */
     uint64_t rail_changes, events_processed;
-    size_t pending_events;
+    size_t pending_events; /* Scheduled ticks, block events and active motions. */
 } SimStats;
 typedef struct {
     uint8_t received;  /* Any incident signal, e.g. dust can turn off a torch. */
     uint8_t strong;    /* Direct signal with ALL wire outputs suppressed. */
 } SolidPower;
 
-/* Edits mark work; flush performs zero-delay work without advancing time.
- * step flushes edits, advances ONE game tick, then runs due events in
+/* Edits synchronously settle neighbor/shape notifications, dust and rails.
+ * flush reports the current status without advancing time.
+ * step checks that status, advances ONE game tick, then runs due events in
  * priority/insertion order from a frozen due batch, then piston block events,
- * then containers. flush does not execute piston block events or advance time.
+ * then moving pistons and hoppers in one block-entity insertion order. Entries
+ * created during that last phase first tick on the next game tick. flush does
+ * not execute these timed phases or advance time.
  * Each callback's zero-delay consequences settle before the next callback.
  * Torch delay = 2 game ticks (100 ms at 20 TPS). */
 RsResult sim_flush(World *world);

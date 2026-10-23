@@ -137,7 +137,7 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
     if (old_part == new_part && new_part == DUST) {
         geometry = wire_sides(before) != wire_sides(after);
         visual = geometry || before.data.wire.connections != after.data.wire.connections ||
-                 (before.data.wire.power > 0) != (after.data.wire.power > 0);
+                 before.data.wire.power != after.data.wire.power;
     } else if (old_part == new_part && new_part == TORCHES) {
         geometry = before.data.torch.support_dir != after.data.torch.support_dir;
         visual = geometry || before.data.torch.lit != after.data.torch.lit;
@@ -148,8 +148,7 @@ static void on_change(void *context, BlockPos p, BlockState before, BlockState a
     } else if (old_part == new_part && new_part == COMPARATORS) {
         visual = before.data.comparator.facing != after.data.comparator.facing ||
                  before.data.comparator.subtract != after.data.comparator.subtract ||
-                 (before.data.comparator.output > 0) !=
-                 (after.data.comparator.output > 0);
+                 before.data.comparator.powered != after.data.comparator.powered;
     } else if (old_part == new_part &&
                (new_part == POWERED_RAILS || new_part == ACTIVATOR_RAILS)) {
         geometry = before.data.rail.facing != after.data.rail.facing ||

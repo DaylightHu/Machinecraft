@@ -14,8 +14,9 @@ typedef enum {
     TICK_VERY_LOW,
     TICK_EXTREMELY_LOW
 } TickPriority;
-/* Standing and wall torches are separate block types in Java 1.16.2. */
-enum { TICK_WALL_TORCH = BLOCK_COUNT, TICK_BLOCK_TYPES,
+/* Standing and wall torches are separate block types in Java 1.16.2. Keep
+ * this synthetic type stable when internal BlockIds are appended. */
+enum { TICK_WALL_TORCH = UINT8_MAX - 1, TICK_BLOCK_TYPES = UINT8_MAX,
        TICKS_PER_STEP_LIMIT = 65536 };
 typedef struct {
     uint64_t due, sequence;

@@ -7,12 +7,13 @@ typedef struct {
     BlockPos pos;
     ContainerStack *slots;
     uint64_t cooldown_until, last_tick;
+    size_t tick_slot;
     uint8_t id, facing;
     bool enabled;
 } ContainerRuntime;
 typedef struct {
     PosMap positions;
-    ContainerRuntime *items; /* In block-entity insertion order. */
+    ContainerRuntime *items;
     size_t count, capacity;
     uint64_t dropper_random;
 } ContainerTable;
@@ -24,7 +25,7 @@ bool container_attach(World *world, BlockPos pos, BlockState state);
 void container_forget(World *world, BlockPos pos);
 void container_destroy(World *world);
 void container_sync_hopper(World *world, BlockPos pos, BlockState state);
-void container_step(World *world);
+void container_tick_hopper(World *world, BlockPos pos);
 void container_dispense(World *world, BlockPos pos);
 uint8_t container_level(const ContainerRuntime *container);
 bool container_stack_valid(ContainerStack stack);

@@ -14,13 +14,16 @@
 #endif
 
 enum {
-    SAVE_VERSION = 6,
+    SAVE_VERSION = 9,
     SAVE_VERSION_LEGACY = 2,
-    SAVE_HEADER_SIZE = 56,
+    SAVE_HEADER_SIZE = 64,
+    SAVE_HEADER_V7_SIZE = 60,
+    SAVE_HEADER_V6_SIZE = 56,
     SAVE_HEADER_V5_SIZE = 52,
     SAVE_HEADER_V4_SIZE = 44,
     SAVE_HEADER_OLD_SIZE = 40,
-    SAVE_CRC_OFFSET = 36
+    SAVE_CRC_OFFSET = 36,
+    LEGACY_V6_TICK_WALL_TORCH = 23
 };
 static const unsigned char save_magic[8] = {'M','C','W','O','R','L','D',0};
 static uint32_t crc32_update(uint32_t crc, const unsigned char *bytes, size_t size)
@@ -89,22 +92,120 @@ static bool runtime_valid(const World *w, const TorchRuntime *t)
     for (unsigned i = 0; i < t->off_count; ++i) if (t->off_times[i] > w->tick) return false;
     return t->burned_until <= w->tick || t->burned_until - w->tick <= 160;
 }
+static bool motion_valid(const World *w, const PistonMotion *motion)
+{
+    StateId moved_id;
+    BlockState placeholder;
+    if (!motion || !motion->used ||
+        (unsigned)motion->direction >= DIR_COUNT ||
+        motion->moved_state.id == BLOCK_AIR ||
+        motion->moved_state.id == BLOCK_MOVING_PISTON ||
+        (!motion->source &&
+         motion->moved_state.id >= BLOCK_INTERNAL_FIRST) ||
+        motion->progress > 2 ||
+        motion->previous_progress > motion->progress ||
+        motion->progress - motion->previous_progress > 1 ||
+        !state_encode(motion->moved_state, &moved_id))
+        return false;
+    placeholder = world_get(w, motion->pos);
+    return placeholder.id == BLOCK_MOVING_PISTON &&
+           placeholder.data.moving_piston.facing == motion->direction;
+}
 static bool tick_type_valid(uint8_t type)
 {
     BlockId id = type == TICK_WALL_TORCH ? BLOCK_REDSTONE_TORCH : (BlockId)type;
     return type > BLOCK_AIR && type < TICK_BLOCK_TYPES &&
            block_definition(id)->scheduled_tick;
 }
+static bool piston_links_valid(const World *w)
+{
+    const PistonMotions *motions = &w->sim->piston_motions;
+    for (size_t i = 0; i < motions->count; ++i) {
+        const PistonMotion *motion = &motions->items[i];
+        if (!motion->used) continue;
+        BlockState placeholder = world_get(w, motion->pos);
+        bool sticky_payload = motion->moved_state.id == BLOCK_STICKY_PISTON ||
+                              motion->moved_state.id == BLOCK_STICKY_PISTON_HEAD;
+        if (!motion_valid(w, motion) ||
+            (!motion->source && placeholder.data.moving_piston.sticky) ||
+            (motion->source &&
+             placeholder.data.moving_piston.sticky != sticky_payload))
+            return false;
+        if (motion->source &&
+            (motion->extending ?
+                 (!block_is_piston_head((BlockId)motion->moved_state.id) ||
+                  motion->moved_state.data.piston.facing != motion->direction) :
+                 (!block_is_piston_base((BlockId)motion->moved_state.id) ||
+                  motion->moved_state.data.piston.facing != motion->direction ||
+                  motion->moved_state.data.piston.extended)))
+            return false;
+    }
+
+    size_t moving_count = 0;
+    for (size_t i = 0; i < w->chunk_count; ++i) {
+        const Chunk *chunk = w->chunks[i];
+        for (unsigned section = 0; section < SECTION_COUNT; ++section) {
+            if (!chunk->sections[section]) continue;
+            for (size_t index = 0; index < SECTION_VOLUME; ++index) {
+                BlockState state;
+                if (!state_decode(section_get(chunk->sections[section], index),
+                                  &state))
+                    return false;
+                BlockPos position = {
+                    chunk->key.x*16 + (int)(index & 15),
+                    WORLD_MIN_Y + (int)section*16 + (int)(index >> 8),
+                    chunk->key.z*16 + (int)((index >> 4) & 15)
+                };
+                if (state.id == BLOCK_MOVING_PISTON) {
+                    ++moving_count;
+                    if (!sim_piston_motion(w, position)) return false;
+                }
+                if (block_is_piston_base((BlockId)state.id) &&
+                    state.data.piston.extended) {
+                    Direction facing = (Direction)state.data.piston.facing;
+                    BlockPos head_position = block_offset(position, facing);
+                    BlockState head = world_get(w, head_position);
+                    if (block_piston_pair((BlockId)state.id,
+                                          (BlockId)head.id) &&
+                        head.data.piston.facing == state.data.piston.facing)
+                        continue;
+                    const PistonMotion *motion =
+                        sim_piston_motion(w, head_position);
+                    if (head.id != BLOCK_MOVING_PISTON || !motion ||
+                        !motion->source || !motion->extending ||
+                        motion->direction != facing ||
+                        !block_piston_pair((BlockId)state.id,
+                                           (BlockId)motion->moved_state.id) ||
+                        motion->moved_state.data.piston.facing != facing)
+                        return false;
+                }
+                if (block_is_piston_head((BlockId)state.id)) {
+                    Direction facing = (Direction)state.data.piston.facing;
+                    BlockState base = world_get(
+                        w, block_offset(position, direction_opposite(facing)));
+                    if (!block_piston_pair((BlockId)base.id,
+                                           (BlockId)state.id) ||
+                        !base.data.piston.extended ||
+                        base.data.piston.facing != state.data.piston.facing)
+                        return false;
+                }
+            }
+        }
+    }
+    return moving_count == motions->active;
+}
 static GameSessionResult write_save_contents(const World *world, FILE *file)
 {
     World *w = (World *)world;
     Simulator *s = w->sim;
-    if (s->error != RS_OK || s->dirty.count || s->wire_roots.count ||
-        s->rail_roots.count || s->input_roots.count ||
-        s->scheduler.ticking_head != s->scheduler.ticking_count)
+    if (s->error != RS_OK || s->hold_updates || s->held_count ||
+        s->block_entities.ticking || !sim_block_entity_order_valid(w) ||
+        s->scheduler.ticking_head != s->scheduler.ticking_count ||
+        !piston_links_valid(w))
         return GAME_SESSION_SIMULATION_ERROR;
     size_t piston_count = s->piston_events.count - s->piston_events.head;
-    if (w->chunk_count > UINT32_MAX || s->torch_slots.count > UINT32_MAX || s->torch_used > UINT32_MAX || s->scheduler.count > UINT32_MAX || s->containers.count > UINT32_MAX || piston_count > UINT32_MAX)
+    size_t motion_count = s->piston_motions.active;
+    if (w->chunk_count > UINT32_MAX || s->torch_slots.count > UINT32_MAX || s->torch_used > UINT32_MAX || s->scheduler.count > UINT32_MAX || s->containers.count > UINT32_MAX || piston_count > UINT32_MAX || motion_count > UINT32_MAX || s->block_entities.active > UINT32_MAX)
         return GAME_SESSION_SIMULATION_ERROR;
     Chunk **chunks = w->chunk_count ? malloc(w->chunk_count * sizeof(Chunk *)) : NULL;
     TorchRuntime **torches = s->torch_used ? malloc(s->torch_used * sizeof(TorchRuntime *)) : NULL;
@@ -127,6 +228,8 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     bytes_u32(&b, (uint32_t)s->containers.count);
     bytes_u64(&b, s->containers.dropper_random);
     bytes_u32(&b, (uint32_t)piston_count);
+    bytes_u32(&b, (uint32_t)motion_count);
+    bytes_u32(&b, (uint32_t)s->block_entities.active);
     GameSessionResult result = GAME_SESSION_OK;
     for (size_t i = 0; i < chunk_count; ++i) {
         ByteBuffer snapshot; bytes_init(&snapshot);
@@ -181,6 +284,28 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
         }
         bytes_pos(&b, e.pos); bytes_u8(&b, e.block);
         bytes_u8(&b, e.type); bytes_u8(&b, e.facing);
+    }
+    for (size_t i = 0; i < s->piston_motions.count; ++i) {
+        const PistonMotion *motion = &s->piston_motions.items[i];
+        if (!motion->used) continue;
+        StateId moved_id;
+        if (!motion_valid(w, motion) ||
+            !state_encode(motion->moved_state, &moved_id)) {
+            result = GAME_SESSION_SIMULATION_ERROR;
+            goto cleanup;
+        }
+        bytes_pos(&b, motion->pos);
+        bytes_u16(&b, moved_id);
+        bytes_u8(&b, motion->direction);
+        /* Vanilla writes progressO and restores both progress fields from it. */
+        bytes_u8(&b, motion->previous_progress);
+        bytes_u8(&b, (uint8_t)((motion->extending ? 1u : 0u) |
+                               (motion->source ? 2u : 0u)));
+    }
+    for (size_t i = 0; i < s->block_entities.count; ++i) {
+        BlockEntityTick entity = s->block_entities.items[i];
+        if (!entity.used) continue;
+        bytes_pos(&b, entity.pos); bytes_u8(&b, entity.block);
     }
     if (!b.ok) { result = GAME_SESSION_OUT_OF_MEMORY; goto cleanup; }
     uint32_t crc = crc32_bytes(b.data, b.size);
@@ -269,12 +394,15 @@ World *save_file_read(const char *path, GameSessionResult *result)
     if (b.size < 12 || memcmp(b.data, save_magic, 8)) goto fail;
     b.cursor = 8;
     unsigned version = bytes_read16(&b), header = bytes_read16(&b);
-    if (version != SAVE_VERSION && version != 5 && version != 4 && version != 3 &&
+    if (version != SAVE_VERSION && version != 8 && version != 7 && version != 6 &&
+        version != 5 && version != 4 && version != 3 &&
         version != SAVE_VERSION_LEGACY) {
         *result = GAME_SESSION_UNSUPPORTED_SAVE;
         goto fail;
     }
-    unsigned expected_header = version >= 6 ? SAVE_HEADER_SIZE :
+    unsigned expected_header = version >= 9 ? SAVE_HEADER_SIZE :
+                               version >= 7 ? SAVE_HEADER_V7_SIZE :
+                               version == 6 ? SAVE_HEADER_V6_SIZE :
                                version == 5 ? SAVE_HEADER_V5_SIZE :
                                version == 4 ? SAVE_HEADER_V4_SIZE : SAVE_HEADER_OLD_SIZE;
     if (header != expected_header || b.size < header) goto fail;
@@ -284,13 +412,17 @@ World *save_file_read(const char *path, GameSessionResult *result)
     uint32_t container_count = version >= 4 ? bytes_read32(&b) : 0;
     uint64_t dropper_random = version >= 5 ? bytes_read64(&b) : UINT64_C(0x5deece66d);
     uint32_t piston_count = version >= 6 ? bytes_read32(&b) : 0;
+    uint32_t motion_count = version >= 7 ? bytes_read32(&b) : 0;
+    uint32_t entity_count = version >= 9 ? bytes_read32(&b) : 0;
     if (dropper_random >> 48) goto fail;
     memset(b.data + SAVE_CRC_OFFSET, 0, 4);
     uint64_t event_size = version >= 6 ? 22 : version >= 3 ? 21 : 20;
     if (crc32_bytes(b.data, b.size) != crc || ground > 65 ||
         (uint64_t)chunk_count * 20 + (uint64_t)torch_count * 86 +
         (uint64_t)event_count * event_size + (uint64_t)container_count * 52 +
-        (uint64_t)piston_count * 15 > b.size - header)
+        (uint64_t)piston_count * 15 + (uint64_t)motion_count * 17 +
+        (uint64_t)entity_count * 13 >
+        b.size - header)
         goto fail;
     w = world_create((WorldConfig){(int)ground});
     if (!w) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
@@ -307,7 +439,7 @@ World *save_file_read(const char *path, GameSessionResult *result)
         }
         b.cursor += size;
     }
-    size_t actual_torches = 0, actual_containers = 0;
+    size_t actual_torches = 0, actual_containers = 0, actual_motions = 0;
     for (size_t i = 0; i < w->chunk_count; ++i) {
         Chunk *c = w->chunks[i];
         for (unsigned sec = 0; sec < SECTION_COUNT; ++sec) if (c->sections[sec])
@@ -315,6 +447,10 @@ World *save_file_read(const char *path, GameSessionResult *result)
                 BlockState state;
                 if (!state_decode(section_get(c->sections[sec], j), &state)) goto fail;
                 if (state.id == BLOCK_DROPPER && version < 5) goto fail;
+                if (state.id == BLOCK_MOVING_PISTON) {
+                    if (version < 7) goto fail;
+                    ++actual_motions;
+                }
                 BlockPos p = {c->key.x * 16 + (int)(j & 15), WORLD_MIN_Y + (int)sec * 16 + (int)(j >> 8),
                               c->key.z * 16 + (int)((j >> 4) & 15)};
                 if (container_is_block((BlockId)state.id)) {
@@ -331,25 +467,6 @@ World *save_file_read(const char *path, GameSessionResult *result)
                     !comparator_supported(w, p)) goto fail;
                 if (block_is_rail((BlockId)state.id) && !rail_supported(w, p))
                     goto fail;
-                if (block_is_piston_base((BlockId)state.id) &&
-                    state.data.piston.extended) {
-                    Direction facing = (Direction)state.data.piston.facing;
-                    BlockState head = world_get(w, block_offset(p, facing));
-                    if (!block_piston_pair((BlockId)state.id,
-                                           (BlockId)head.id) ||
-                        head.data.piston.facing != state.data.piston.facing)
-                        goto fail;
-                }
-                if (block_is_piston_head((BlockId)state.id)) {
-                    Direction facing = (Direction)state.data.piston.facing;
-                    BlockState base = world_get(
-                        w, block_offset(p, direction_opposite(facing)));
-                    if (!block_piston_pair((BlockId)base.id,
-                                           (BlockId)state.id) ||
-                        !base.data.piston.extended ||
-                        base.data.piston.facing != state.data.piston.facing)
-                        goto fail;
-                }
                 if (state.id == BLOCK_REDSTONE_TORCH) {
                     if (!torch_supported(w, p, (Direction)state.data.torch.support_dir)) goto fail;
                     ++actual_torches;
@@ -375,6 +492,8 @@ World *save_file_read(const char *path, GameSessionResult *result)
         BlockId event_block = (BlockId)world_get(w, p).id;
         uint8_t type = version >= 6 ? bytes_read8(&b) :
                        scheduler_block_type(world_get(w, p));
+        if (version == 6 && type == LEGACY_V6_TICK_WALL_TORCH)
+            type = TICK_WALL_TORCH;
         if (!b.ok || !world_in_bounds(w, p) ||
             (version < 6 && (!time || time > UINT64_MAX - tick)) ||
             (unsigned)priority > TICK_EXTREMELY_LOW ||
@@ -430,7 +549,70 @@ World *save_file_read(const char *path, GameSessionResult *result)
         }
         if (w->sim->piston_events.pending.count != count + 1) goto fail;
     }
-    if (!b.ok || b.cursor != b.size || w->sim->error != RS_OK) goto fail;
+    if (actual_motions != motion_count) goto fail;
+    if (!sim_prepare_piston_motions(w, motion_count)) {
+        *result = GAME_SESSION_OUT_OF_MEMORY;
+        goto fail;
+    }
+    for (uint32_t i = 0; i < motion_count; ++i) {
+        PistonMotion motion = {0};
+        motion.pos = bytes_read_pos(&b);
+        StateId moved_id = bytes_read16(&b);
+        motion.direction = bytes_read8(&b);
+        motion.previous_progress = bytes_read8(&b);
+        motion.progress = motion.previous_progress;
+        uint8_t flags = bytes_read8(&b);
+        motion.extending = (flags & 1u) != 0;
+        motion.source = (flags & 2u) != 0;
+        if (!b.ok || (flags & ~3u) ||
+            !state_decode(moved_id, &motion.moved_state) ||
+            !sim_add_piston_motion(w, motion))
+            goto fail;
+    }
+    BlockEntityTicks *entities = &w->sim->block_entities;
+    if (version >= 9) {
+        if (entity_count != entities->active) goto fail;
+        for (size_t i = 0; i < w->sim->piston_motions.count; ++i)
+            w->sim->piston_motions.items[i].tick_slot = SIZE_MAX;
+        for (size_t i = 0; i < w->sim->containers.count; ++i)
+            w->sim->containers.items[i].tick_slot = SIZE_MAX;
+        for (uint32_t i = 0; i < entity_count; ++i) {
+            BlockEntityTick entity = {.pos = bytes_read_pos(&b), .used = true};
+            entity.block = bytes_read8(&b);
+            size_t *slot = NULL, index;
+            if (entity.block == BLOCK_MOVING_PISTON &&
+                posmap_get(&w->sim->piston_motions.slots, entity.pos, &index))
+                slot = &w->sim->piston_motions.items[index].tick_slot;
+            else if (entity.block == BLOCK_HOPPER) {
+                ContainerRuntime *c = container_runtime(w, entity.pos);
+                if (c && c->id == BLOCK_HOPPER) slot = &c->tick_slot;
+            }
+            if (!b.ok || !slot || *slot != SIZE_MAX) goto fail;
+            *slot = i; entities->items[i] = entity;
+        }
+    } else {
+        /* v2..v8 recorded only separate motion/container orders. Preserve
+         * their historical motions-first interpretation when importing. */
+        size_t index = 0;
+        for (size_t i = 0; i < w->sim->piston_motions.count; ++i) {
+            PistonMotion *motion = &w->sim->piston_motions.items[i];
+            if (!motion->used) continue;
+            motion->tick_slot = index;
+            entities->items[index++] = (BlockEntityTick){motion->pos, BLOCK_MOVING_PISTON, true};
+        }
+        for (size_t i = 0; i < w->sim->containers.count; ++i) {
+            ContainerRuntime *c = &w->sim->containers.items[i];
+            if (c->id != BLOCK_HOPPER) continue;
+            c->tick_slot = index;
+            entities->items[index++] = (BlockEntityTick){c->pos, BLOCK_HOPPER, true};
+        }
+    }
+    entities->count = entities->active;
+    if (!b.ok || b.cursor != b.size || w->sim->error != RS_OK ||
+        w->sim->piston_motions.active != motion_count ||
+        !sim_block_entity_order_valid(w) ||
+        !piston_links_valid(w))
+        goto fail;
     /* Keep only regions with pending simulation work resident until a view is set. */
     for (size_t i = 0; i < w->chunk_count; ++i)
         if (!sim_chunk_pinned(w, w->chunks[i]->key) && !world_archive_chunk(w, w->chunks[i])) {
