@@ -25,6 +25,14 @@ typedef enum {
     DIR_EAST = 0, DIR_WEST, DIR_UP, DIR_DOWN, DIR_SOUTH, DIR_NORTH, DIR_COUNT
 } Direction;
 
+typedef enum {
+    NOTE_HARP, NOTE_BASEDRUM, NOTE_SNARE, NOTE_HAT, NOTE_BASS,
+    NOTE_FLUTE, NOTE_BELL, NOTE_GUITAR, NOTE_CHIME, NOTE_XYLOPHONE,
+    NOTE_IRON_XYLOPHONE, NOTE_COW_BELL, NOTE_DIDGERIDOO, NOTE_BIT,
+    NOTE_BANJO, NOTE_PLING, NOTE_INSTRUMENT_COUNT
+} NoteInstrument;
+enum { NOTE_COUNT = 25 };
+
 typedef struct {
     uint8_t id; /* BlockId: C enums themselves need not occupy one byte. */
     union {
@@ -74,7 +82,8 @@ typedef struct {
             bool open;              /* Renderer-only; never stored in World. */
         } barrel;
         struct {
-            bool powered;           /* Stored edge state; no note or instrument. */
+            bool powered;
+            uint8_t note, instrument;
         } note_block;
         struct {
             uint8_t power;          /* Own projectile pulse, 0..15; not conducted power. */
@@ -97,6 +106,7 @@ typedef struct {
 
 BlockState block_default(BlockId id);
 const char *block_name(BlockId id);
+const char *note_instrument_name(NoteInstrument instrument);
 BlockPos block_offset(BlockPos pos, Direction direction);
 Direction direction_opposite(Direction direction);
 bool direction_horizontal(Direction direction);

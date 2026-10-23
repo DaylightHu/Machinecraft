@@ -520,23 +520,13 @@ static void piston_head_neighbor_changed(World *world, BlockPos position)
         sim_mark_input(world, base_position);
 }
 
-static TickAction piston_motion_tick(World *world, BlockPos position)
-{
-    BlockState state = world_get(world, position);
-    TickAction action = {state, false, 0};
-    /* Compatibility only: version-6 saves used a no-op scheduled piston tick
-     * as a motion marker. New motions are sparse block-entity state. */
-    return action;
-}
-
 const BlockDef rs_piston_def = {
     .name = "piston",
     .full_cube = true,
     .supports_wire = true,
     .push_reaction = PUSH_NORMAL,
     .neighbor_changed = piston_neighbor_changed,
-    .input_changed = piston_check_input,
-    .scheduled_tick = piston_motion_tick
+    .input_changed = piston_check_input
 };
 
 const BlockDef rs_sticky_piston_def = {
@@ -545,8 +535,7 @@ const BlockDef rs_sticky_piston_def = {
     .supports_wire = true,
     .push_reaction = PUSH_NORMAL,
     .neighbor_changed = piston_neighbor_changed,
-    .input_changed = piston_check_input,
-    .scheduled_tick = piston_motion_tick
+    .input_changed = piston_check_input
 };
 
 const BlockDef rs_piston_head_def = {

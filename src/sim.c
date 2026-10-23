@@ -49,10 +49,6 @@ void sim_forget_cell(World *w, BlockPos p)
     container_forget(w, p);
     sim_discard_piston_motion(w, p);
     Simulator *s = w->sim; size_t slot;
-    /* Keep accepting version-6 saves, where piston entries were no-op motion
-     * markers represented as scheduled block ticks. */
-    scheduler_cancel(&s->scheduler, p, BLOCK_PISTON);
-    scheduler_cancel(&s->scheduler, p, BLOCK_STICKY_PISTON);
     if (posmap_get(&s->torch_slots, p, &slot)) {
         s->torches[slot].used = false; s->torches[slot].next_free = s->free_torch;
         s->free_torch = slot; posmap_remove(&s->torch_slots, p);

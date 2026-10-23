@@ -658,6 +658,17 @@ static VoxelHit update_world(GuiApp *app)
                 result = game_session_flush(app->session);
             snprintf(app->message, sizeof(app->message),
                      "Toggle comparator mode: %s", rs_result_name(result));
+        } else if (hit.hit && !shift && target == BLOCK_NOTE_BLOCK) {
+            RsResult result = world_cycle_note(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            BlockState state = world_get(world, hit.pos);
+            if ((result == RS_OK || result == RS_UNCHANGED) && state.id == BLOCK_NOTE_BLOCK)
+                snprintf(app->message, sizeof(app->message), "Note: %u (%s)",
+                    (unsigned)state.data.note_block.note,
+                    note_instrument_name((NoteInstrument)state.data.note_block.instrument));
+            else
+                snprintf(app->message, sizeof(app->message), "Tune note: %s", rs_result_name(result));
         } else {
             if (hotbar_selected(&app->hotbar).kind == INVENTORY_ITEM)
                 snprintf(app->message, sizeof(app->message),

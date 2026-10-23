@@ -25,6 +25,10 @@ bool block_states_equal(BlockState a, BlockState b)
         return a.data.comparator.facing == b.data.comparator.facing &&
                a.data.comparator.subtract == b.data.comparator.subtract &&
                a.data.comparator.powered == b.data.comparator.powered;
+    if (a.id == BLOCK_NOTE_BLOCK)
+        return a.data.note_block.note == b.data.note_block.note &&
+               a.data.note_block.instrument == b.data.note_block.instrument &&
+               a.data.note_block.powered == b.data.note_block.powered;
     if (block_is_rail((BlockId)a.id))
         return a.data.rail.powered == b.data.rail.powered &&
                a.data.rail.ascending == b.data.rail.ascending &&
@@ -163,6 +167,9 @@ static BlockState update_shape(World *w, BlockPos pos, BlockState state,
     else if (state.id == BLOCK_REDSTONE_REPEATER) {
         if (toward/2 != state.data.repeater.facing/2)
             state.data.repeater.locked = repeater_is_locked(w, pos, state);
+    } else if (state.id == BLOCK_NOTE_BLOCK) {
+        if (toward == DIR_DOWN)
+            state.data.note_block.instrument = (uint8_t)note_instrument(world_get(w, source));
     } else if (state.id == BLOCK_REDSTONE_TORCH) {
         Direction support = (Direction)state.data.torch.support_dir;
         if (toward == support && !torch_supported(w, pos, support))

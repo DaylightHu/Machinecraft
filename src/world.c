@@ -373,6 +373,8 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         state.data.dropper.facing = (uint8_t)support;
     if (id == BLOCK_REDSTONE_LAMP)
         state.data.lamp.lit = power_received(w, p, SIGNAL_ALL) > 0;
+    if (id == BLOCK_NOTE_BLOCK)
+        state.data.note_block.instrument = (uint8_t)note_instrument(world_get(w, block_offset(p, DIR_DOWN)));
     if (id == BLOCK_REDSTONE_WIRE) {
         state.data.wire.connections = 0x33;
         state = wire_connection_state(w, p, state);
@@ -460,6 +462,17 @@ RsResult world_set_barrel_level(World *w, BlockPos p, uint8_t level)
     BlockState state = world_get(w, p);
     if (state.id != BLOCK_BARREL) return RS_INVALID_ARGUMENT;
     return container_set_barrel_level(w, p, level);
+}
+RsResult world_cycle_note(World *w, BlockPos p)
+{
+    if (!w) return RS_INVALID_ARGUMENT;
+    if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
+    RsResult result = sim_flush(w); if (result != RS_OK) return result;
+    BlockState state = world_get(w, p);
+    if (state.id != BLOCK_NOTE_BLOCK) return RS_INVALID_ARGUMENT;
+    state.data.note_block.note = (uint8_t)((state.data.note_block.note + 1u) % NOTE_COUNT);
+    (void)world_set_block(w, p, state, 3);
+    return w->sim->error;
 }
 static bool in_view(const World *w, BlockPos key)
 {

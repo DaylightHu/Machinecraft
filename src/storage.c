@@ -9,7 +9,7 @@ enum {
     STATE_REPEATER_FIRST = 8208,
     STATE_REPEATER_COUNT = 64,
     STATE_COMPARATOR_FIRST = STATE_REPEATER_FIRST + STATE_REPEATER_COUNT,
-    STATE_COMPARATOR_COUNT = 128,
+    STATE_COMPARATOR_COUNT = 256,
     STATE_POWERED_RAIL_FIRST = STATE_COMPARATOR_FIRST + STATE_COMPARATOR_COUNT,
     STATE_RAIL_COUNT = 16,
     STATE_ACTIVATOR_RAIL_FIRST = STATE_POWERED_RAIL_FIRST + STATE_RAIL_COUNT,
@@ -27,29 +27,22 @@ enum {
     STATE_STICKY_PISTON_HEAD_COUNT = DIR_COUNT * 2,
     STATE_BARREL_FIRST =
         STATE_STICKY_PISTON_HEAD_FIRST + STATE_STICKY_PISTON_HEAD_COUNT,
-    STATE_BARREL_COUNT = DIR_COUNT * 15,
+    STATE_BARREL_COUNT = DIR_COUNT * 16,
     STATE_NOTE_BLOCK_FIRST = STATE_BARREL_FIRST + STATE_BARREL_COUNT,
-    STATE_NOTE_BLOCK_COUNT = 2,
-    /* Append state ranges so existing .mcw palettes retain their meaning. */
+    STATE_NOTE_BLOCK_COUNT = NOTE_COUNT * NOTE_INSTRUMENT_COUNT * 2,
     STATE_TARGET_FIRST = STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT,
     STATE_TARGET_COUNT = 16,
     STATE_HOPPER_FIRST = STATE_TARGET_FIRST + STATE_TARGET_COUNT,
     STATE_HOPPER_COUNT = 5 * 2 * 16,
-    STATE_EMPTY_BARREL_FIRST = STATE_HOPPER_FIRST + STATE_HOPPER_COUNT,
-    STATE_DROPPER_FIRST = STATE_EMPTY_BARREL_FIRST + DIR_COUNT,
+    STATE_DROPPER_FIRST = STATE_HOPPER_FIRST + STATE_HOPPER_COUNT,
     STATE_DROPPER_COUNT = DIR_COUNT * 2 * 16,
     STATE_LAMP_FIRST = STATE_DROPPER_FIRST + STATE_DROPPER_COUNT,
     STATE_LAMP_COUNT = 2,
     STATE_MOVING_PISTON_FIRST = STATE_LAMP_FIRST + STATE_LAMP_COUNT,
-    STATE_MOVING_PISTON_COUNT = DIR_COUNT * 2,
-    /* v2..v7 comparator IDs above stored only effective output. Append the
-     * independent POWERED/cache combinations; never shift existing ranges. */
-    STATE_COMPARATOR_V8_FIRST =
-        STATE_MOVING_PISTON_FIRST + STATE_MOVING_PISTON_COUNT,
-    STATE_COMPARATOR_V8_COUNT = 256
+    STATE_MOVING_PISTON_COUNT = DIR_COUNT * 2
 };
 
-_Static_assert(STATE_COMPARATOR_V8_FIRST + STATE_COMPARATOR_V8_COUNT <=
+_Static_assert(STATE_MOVING_PISTON_FIRST + STATE_MOVING_PISTON_COUNT <=
                STATE_ID_LIMIT,
                "block states must fit the palette state id");
 
@@ -113,7 +106,7 @@ bool state_encode(BlockState s, StateId *id)
         unsigned facing;
         if (!horizontal_index(s.data.comparator.facing, &facing) ||
             s.data.comparator.output > 15) return false;
-        *id = (StateId)(STATE_COMPARATOR_V8_FIRST + facing +
+        *id = (StateId)(STATE_COMPARATOR_FIRST + facing +
               (unsigned)s.data.comparator.output*4u +
               (s.data.comparator.subtract ? 64u : 0u) +
               (s.data.comparator.powered ? 128u : 0u));
@@ -158,17 +151,16 @@ bool state_encode(BlockState s, StateId *id)
         if (s.data.barrel.facing >= DIR_COUNT ||
             s.data.barrel.level > 15 ||
             s.data.barrel.open) return false;
-        if (!s.data.barrel.level) {
-            *id = (StateId)(STATE_EMPTY_BARREL_FIRST + s.data.barrel.facing);
-            return true;
-        }
         *id = (StateId)(STATE_BARREL_FIRST + s.data.barrel.facing +
-              (unsigned)(s.data.barrel.level - 1)*DIR_COUNT);
+              (unsigned)s.data.barrel.level*DIR_COUNT);
         return true;
     }
     if (s.id == BLOCK_NOTE_BLOCK) {
-        *id = (StateId)(STATE_NOTE_BLOCK_FIRST +
-                        (s.data.note_block.powered ? 1u : 0u));
+        if (s.data.note_block.note >= NOTE_COUNT ||
+            s.data.note_block.instrument >= NOTE_INSTRUMENT_COUNT) return false;
+        *id = (StateId)(STATE_NOTE_BLOCK_FIRST + s.data.note_block.note +
+              s.data.note_block.instrument*NOTE_COUNT +
+              (s.data.note_block.powered ? NOTE_COUNT*NOTE_INSTRUMENT_COUNT : 0));
         return true;
     }
     if (s.id == BLOCK_TARGET) {
@@ -237,18 +229,6 @@ bool state_decode(StateId id, BlockState *s)
     if (id >= STATE_COMPARATOR_FIRST &&
         id < STATE_COMPARATOR_FIRST + STATE_COMPARATOR_COUNT) {
         unsigned value = id - STATE_COMPARATOR_FIRST;
-        *s = block_default(BLOCK_REDSTONE_COMPARATOR);
-        s->data.comparator.facing = (uint8_t)horizontal_face(value);
-        s->data.comparator.output = (uint8_t)((value >> 2) & 15u);
-        s->data.comparator.subtract = (value & 64u) != 0;
-        /* Preserve legacy effective output without resampling inputs or
-         * disturbing pending ticks. Suppressed rear caches were not saved. */
-        s->data.comparator.powered = s->data.comparator.output != 0;
-        return true;
-    }
-    if (id >= STATE_COMPARATOR_V8_FIRST &&
-        id < STATE_COMPARATOR_V8_FIRST + STATE_COMPARATOR_V8_COUNT) {
-        unsigned value = id - STATE_COMPARATOR_V8_FIRST;
         *s = block_default(BLOCK_REDSTONE_COMPARATOR);
         s->data.comparator.facing = (uint8_t)horizontal_face(value);
         s->data.comparator.output = (uint8_t)((value >> 2) & 15u);
@@ -326,13 +306,16 @@ bool state_decode(StateId id, BlockState *s)
         unsigned value = id - STATE_BARREL_FIRST;
         *s = block_default(BLOCK_BARREL);
         s->data.barrel.facing = (uint8_t)(value % DIR_COUNT);
-        s->data.barrel.level = (uint8_t)(value / DIR_COUNT + 1);
+        s->data.barrel.level = (uint8_t)(value / DIR_COUNT);
         return true;
     }
     if (id >= STATE_NOTE_BLOCK_FIRST &&
         id < STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT) {
+        unsigned value = id - STATE_NOTE_BLOCK_FIRST;
         *s = block_default(BLOCK_NOTE_BLOCK);
-        s->data.note_block.powered = id != STATE_NOTE_BLOCK_FIRST;
+        s->data.note_block.note = (uint8_t)(value % NOTE_COUNT);
+        s->data.note_block.instrument = (uint8_t)((value / NOTE_COUNT) % NOTE_INSTRUMENT_COUNT);
+        s->data.note_block.powered = value >= NOTE_COUNT*NOTE_INSTRUMENT_COUNT;
         return true;
     }
     if (id >= STATE_TARGET_FIRST && id < STATE_TARGET_FIRST + STATE_TARGET_COUNT) {
@@ -347,12 +330,6 @@ bool state_decode(StateId id, BlockState *s)
         s->data.hopper.facing = (uint8_t)faces[value % 5];
         s->data.hopper.enabled = (value % 10) >= 5;
         s->data.hopper.level = (uint8_t)(value / 10);
-        return true;
-    }
-    if (id >= STATE_EMPTY_BARREL_FIRST && id < STATE_EMPTY_BARREL_FIRST + DIR_COUNT) {
-        *s = block_default(BLOCK_BARREL);
-        s->data.barrel.facing = (uint8_t)(id - STATE_EMPTY_BARREL_FIRST);
-        s->data.barrel.level = 0;
         return true;
     }
     if (id >= STATE_DROPPER_FIRST && id < STATE_DROPPER_FIRST + STATE_DROPPER_COUNT) {

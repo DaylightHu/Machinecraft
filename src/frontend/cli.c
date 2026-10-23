@@ -12,7 +12,7 @@ enum { LINE_CAPACITY = 512, TOKEN_CAPACITY = 8 };
 
 typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
-    COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_CAPACITY,
+    COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_TUNE, COMMAND_CAPACITY,
     COMMAND_HIT, COMMAND_SLOT, COMMAND_SLOTS, COMMAND_TICK, COMMAND_STATS,
     COMMAND_DROPPER_SEED, COMMAND_QUIT
 } CommandKind;
@@ -237,6 +237,8 @@ static bool parse_command(char *tokens[], int count, Command *command)
             command->kind = COMMAND_DELAY;
         } else if (strcmp(name, "mode") == 0) {
             command->kind = COMMAND_MODE;
+        } else if (strcmp(name, "tune") == 0) {
+            command->kind = COMMAND_TUNE;
         } else {
             return false;
         }
@@ -251,7 +253,7 @@ static void print_help(FILE *output)
 {
     fputs("place X Y Z BLOCK [DIRECTION]\n"
           "remove X Y Z\nget X Y Z\ndot X Y Z\ndelay X Y Z\n"
-          "mode X Y Z\ncapacity X Y Z LEVEL\n"
+          "mode X Y Z\ntune X Y Z\ncapacity X Y Z LEVEL\n"
           "slots X Y Z\nslot X Y Z INDEX ITEM COUNT LIMIT (zero based; 0 0 0 clears)\n"
           "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
           "dropper-seed SEED\n"
@@ -349,8 +351,10 @@ static RsResult print_block(const World *world, BlockPos position, FILE *output)
                 direction_names[state.data.barrel.facing]);
         break;
     case BLOCK_NOTE_BLOCK:
-        fprintf(output, " powered=%s",
-                state.data.note_block.powered ? "yes" : "no");
+        fprintf(output, " powered=%s note=%u instrument=%s",
+                state.data.note_block.powered ? "yes" : "no",
+                (unsigned)state.data.note_block.note,
+                note_instrument_name((NoteInstrument)state.data.note_block.instrument));
         break;
     case BLOCK_TARGET:
         fprintf(output, " power=%u", (unsigned)state.data.target.power);
@@ -450,6 +454,9 @@ static RsResult execute_command(World *world, const Command *command,
         break;
     case COMMAND_MODE:
         result = world_toggle_comparator_mode(world, command->position);
+        break;
+    case COMMAND_TUNE:
+        result = world_cycle_note(world, command->position);
         break;
     case COMMAND_CAPACITY:
         result = world_set_barrel_level(

@@ -14,16 +14,9 @@
 #endif
 
 enum {
-    SAVE_VERSION = 9,
-    SAVE_VERSION_LEGACY = 2,
+    SAVE_VERSION = 10,
     SAVE_HEADER_SIZE = 64,
-    SAVE_HEADER_V7_SIZE = 60,
-    SAVE_HEADER_V6_SIZE = 56,
-    SAVE_HEADER_V5_SIZE = 52,
-    SAVE_HEADER_V4_SIZE = 44,
-    SAVE_HEADER_OLD_SIZE = 40,
-    SAVE_CRC_OFFSET = 36,
-    LEGACY_V6_TICK_WALL_TORCH = 23
+    SAVE_CRC_OFFSET = 36
 };
 static const unsigned char save_magic[8] = {'M','C','W','O','R','L','D',0};
 static uint32_t crc32_update(uint32_t crc, const unsigned char *bytes, size_t size)
@@ -394,32 +387,24 @@ World *save_file_read(const char *path, GameSessionResult *result)
     if (b.size < 12 || memcmp(b.data, save_magic, 8)) goto fail;
     b.cursor = 8;
     unsigned version = bytes_read16(&b), header = bytes_read16(&b);
-    if (version != SAVE_VERSION && version != 8 && version != 7 && version != 6 &&
-        version != 5 && version != 4 && version != 3 &&
-        version != SAVE_VERSION_LEGACY) {
+    if (version != SAVE_VERSION) {
         *result = GAME_SESSION_UNSUPPORTED_SAVE;
         goto fail;
     }
-    unsigned expected_header = version >= 9 ? SAVE_HEADER_SIZE :
-                               version >= 7 ? SAVE_HEADER_V7_SIZE :
-                               version == 6 ? SAVE_HEADER_V6_SIZE :
-                               version == 5 ? SAVE_HEADER_V5_SIZE :
-                               version == 4 ? SAVE_HEADER_V4_SIZE : SAVE_HEADER_OLD_SIZE;
-    if (header != expected_header || b.size < header) goto fail;
+    if (header != SAVE_HEADER_SIZE || b.size < header) goto fail;
     uint32_t ground = bytes_read32(&b); uint64_t tick = bytes_read64(&b);
     uint32_t chunk_count = bytes_read32(&b), torch_count = bytes_read32(&b), event_count = bytes_read32(&b);
     uint32_t crc = bytes_read32(&b);
-    uint32_t container_count = version >= 4 ? bytes_read32(&b) : 0;
-    uint64_t dropper_random = version >= 5 ? bytes_read64(&b) : UINT64_C(0x5deece66d);
-    uint32_t piston_count = version >= 6 ? bytes_read32(&b) : 0;
-    uint32_t motion_count = version >= 7 ? bytes_read32(&b) : 0;
-    uint32_t entity_count = version >= 9 ? bytes_read32(&b) : 0;
+    uint32_t container_count = bytes_read32(&b);
+    uint64_t dropper_random = bytes_read64(&b);
+    uint32_t piston_count = bytes_read32(&b);
+    uint32_t motion_count = bytes_read32(&b);
+    uint32_t entity_count = bytes_read32(&b);
     if (dropper_random >> 48) goto fail;
     memset(b.data + SAVE_CRC_OFFSET, 0, 4);
-    uint64_t event_size = version >= 6 ? 22 : version >= 3 ? 21 : 20;
     if (crc32_bytes(b.data, b.size) != crc || ground > 65 ||
         (uint64_t)chunk_count * 20 + (uint64_t)torch_count * 86 +
-        (uint64_t)event_count * event_size + (uint64_t)container_count * 52 +
+        (uint64_t)event_count * 22 + (uint64_t)container_count * 52 +
         (uint64_t)piston_count * 15 + (uint64_t)motion_count * 17 +
         (uint64_t)entity_count * 13 >
         b.size - header)
@@ -446,20 +431,10 @@ World *save_file_read(const char *path, GameSessionResult *result)
             for (size_t j = 0; j < SECTION_VOLUME; ++j) {
                 BlockState state;
                 if (!state_decode(section_get(c->sections[sec], j), &state)) goto fail;
-                if (state.id == BLOCK_DROPPER && version < 5) goto fail;
-                if (state.id == BLOCK_MOVING_PISTON) {
-                    if (version < 7) goto fail;
-                    ++actual_motions;
-                }
+                if (state.id == BLOCK_MOVING_PISTON) ++actual_motions;
                 BlockPos p = {c->key.x * 16 + (int)(j & 15), WORLD_MIN_Y + (int)sec * 16 + (int)(j >> 8),
                               c->key.z * 16 + (int)((j >> 4) & 15)};
-                if (container_is_block((BlockId)state.id)) {
-                    ++actual_containers;
-                    if (version < 4) {
-                        if (state.id == BLOCK_HOPPER) goto fail;
-                        if (!container_attach(w, p, state)) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
-                    }
-                }
+                if (container_is_block((BlockId)state.id)) ++actual_containers;
                 if (state.id == BLOCK_REDSTONE_WIRE && !wire_supported(w, p)) goto fail;
                 if (state.id == BLOCK_REDSTONE_REPEATER && !repeater_supported(w, p))
                     goto fail;
@@ -487,32 +462,19 @@ World *save_file_read(const char *path, GameSessionResult *result)
     }
     for (uint32_t i = 0; i < event_count; ++i) {
         BlockPos p = bytes_read_pos(&b); uint64_t time = bytes_read64(&b);
-        TickPriority priority = version >= 3 ?
-            (TickPriority)bytes_read8(&b) : TICK_NORMAL;
-        BlockId event_block = (BlockId)world_get(w, p).id;
-        uint8_t type = version >= 6 ? bytes_read8(&b) :
-                       scheduler_block_type(world_get(w, p));
-        if (version == 6 && type == LEGACY_V6_TICK_WALL_TORCH)
-            type = TICK_WALL_TORCH;
+        TickPriority priority = (TickPriority)bytes_read8(&b);
+        uint8_t type = bytes_read8(&b);
         if (!b.ok || !world_in_bounds(w, p) ||
-            (version < 6 && (!time || time > UINT64_MAX - tick)) ||
             (unsigned)priority > TICK_EXTREMELY_LOW ||
             !tick_type_valid(type) ||
             scheduler_pending(&w->sim->scheduler, p, type)) goto fail;
-        if (version == SAVE_VERSION_LEGACY &&
-            block_is_piston_base(event_block)) {
-            /* Version 2 delayed the whole piston action. Re-evaluate it as a
-             * block-event request rather than a motion-completion marker. */
-            sim_mark_input(w, p);
-            continue;
-        }
         if (!scheduler_add_priority(&w->sim->scheduler, p,
-                                    type, version >= 6 ? time : tick + time, priority)) {
+                                    type, time, priority)) {
             *result = GAME_SESSION_OUT_OF_MEMORY;
             goto fail;
         }
     }
-    if (version >= 4 && actual_containers != container_count) goto fail;
+    if (actual_containers != container_count) goto fail;
     for (uint32_t i = 0; i < container_count; ++i) {
         BlockPos p = bytes_read_pos(&b);
         unsigned count = bytes_read8(&b), cooldown = bytes_read8(&b);
@@ -570,42 +532,24 @@ World *save_file_read(const char *path, GameSessionResult *result)
             goto fail;
     }
     BlockEntityTicks *entities = &w->sim->block_entities;
-    if (version >= 9) {
-        if (entity_count != entities->active) goto fail;
-        for (size_t i = 0; i < w->sim->piston_motions.count; ++i)
-            w->sim->piston_motions.items[i].tick_slot = SIZE_MAX;
-        for (size_t i = 0; i < w->sim->containers.count; ++i)
-            w->sim->containers.items[i].tick_slot = SIZE_MAX;
-        for (uint32_t i = 0; i < entity_count; ++i) {
-            BlockEntityTick entity = {.pos = bytes_read_pos(&b), .used = true};
-            entity.block = bytes_read8(&b);
-            size_t *slot = NULL, index;
-            if (entity.block == BLOCK_MOVING_PISTON &&
-                posmap_get(&w->sim->piston_motions.slots, entity.pos, &index))
-                slot = &w->sim->piston_motions.items[index].tick_slot;
-            else if (entity.block == BLOCK_HOPPER) {
-                ContainerRuntime *c = container_runtime(w, entity.pos);
-                if (c && c->id == BLOCK_HOPPER) slot = &c->tick_slot;
-            }
-            if (!b.ok || !slot || *slot != SIZE_MAX) goto fail;
-            *slot = i; entities->items[i] = entity;
+    if (entity_count != entities->active) goto fail;
+    for (size_t i = 0; i < w->sim->piston_motions.count; ++i)
+        w->sim->piston_motions.items[i].tick_slot = SIZE_MAX;
+    for (size_t i = 0; i < w->sim->containers.count; ++i)
+        w->sim->containers.items[i].tick_slot = SIZE_MAX;
+    for (uint32_t i = 0; i < entity_count; ++i) {
+        BlockEntityTick entity = {.pos = bytes_read_pos(&b), .used = true};
+        entity.block = bytes_read8(&b);
+        size_t *slot = NULL, index;
+        if (entity.block == BLOCK_MOVING_PISTON &&
+            posmap_get(&w->sim->piston_motions.slots, entity.pos, &index))
+            slot = &w->sim->piston_motions.items[index].tick_slot;
+        else if (entity.block == BLOCK_HOPPER) {
+            ContainerRuntime *c = container_runtime(w, entity.pos);
+            if (c && c->id == BLOCK_HOPPER) slot = &c->tick_slot;
         }
-    } else {
-        /* v2..v8 recorded only separate motion/container orders. Preserve
-         * their historical motions-first interpretation when importing. */
-        size_t index = 0;
-        for (size_t i = 0; i < w->sim->piston_motions.count; ++i) {
-            PistonMotion *motion = &w->sim->piston_motions.items[i];
-            if (!motion->used) continue;
-            motion->tick_slot = index;
-            entities->items[index++] = (BlockEntityTick){motion->pos, BLOCK_MOVING_PISTON, true};
-        }
-        for (size_t i = 0; i < w->sim->containers.count; ++i) {
-            ContainerRuntime *c = &w->sim->containers.items[i];
-            if (c->id != BLOCK_HOPPER) continue;
-            c->tick_slot = index;
-            entities->items[index++] = (BlockEntityTick){c->pos, BLOCK_HOPPER, true};
-        }
+        if (!b.ok || !slot || *slot != SIZE_MAX) goto fail;
+        *slot = i; entities->items[i] = entity;
     }
     entities->count = entities->active;
     if (!b.ok || b.cursor != b.size || w->sim->error != RS_OK ||

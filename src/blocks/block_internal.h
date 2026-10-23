@@ -71,4 +71,5 @@ void repeater_check_input(World *, BlockPos);
 void comparator_check_input(World *, BlockPos);
 void rail_check_input(World *, BlockPos);
 void piston_check_input(World *, BlockPos);
+NoteInstrument note_instrument(BlockState);
 #endif
