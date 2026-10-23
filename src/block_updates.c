@@ -25,6 +25,12 @@ bool block_states_equal(BlockState a, BlockState b)
         return a.data.comparator.facing == b.data.comparator.facing &&
                a.data.comparator.subtract == b.data.comparator.subtract &&
                a.data.comparator.powered == b.data.comparator.powered;
+    if (block_is_rail((BlockId)a.id))
+        return a.data.rail.powered == b.data.rail.powered &&
+               a.data.rail.ascending == b.data.rail.ascending &&
+               (a.data.rail.ascending ?
+                    a.data.rail.facing == b.data.rail.facing :
+                    a.data.rail.facing/2 == b.data.rail.facing/2);
     if (block_is_piston_base((BlockId)a.id) || block_is_piston_head((BlockId)a.id))
         return a.data.piston.facing == b.data.piston.facing &&
                a.data.piston.extended == b.data.piston.extended;
@@ -125,7 +131,7 @@ static void placed(World *w, StateChange c, bool changed_type)
         break;
     case BLOCK_POWERED_RAIL:
     case BLOCK_ACTIVATOR_RAIL:
-        if (changed_type) sim_neighbor_changed(w, c.pos);
+        if (changed_type) rail_on_place(w, c.pos, c.current);
         break;
     case BLOCK_OBSERVER:
         if (changed_type && c.current.data.observer.powered &&

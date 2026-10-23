@@ -1,6 +1,5 @@
 #include "sim_internal.h"
 #include "wire_solver.h"
-#include "rail_solver.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +16,6 @@ void sim_destroy_internal(World *w)
     Simulator *s = w->sim;
     if (!s) return;
     container_destroy(w);
-    queue_destroy(&s->rail_roots);
     free(s->piston_events.items); posmap_destroy(&s->piston_events.pending);
     free(s->piston_motions.items); posmap_destroy(&s->piston_motions.slots);
     free(s->held_changes);
@@ -68,10 +66,6 @@ void sim_mark_wire(World *w, BlockPos p)
 {
     if (world_get(w, p).id == BLOCK_REDSTONE_WIRE)
         wire_update_power(w, p, world_get(w, p));
-}
-void sim_mark_rail(World *w, BlockPos p)
-{
-    if (!queue_push(&w->sim->rail_roots, p)) w->sim->error = RS_OUT_OF_MEMORY;
 }
 void sim_mark_input(World *w, BlockPos p)
 {
@@ -181,13 +175,7 @@ static bool pop_piston_event(PistonEvents *q, PistonEvent *event)
 RsResult sim_flush(World *w)
 {
     if (!w) return RS_INVALID_ARGUMENT;
-    Simulator *s = w->sim;
-    if (s->error != RS_OK) return s->error;
-    do {
-        rail_solver_flush(w);
-        if (s->error != RS_OK) return s->error;
-    } while (s->rail_roots.count);
-    return s->error;
+    return w->sim->error;
 }
 RsResult sim_step(World *w)
 {
@@ -275,7 +263,5 @@ bool sim_chunk_pinned(const World *w, BlockPos chunk)
     for (size_t i = 0; i < s->piston_motions.count; ++i)
         if (s->piston_motions.items[i].used &&
             near_chunk(s->piston_motions.items[i].pos, chunk)) return true;
-    for (size_t i = s->rail_roots.head; i < s->rail_roots.count; ++i)
-        if (near_chunk(s->rail_roots.items[i], chunk)) return true;
     return false;
 }

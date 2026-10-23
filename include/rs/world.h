@@ -39,7 +39,7 @@ bool world_get_piston_motion(const World *world, BlockPos pos,
 /* direction is the supporting block relative to a torch; the output direction
  * for a repeater/comparator/observer; the push direction for a piston; the lid
  * direction for a barrel; the outlet for a dropper or hopper (hopper up maps to down);
- * and the texture-top direction for a rail. */
+ * and the horizontal orientation for a rail (opposite directions share a shape). */
 RsResult world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
 RsResult world_remove(World *world, BlockPos pos);
 RsResult world_toggle_wire_dot(World *world, BlockPos pos);
@@ -63,7 +63,7 @@ RsResult world_set_dropper_seed(World *world, uint64_t seed);
  * persistent_projectile means Java's AbstractArrow, including tridents:
  * true gives 20 game ticks; false gives 8. Hits during a pending pulse return
  * RS_UNCHANGED without changing its strength or expiry. Neighbor and shape
- * updates settle synchronously; flush drains any pending rail work. */
+ * updates, including dust and rail power changes, settle synchronously. */
 RsResult world_hit_target(World *world, BlockPos pos, double u, double v,
                           bool persistent_projectile);
 uint64_t world_tick(const World *world);

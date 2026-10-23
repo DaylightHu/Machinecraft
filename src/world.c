@@ -310,6 +310,8 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
     if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
     if (id <= BLOCK_AIR || id >= BLOCK_INTERNAL_FIRST)
         return RS_INVALID_ARGUMENT;
+    if (block_is_rail(id) && direction_horizontal(support))
+        support = support/2 == DIR_EAST/2 ? DIR_EAST : DIR_NORTH;
     if (id == BLOCK_HOPPER) {
         if ((unsigned)support >= DIR_COUNT) return RS_INVALID_ARGUMENT;
         if (support == DIR_UP) support = DIR_DOWN;
@@ -343,7 +345,7 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         (id != BLOCK_REDSTONE_REPEATER || previous.data.repeater.facing == support) &&
         (id != BLOCK_REDSTONE_COMPARATOR ||
          previous.data.comparator.facing == support) &&
-        (!block_is_rail(id) || previous.data.rail.facing == support) &&
+        (!block_is_rail(id) || previous.data.rail.facing/2 == support/2) &&
         (id != BLOCK_OBSERVER ||
          previous.data.observer.facing == support) &&
         (!block_is_piston_base(id) ||

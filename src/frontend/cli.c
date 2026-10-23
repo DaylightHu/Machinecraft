@@ -260,7 +260,7 @@ static void print_help(FILE *output)
         fprintf(output, " %s", block_name(id));
     }
     fputs("\nTorch direction is its support: down/east/west/north/south; default down.\n"
-          "Repeater/comparator/observer direction is output; piston direction is its front; barrel direction is its lid; rail direction is the texture top.\n"
+          "Repeater/comparator/observer direction is output; piston direction is its front; barrel direction is its lid; rail direction selects its horizontal axis.\n"
           "Observer, barrel, dropper and both piston types accept all six directions. Gates and rails are horizontal; default north.\n"
           "Hopper direction is its outlet: down or horizontal; default down. Up maps to down.\n",
           output);

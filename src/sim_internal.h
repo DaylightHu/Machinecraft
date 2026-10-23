@@ -2,7 +2,6 @@
 #define RS_SIM_INTERNAL_H
 #include "rs/sim.h"
 #include "world_internal.h"
-#include "queue.h"
 #include "scheduler.h"
 #include "container.h"
 #include "blocks/block_internal.h"
@@ -42,7 +41,6 @@ typedef struct {
     unsigned flags, remaining_shapes;
 } StateChange;
 struct Simulator {
-    PositionQueue rail_roots;
     Scheduler scheduler;
     PistonEvents piston_events;
     PistonMotions piston_motions;
@@ -75,7 +73,6 @@ void sim_begin_updates(World *);
 void sim_end_updates(World *);
 bool block_states_equal(BlockState, BlockState);
 void sim_mark_wire(World *, BlockPos);
-void sim_mark_rail(World *, BlockPos);
 void sim_mark_input(World *, BlockPos);
 void sim_schedule(World *, BlockPos, uint32_t delay);
 void sim_schedule_priority(World *, BlockPos, uint32_t delay,
