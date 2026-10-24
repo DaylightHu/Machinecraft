@@ -15,7 +15,7 @@ typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
     COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_TUNE, COMMAND_CAPACITY,
     COMMAND_HIT, COMMAND_SLOT, COMMAND_SLOTS, COMMAND_TICK, COMMAND_STATS,
-    COMMAND_DROPPER_SEED, COMMAND_QUIT
+    COMMAND_DROPPER_SEED, COMMAND_SAVE, COMMAND_QUIT
 } CommandKind;
 
 typedef struct {
@@ -176,6 +176,8 @@ static bool parse_command(char *tokens[], int count, Command *command)
 
     if (strcmp(name, "help") == 0 && count == 1) {
         command->kind = COMMAND_HELP;
+    } else if (strcmp(name, "save") == 0 && count == 1) {
+        command->kind = COMMAND_SAVE;
     } else if (strcmp(name, "quit") == 0 && count == 1) {
         command->kind = COMMAND_QUIT;
     } else if (strcmp(name, "stats") == 0 && count == 1) {
@@ -259,7 +261,7 @@ static void print_help(FILE *output)
           "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
           "dropper-seed SEED\n"
           "plot info\nplot expand east|west|south|north [COUNT]\n"
-          "tick [COUNT]\nstats\nhelp\nquit\nBlocks:", output);
+          "tick [COUNT]\nstats\nsave\nhelp\nquit\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         fprintf(output, " %s", block_name(id));
     }
@@ -489,11 +491,12 @@ static RsResult execute_command(World *world, const Command *command,
     return RS_OK;
 }
 
-int cli_run(World *world, FILE *input, FILE *output, FILE *errors)
+int cli_run(GameSession *session, FILE *input, FILE *output, FILE *errors)
 {
-    if (!world || !input || !output || !errors) {
+    if (!session || !input || !output || !errors) {
         return EXIT_FAILURE;
     }
+    World *world = game_session_world(session);
 
     fputs("Redstone Sandbox (headless). Type help for commands.\n", output);
     bool running = true;
@@ -542,6 +545,18 @@ int cli_run(World *world, FILE *input, FILE *output, FILE *errors)
         if (count < 0 || !parse_command(tokens, count, &command)) {
             fputs("error: invalid command; use help\n", errors);
             failed = true;
+            continue;
+        }
+
+        if (command.kind == COMMAND_SAVE) {
+            GameSessionResult save_result = game_session_save(session);
+            if (save_result == GAME_SESSION_OK) {
+                fputs("saved\n", output);
+            } else {
+                fprintf(errors, "error: %s\n",
+                        game_session_result_name(save_result));
+                failed = true;
+            }
             continue;
         }
 
