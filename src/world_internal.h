@@ -33,7 +33,8 @@ struct World {
     WirePowerEntry wire_powers[WORLD_READ_CACHE_SIZE];
 };
 bool world_write_derived(World *world, BlockPos pos, BlockState state);
-enum { UPDATE_NEIGHBORS = 1, UPDATE_CLIENTS = 2, UPDATE_KNOWN_SHAPE = 16,
+enum { UPDATE_NEIGHBORS = 1, UPDATE_CLIENTS = 2, UPDATE_NO_RERENDER = 4,
+       UPDATE_KNOWN_SHAPE = 16,
        UPDATE_MOVING = 64, UPDATE_SHAPE_LIMIT = 512 };
 bool world_set_block(World *, BlockPos, BlockState, unsigned flags);
 bool world_set_block_depth(World *, BlockPos, BlockState, unsigned flags,
