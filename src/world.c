@@ -324,19 +324,6 @@ bool world_set_block_depth(World *w, BlockPos p, BlockState state,
     if (!world_write_state(w, p, state, &previous, &changed)) return false;
     if (!changed) return true;
     if (block_states_equal(previous, state)) return true;
-    if (scheduler_block_type(previous) != scheduler_block_type(state)) {
-        if (previous.id == BLOCK_MOVING_PISTON)
-            (void)sim_finish_piston_motion(w, p, true);
-        sim_forget_cell(w, p);
-        if (state.id == BLOCK_REDSTONE_TORCH && !sim_attach_torch(w, p)) {
-            w->sim->error = RS_OUT_OF_MEMORY;
-            return false;
-        }
-        if (container_is_block((BlockId)state.id) && !container_attach(w, p, state)) {
-            w->sim->error = RS_OUT_OF_MEMORY;
-            return false;
-        }
-    }
     StateChange change = {p, previous, state, flags, remaining_shapes};
     sim_state_changed(w, change);
     return w->sim->error == RS_OK;

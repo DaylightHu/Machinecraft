@@ -49,9 +49,8 @@ static TickAction barrel_tick(World *world, BlockPos position)
 
 static uint8_t barrel_analog_output(const World *world, BlockPos position)
 {
-    BlockState state = world_get(world, position);
-    return state.id == BLOCK_BARREL && state.data.barrel.level <= 15 ?
-           state.data.barrel.level : 0;
+    ContainerRuntime *container = container_runtime(world, position);
+    return container ? container_level(container) : 0;
 }
 
 const BlockDef rs_barrel_def = {

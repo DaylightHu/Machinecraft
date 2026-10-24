@@ -56,7 +56,7 @@ bool repeater_supported(const World *, BlockPos);
 bool comparator_supported(const World *, BlockPos);
 bool rail_supported(const World *, BlockPos);
 bool block_is_rail(BlockId);
-void rail_on_place(World *, BlockPos, BlockState);
+void rail_on_place(World *, BlockPos, BlockState, bool moving);
 size_t wire_neighbors(const World *, BlockPos, BlockPos out[12]);
 uint8_t wire_external_power(const World *, BlockPos);
 void wire_refresh_shape(World *, BlockPos);

@@ -124,7 +124,8 @@ static void connect_to(RailState *rail, BlockPos pos)
     (void)world_set_block(rail->world, rail->pos, rail->state, 3);
 }
 
-static void neighbor_changed(World *world, BlockPos pos, BlockState state)
+static void neighbor_changed(World *world, BlockPos pos, BlockState state,
+                             bool moving)
 {
     if (world->sim->error != RS_OK || world_get(world, pos).id != state.id)
         return;
@@ -132,13 +133,14 @@ static void neighbor_changed(World *world, BlockPos pos, BlockState state)
         (state.data.rail.ascending &&
          !block_supports_rigid(world,
              block_offset(pos, (Direction)state.data.rail.facing)))) {
-        world_remove_internal(world, pos);
+        (void)world_set_block(world, pos, block_default(BLOCK_AIR),
+                              3 | (moving ? UPDATE_MOVING : 0));
         return;
     }
     rail_update_power(world, pos, state);
 }
 
-void rail_on_place(World *world, BlockPos pos, BlockState state)
+void rail_on_place(World *world, BlockPos pos, BlockState state, bool moving)
 {
     RailState rail = {.world = world, .pos = pos, .state = state};
     update_connections(&rail);
@@ -164,13 +166,14 @@ void rail_on_place(World *world, BlockPos pos, BlockState state)
     }
     /* BaseRailBlock.updateState samples the state returned by updateDir.
      * Subsequent neighbor notifications never recalculate the rail shape. */
-    neighbor_changed(world, pos, rail.state);
+    neighbor_changed(world, pos, rail.state, moving);
 }
 
 void rail_check_input(World *world, BlockPos pos)
 {
     BlockState state = world_get(world, pos);
-    if (block_is_rail((BlockId)state.id)) neighbor_changed(world, pos, state);
+    if (block_is_rail((BlockId)state.id))
+        neighbor_changed(world, pos, state, false);
 }
 
 const BlockDef rs_powered_rail_def = {

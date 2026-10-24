@@ -64,7 +64,6 @@ static PushReaction piston_reaction(BlockState state)
 static bool piston_write_cell(World *world, BlockPos position,
                               BlockState state, unsigned flags)
 {
-    sim_forget_cell(world, position);
     return world_set_block(world, position, state, flags);
 }
 

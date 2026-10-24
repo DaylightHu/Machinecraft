@@ -3,7 +3,8 @@
 
 static uint8_t dropper_analog(const World *world, BlockPos pos)
 {
-    return world_get(world, pos).data.dropper.level;
+    ContainerRuntime *container = container_runtime(world, pos);
+    return container ? container_level(container) : 0;
 }
 
 static void dropper_input(World *world, BlockPos pos)

@@ -108,7 +108,7 @@ static void removed(World *w, StateChange c, bool changed_type)
         break;
     case BLOCK_PISTON_HEAD:
     case BLOCK_STICKY_PISTON_HEAD:
-        if (changed_type && !block_is_piston_head((BlockId)c.current.id)) {
+        if (changed_type) {
             Direction facing = (Direction)c.previous.data.piston.facing;
             BlockPos behind = block_offset(c.pos, direction_opposite(facing));
             BlockState base = world_get(w, behind);
@@ -116,6 +116,9 @@ static void removed(World *w, StateChange c, bool changed_type)
                 base.data.piston.extended && base.data.piston.facing == facing)
                 world_remove_internal(w, behind);
         }
+        break;
+    case BLOCK_MOVING_PISTON:
+        if (changed_type) (void)sim_finish_piston_motion(w, c.pos, true);
         break;
     default: break;
     }
@@ -147,7 +150,9 @@ static void placed(World *w, StateChange c, bool changed_type)
         break;
     case BLOCK_POWERED_RAIL:
     case BLOCK_ACTIVATOR_RAIL:
-        if (changed_type) rail_on_place(w, c.pos, c.current);
+        if (changed_type)
+            rail_on_place(w, c.pos, c.current,
+                          (c.flags & UPDATE_MOVING) != 0);
         break;
     case BLOCK_OBSERVER:
         if (changed_type && c.current.data.observer.powered &&
@@ -234,8 +239,18 @@ void sim_state_changed(World *w, StateChange c)
 {
     bool changed_type = scheduler_block_type(c.previous) != scheduler_block_type(c.current);
     removed(w, c, changed_type);
+    if (changed_type) sim_forget_cell(w, c.pos);
     if (world_get(w, c.pos).id != c.current.id || w->sim->error != RS_OK) return;
     placed(w, c, changed_type);
+    if (changed_type && w->sim->error == RS_OK &&
+        world_get(w, c.pos).id == c.current.id) {
+        BlockState state = world_get(w, c.pos);
+        if (state.id == BLOCK_REDSTONE_TORCH && !sim_attach_torch(w, c.pos))
+            w->sim->error = RS_OUT_OF_MEMORY;
+        if (container_is_block((BlockId)state.id) &&
+            !container_attach(w, c.pos, state))
+            w->sim->error = RS_OUT_OF_MEMORY;
+    }
     if (!block_states_equal(world_get(w, c.pos), c.current) ||
         w->sim->error != RS_OK) return;
     if (c.flags & UPDATE_NEIGHBORS) {
