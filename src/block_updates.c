@@ -255,7 +255,8 @@ void sim_state_changed(World *w, StateChange c)
         w->sim->error != RS_OK) return;
     if (c.flags & UPDATE_NEIGHBORS) {
         sim_update_neighbors_at(w, c.pos, DIR_COUNT);
-        if (block_has_analog_output(w, c.pos)) sim_notify_analog(w, c.pos);
+        if (block_definition((BlockId)c.current.id)->analog_output)
+            sim_notify_analog(w, c.pos);
     }
     if (!(c.flags & UPDATE_KNOWN_SHAPE) && c.remaining_shapes) {
         unsigned flags = c.flags & ~33u, limit = c.remaining_shapes - 1;
