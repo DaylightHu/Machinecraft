@@ -106,8 +106,6 @@ bool container_attach(World *w, BlockPos pos, BlockState state)
                             .tick_slot = SIZE_MAX};
     if (state.id == BLOCK_BARREL) fill_barrel(c, state.data.barrel.level);
     else if (state.id == BLOCK_HOPPER) {
-        c->facing = state.data.hopper.facing;
-        c->enabled = state.data.hopper.enabled;
         if (!sim_add_block_entity(w, pos, BLOCK_HOPPER, &c->tick_slot)) {
             free(slots); posmap_remove(&t->positions, pos); --t->count;
             return false;
@@ -141,21 +139,20 @@ void container_destroy(World *w)
     *t = (ContainerTable){0};
 }
 
-void container_sync_hopper(World *w, BlockPos pos, BlockState state)
-{
-    ContainerRuntime *c = container_runtime(w, pos);
-    if (c) { c->enabled = state.data.hopper.enabled; c->facing = state.data.hopper.facing; }
-}
-
-static void contents_changed(World *w, ContainerRuntime *c)
+static void sync_level(World *w, const ContainerRuntime *c)
 {
     BlockState state = world_get(w, c->pos);
     uint8_t level = container_level(c);
     if (c->id == BLOCK_HOPPER) state.data.hopper.level = level;
     else if (c->id == BLOCK_DROPPER) state.data.dropper.level = level;
     else state.data.barrel.level = level;
-    ++w->revision; /* Contents can change while their comparator level stays equal. */
     (void)world_write_visual(w, c->pos, state);
+}
+
+static void contents_changed(World *w, ContainerRuntime *c)
+{
+    sync_level(w, c);
+    ++w->revision; /* Contents can change while their comparator level stays equal. */
     sim_notify_analog(w, c->pos); /* Contents do not wake observers or BUD latches. */
 }
 
@@ -204,8 +201,7 @@ RsResult container_set_barrel_level(World *w, BlockPos pos, uint8_t level)
 uint8_t world_hopper_cooldown(const World *w, BlockPos pos)
 {
     ContainerRuntime *c = container_runtime(w, pos);
-    if (!c || c->id != BLOCK_HOPPER || c->cooldown_until <= w->tick) return 0;
-    return (uint8_t)(c->cooldown_until - w->tick);
+    return c && c->id == BLOCK_HOPPER ? c->cooldown : 0;
 }
 
 static bool empty(const ContainerRuntime *c)
@@ -224,42 +220,73 @@ static bool full(const ContainerRuntime *c)
     return true;
 }
 
-static uint64_t after(const World *w, unsigned ticks)
+static void set_slot(World *w, ContainerRuntime *c, size_t slot, ContainerStack stack)
 {
-    return UINT64_MAX - w->tick < ticks ? UINT64_MAX : w->tick + ticks;
+    c->slots[slot] = stack;
+    sync_level(w, c);
+    if (c->id != BLOCK_HOPPER) contents_changed(w, c);
 }
 
-static bool move_slot(World *w, ContainerRuntime *source, ContainerRuntime *dest,
-                       size_t slot)
+static ContainerStack remove_one(World *w, ContainerRuntime *c, size_t slot)
 {
-    if (!source || !dest || source == dest) return false;
-    ContainerStack *from = &source->slots[slot];
-    if (!from->count) return false;
+    ContainerStack result = c->slots[slot];
+    result.count = 1;
+    if (!--c->slots[slot].count) c->slots[slot] = (ContainerStack){0};
+    sync_level(w, c);
+    if (c->id != BLOCK_HOPPER) contents_changed(w, c);
+    return result;
+}
+
+static bool insert_one(World *w, const ContainerRuntime *source,
+                       ContainerRuntime *dest, ContainerStack stack)
+{
     for (size_t j = 0; j < container_slot_count(dest->id); ++j) {
         ContainerStack *to = &dest->slots[j];
-        if (to->count && (to->item != from->item || to->limit != from->limit ||
+        if (to->count && (to->item != stack.item || to->limit != stack.limit ||
                           to->count == to->limit)) continue;
         bool was_empty = empty(dest);
-        if (!to->count) { *to = *from; to->count = 0; }
-        ++to->count;
-        if (!--from->count) *from = (ContainerStack){0};
-        if (was_empty && dest->id == BLOCK_HOPPER) {
+        if (!to->count) set_slot(w, dest, j, stack);
+        else { ++to->count; sync_level(w, dest); }
+        if (was_empty && dest->id == BLOCK_HOPPER && dest->cooldown <= 8) {
             unsigned delay = source->id == BLOCK_HOPPER &&
                              dest->last_tick >= source->last_tick ? 7 : 8;
-            dest->cooldown_until = after(w, delay);
+            dest->cooldown = (uint8_t)delay;
         }
-        contents_changed(w, source);
         contents_changed(w, dest);
         return true;
     }
     return false;
 }
 
-static bool move_one(World *w, ContainerRuntime *source, ContainerRuntime *dest)
+static bool eject_hopper(World *w, ContainerRuntime *source, ContainerRuntime *dest)
 {
-    if (!source || !dest) return false;
-    for (size_t i = 0; i < container_slot_count(source->id); ++i)
-        if (move_slot(w, source, dest, i)) return true;
+    if (!dest || full(dest)) return false;
+    for (size_t i = 0; i < container_slot_count(source->id); ++i) {
+        ContainerStack original = source->slots[i];
+        if (!original.count) continue;
+        ContainerStack stack = remove_one(w, source, i);
+        if (insert_one(w, source, dest, stack)) {
+            contents_changed(w, dest);
+            return true;
+        }
+        set_slot(w, source, i, original);
+    }
+    return false;
+}
+
+static bool pull_hopper(World *w, ContainerRuntime *source, ContainerRuntime *dest)
+{
+    if (!source) return false;
+    for (size_t i = 0; i < container_slot_count(source->id); ++i) {
+        ContainerStack original = source->slots[i];
+        if (!original.count) continue;
+        ContainerStack stack = remove_one(w, source, i);
+        if (insert_one(w, source, dest, stack)) {
+            contents_changed(w, source);
+            return true;
+        }
+        set_slot(w, source, i, original);
+    }
     return false;
 }
 
@@ -278,7 +305,12 @@ void container_dispense(World *w, BlockPos pos)
     ContainerRuntime *dest = container_runtime(w,
         block_offset(pos, (Direction)state.data.dropper.facing));
     if (dest) {
-        (void)move_slot(w, source, dest, slot);
+        ContainerStack stack = source->slots[slot];
+        stack.count = 1;
+        ContainerStack remaining = source->slots[slot];
+        if (insert_one(w, source, dest, stack) && !--remaining.count)
+            remaining = (ContainerStack){0};
+        set_slot(w, source, slot, remaining);
         return; /* A full or incompatible container never falls back to ejecting. */
     }
     ContainerStack *stack = &source->slots[slot];
@@ -288,8 +320,10 @@ void container_dispense(World *w, BlockPos pos)
 
 static bool can_work(const World *w, const ContainerRuntime *c)
 {
-    if (!c->enabled) return false;
-    ContainerRuntime *dest = container_runtime(w, block_offset(c->pos, (Direction)c->facing));
+    BlockState state = world_get(w, c->pos);
+    if (!state.data.hopper.enabled) return false;
+    ContainerRuntime *dest = container_runtime(w,
+        block_offset(c->pos, (Direction)state.data.hopper.facing));
     ContainerRuntime *above = container_runtime(w, block_offset(c->pos, DIR_UP));
     return (!empty(c) && !full(dest)) || (!full(c) && !empty(above));
 }
@@ -298,15 +332,21 @@ void container_tick_hopper(World *w, BlockPos pos)
 {
     ContainerRuntime *c = container_runtime(w, pos);
     if (!c || c->id != BLOCK_HOPPER) return;
+    if (c->cooldown) --c->cooldown;
     c->last_tick = w->tick;
-    if (c->cooldown_until > w->tick || !can_work(w, c)) return;
-    ContainerRuntime *dest = container_runtime(w, block_offset(c->pos, (Direction)c->facing));
-    bool moved = !empty(c) && move_one(w, c, dest);
+    BlockState state = world_get(w, pos);
+    if (c->cooldown || !state.data.hopper.enabled) return;
+    ContainerRuntime *dest = container_runtime(w,
+        block_offset(pos, (Direction)state.data.hopper.facing));
+    bool moved = !empty(c) && eject_hopper(w, c, dest);
     if (!full(c)) {
         ContainerRuntime *above = container_runtime(w, block_offset(c->pos, DIR_UP));
-        moved = move_one(w, above, c) || moved;
+        moved = pull_hopper(w, above, c) || moved;
     }
-    if (moved) c->cooldown_until = after(w, 8);
+    if (moved) {
+        c->cooldown = 8;
+        contents_changed(w, c);
+    }
 }
 
 bool container_chunk_pinned(const World *w, BlockPos chunk)
@@ -318,7 +358,7 @@ bool container_chunk_pinned(const World *w, BlockPos chunk)
         int64_t dx = (int64_t)floor_div16(c->pos.x) - chunk.x;
         int64_t dz = (int64_t)floor_div16(c->pos.z) - chunk.z;
         if (dx < -1 || dx > 1 || dz < -1 || dz > 1) continue;
-        if (c->cooldown_until > w->tick || can_work(w, c)) return true;
+        if (c->cooldown || can_work(w, c)) return true;
     }
     return false;
 }

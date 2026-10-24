@@ -60,13 +60,31 @@ static void invalidate_reads(World *w, bool wire_properties_only)
     }
 }
 static BlockPos chunk_key(BlockPos p) { return (BlockPos){floor_div16(p.x), 0, floor_div16(p.z)}; }
+bool world_plot_bounds_valid(WorldPlotBounds b)
+{
+    int64_t max_x = b.max_x, max_z = b.max_z;
+    return b.min_x >= INT32_MIN + 16 && b.min_z >= INT32_MIN + 16 &&
+           b.max_x <= INT32_MAX - 16 && b.max_z <= INT32_MAX - 16 &&
+           b.min_x <= b.max_x && b.min_z <= b.max_z &&
+           b.min_x % WORLD_PLOT_SIZE == 0 && b.min_z % WORLD_PLOT_SIZE == 0 &&
+           (max_x + 1) % WORLD_PLOT_SIZE == 0 &&
+           (max_z + 1) % WORLD_PLOT_SIZE == 0;
+}
+bool world_chunk_in_bounds(const World *w, BlockPos key)
+{
+    if (!w || key.y) return false;
+    int64_t x = (int64_t)key.x * CHUNK_SIZE;
+    int64_t z = (int64_t)key.z * CHUNK_SIZE;
+    return x >= w->plot.min_x && x + CHUNK_SIZE - 1 <= w->plot.max_x &&
+           z >= w->plot.min_z && z + CHUNK_SIZE - 1 <= w->plot.max_z;
+}
 Chunk *world_find_chunk(const World *w, BlockPos key)
 {
     size_t slot; return posmap_get(&w->chunk_map, key, &slot) ? w->chunks[slot] : NULL;
 }
 bool world_insert_chunk(World *w, Chunk *c)
 {
-    if (world_find_chunk(w, c->key)) return false;
+    if (!world_chunk_in_bounds(w, c->key) || world_find_chunk(w, c->key)) return false;
     if (w->chunk_count == w->chunk_capacity) {
         size_t capacity = w->chunk_capacity ? w->chunk_capacity * 2 : 16;
         if (capacity < w->chunk_capacity || capacity > SIZE_MAX / sizeof(Chunk *)) return false;
@@ -150,6 +168,8 @@ World *world_create(WorldConfig config)
     World *w = calloc(1, sizeof(*w));
     if (!w) return NULL;
     w->config = config; w->view_radius = -1;
+    w->plot = (WorldPlotBounds){0, 0, WORLD_PLOT_SIZE - 1,
+                               WORLD_PLOT_SIZE - 1};
     w->read_stamp = 1;
     w->external_power_stamp = 1;
     if (!sim_init_internal(w)) { world_destroy(w); return NULL; }
@@ -166,10 +186,47 @@ void world_destroy(World *w)
 }
 bool world_in_bounds(const World *w, BlockPos p)
 {
-    /* Leave one chunk of headroom for neighbor arithmetic at integer limits. */
     return w && p.y >= WORLD_MIN_Y && p.y <= WORLD_MAX_Y &&
-           p.x >= INT32_MIN + 16 && p.x <= INT32_MAX - 16 &&
-           p.z >= INT32_MIN + 16 && p.z <= INT32_MAX - 16;
+           p.x >= w->plot.min_x && p.x <= w->plot.max_x &&
+           p.z >= w->plot.min_z && p.z <= w->plot.max_z;
+}
+WorldPlotBounds world_plot_bounds(const World *w)
+{
+    return w ? w->plot : (WorldPlotBounds){0};
+}
+RsResult world_expand_plot(World *w, Direction direction, uint32_t count)
+{
+    if (!w || !count || !direction_horizontal(direction))
+        return RS_INVALID_ARGUMENT;
+    if (w->sim->handling_tick || w->sim->block_entities.ticking)
+        return RS_INVALID_ARGUMENT;
+    WorldPlotBounds next = w->plot;
+    int64_t delta = (int64_t)count * WORLD_PLOT_SIZE;
+    if (direction == DIR_EAST) {
+        int64_t value = (int64_t)next.max_x + delta;
+        if (value > INT_MAX) return RS_OUT_OF_BOUNDS;
+        next.max_x = (int)value;
+    } else if (direction == DIR_WEST) {
+        int64_t value = (int64_t)next.min_x - delta;
+        if (value < INT_MIN) return RS_OUT_OF_BOUNDS;
+        next.min_x = (int)value;
+    } else if (direction == DIR_SOUTH) {
+        int64_t value = (int64_t)next.max_z + delta;
+        if (value > INT_MAX) return RS_OUT_OF_BOUNDS;
+        next.max_z = (int)value;
+    } else {
+        int64_t value = (int64_t)next.min_z - delta;
+        if (value < INT_MIN) return RS_OUT_OF_BOUNDS;
+        next.min_z = (int)value;
+    }
+    if (!world_plot_bounds_valid(next)) return RS_OUT_OF_BOUNDS;
+    RsResult result = sim_flush(w);
+    if (result != RS_OK) return result;
+    w->plot = next;
+    invalidate_reads(w, false);
+    ++w->revision;
+    ++w->topology_revision;
+    return RS_OK;
 }
 BlockState world_get(const World *w, BlockPos p)
 {
@@ -252,12 +309,24 @@ bool world_write_visual(World *w, BlockPos p, BlockState state)
 bool world_set_block_depth(World *w, BlockPos p, BlockState state,
                            unsigned flags, unsigned remaining_shapes)
 {
+    if (state.id == BLOCK_HOPPER || state.id == BLOCK_DROPPER ||
+        state.id == BLOCK_BARREL) {
+        ContainerRuntime *container = container_runtime(w, p);
+        if (container && container->id == state.id) {
+            uint8_t level = container_level(container);
+            if (state.id == BLOCK_HOPPER) state.data.hopper.level = level;
+            else if (state.id == BLOCK_DROPPER) state.data.dropper.level = level;
+            else state.data.barrel.level = level;
+        }
+    }
     BlockState previous;
     bool changed;
     if (!world_write_state(w, p, state, &previous, &changed)) return false;
     if (!changed) return true;
     if (block_states_equal(previous, state)) return true;
     if (scheduler_block_type(previous) != scheduler_block_type(state)) {
+        if (previous.id == BLOCK_MOVING_PISTON)
+            (void)sim_finish_piston_motion(w, p, true);
         sim_forget_cell(w, p);
         if (state.id == BLOCK_REDSTONE_TORCH && !sim_attach_torch(w, p)) {
             w->sim->error = RS_OUT_OF_MEMORY;
@@ -269,7 +338,6 @@ bool world_set_block_depth(World *w, BlockPos p, BlockState state,
         }
     }
     StateChange change = {p, previous, state, flags, remaining_shapes};
-    if (w->sim->hold_updates) return sim_hold_change(w, change);
     sim_state_changed(w, change);
     return w->sim->error == RS_OK;
 }
@@ -279,29 +347,6 @@ bool world_set_block(World *w, BlockPos p, BlockState state, unsigned flags)
 }
 void world_remove_internal(World *w, BlockPos p)
 {
-    BlockState removed = world_get(w, p);
-    if (removed.id == BLOCK_AIR) return;
-    if (block_is_piston_base((BlockId)removed.id) &&
-        removed.data.piston.extended) {
-        Direction facing = (Direction)removed.data.piston.facing;
-        BlockPos head_pos = block_offset(p, facing);
-        BlockState head = world_get(w, head_pos);
-        if (block_piston_pair((BlockId)removed.id, (BlockId)head.id) &&
-            head.data.piston.facing == removed.data.piston.facing) {
-            if (!world_set_block(w, head_pos, block_default(BLOCK_AIR), 3))
-                return;
-        }
-    } else if (block_is_piston_head((BlockId)removed.id)) {
-        Direction facing = (Direction)removed.data.piston.facing;
-        BlockPos base_pos = block_offset(p, direction_opposite(facing));
-        BlockState base = world_get(w, base_pos);
-        if (block_piston_pair((BlockId)base.id, (BlockId)removed.id) &&
-            base.data.piston.extended &&
-            base.data.piston.facing == removed.data.piston.facing) {
-            if (!world_set_block(w, base_pos, block_default(BLOCK_AIR), 3))
-                return;
-        }
-    }
     (void)world_set_block(w, p, block_default(BLOCK_AIR), 3);
 }
 RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
@@ -373,18 +418,14 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
         state.data.dropper.facing = (uint8_t)support;
     if (id == BLOCK_REDSTONE_LAMP)
         state.data.lamp.lit = power_received(w, p, SIGNAL_ALL) > 0;
+    if (id == BLOCK_NOTE_BLOCK)
+        state.data.note_block.instrument = (uint8_t)note_instrument(world_get(w, block_offset(p, DIR_DOWN)));
     if (id == BLOCK_REDSTONE_WIRE) {
         state.data.wire.connections = 0x33;
         state = wire_connection_state(w, p, state);
     }
     if (id == BLOCK_REDSTONE_REPEATER)
         state.data.repeater.locked = repeater_is_locked(w, p, state);
-    if ((block_is_piston_base((BlockId)previous.id) &&
-         previous.data.piston.extended) ||
-        block_is_piston_head((BlockId)previous.id)) {
-        world_remove_internal(w, p);
-        if (w->sim->error != RS_OK) return w->sim->error;
-    }
     if (!world_set_block(w, p, state, 3)) return w->sim->error;
     if (id == BLOCK_REDSTONE_REPEATER || id == BLOCK_REDSTONE_COMPARATOR) {
         Direction rear = direction_opposite((Direction)(id == BLOCK_REDSTONE_REPEATER ?
@@ -403,8 +444,26 @@ RsResult world_remove(World *w, BlockPos p)
 {
     if (!w) return RS_INVALID_ARGUMENT;
     if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
-    if (world_get(w, p).id == BLOCK_AIR) return RS_UNCHANGED;
-    world_remove_internal(w, p); return w->sim->error;
+    BlockState removed = world_get(w, p);
+    if (removed.id == BLOCK_AIR) return RS_UNCHANGED;
+    if (block_is_piston_head((BlockId)removed.id)) {
+        Direction facing = (Direction)removed.data.piston.facing;
+        BlockPos behind = block_offset(p, direction_opposite(facing));
+        BlockState base = world_get(w, behind);
+        if (block_piston_pair((BlockId)base.id, (BlockId)removed.id) &&
+            base.data.piston.extended && base.data.piston.facing == facing)
+            world_remove_internal(w, behind);
+        if (w->sim->error != RS_OK) return w->sim->error;
+    }
+    world_remove_internal(w, p);
+    if (removed.id == BLOCK_MOVING_PISTON && w->sim->error == RS_OK) {
+        Direction facing = (Direction)removed.data.moving_piston.facing;
+        BlockPos behind = block_offset(p, direction_opposite(facing));
+        BlockState base = world_get(w, behind);
+        if (block_is_piston_base((BlockId)base.id) && base.data.piston.extended)
+            (void)world_set_block(w, behind, block_default(BLOCK_AIR), 3);
+    }
+    return w->sim->error;
 }
 RsResult world_toggle_wire_dot(World *w, BlockPos p)
 {
@@ -461,6 +520,17 @@ RsResult world_set_barrel_level(World *w, BlockPos p, uint8_t level)
     if (state.id != BLOCK_BARREL) return RS_INVALID_ARGUMENT;
     return container_set_barrel_level(w, p, level);
 }
+RsResult world_cycle_note(World *w, BlockPos p)
+{
+    if (!w) return RS_INVALID_ARGUMENT;
+    if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
+    RsResult result = sim_flush(w); if (result != RS_OK) return result;
+    BlockState state = world_get(w, p);
+    if (state.id != BLOCK_NOTE_BLOCK) return RS_INVALID_ARGUMENT;
+    state.data.note_block.note = (uint8_t)((state.data.note_block.note + 1u) % NOTE_COUNT);
+    (void)world_set_block(w, p, state, 3);
+    return w->sim->error;
+}
 static bool in_view(const World *w, BlockPos key)
 {
     if (w->view_radius < 0) return true;
@@ -475,8 +545,7 @@ RsResult world_stream(World *w, BlockPos focus, int radius)
     BlockPos center = chunk_key(focus);
     for (int dz = -radius; dz <= radius; ++dz) for (int dx = -radius; dx <= radius; ++dx) {
         BlockPos key = {center.x + dx, 0, center.z + dz};
-        int64_t x = (int64_t)key.x * 16, z = (int64_t)key.z * 16;
-        if (x < INT32_MIN + 16 || x + 15 > INT32_MAX - 16 || z < INT32_MIN + 16 || z + 15 > INT32_MAX - 16) continue;
+        if (!world_chunk_in_bounds(w, key)) continue;
         if (!world_ensure_chunk(w, key)) return RS_OUT_OF_MEMORY;
     }
     if (!pos_equal(w->view_center, center) || w->view_radius != radius) ++w->topology_revision;

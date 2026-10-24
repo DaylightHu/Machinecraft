@@ -45,8 +45,6 @@ struct WorldRenderer {
     size_t region_count, region_capacity;
     RenderRegion **regions;
     uint64_t topology_revision;
-    BlockPos open_barrel;
-    bool barrel_open;
     bool failed;
     Material materials[PARTS];
 };
@@ -231,24 +229,6 @@ static unsigned bit_count(unsigned bits)
     return count;
 }
 
-static BlockPos cell_position(const RenderRegion *region, size_t index)
-{
-    return (BlockPos){
-        region->origin.x + (int)(index & 15),
-        region->origin.y + (int)(index >> 8),
-        region->origin.z + (int)((index >> 4) & 15)
-    };
-}
-
-static BlockState render_state(const WorldRenderer *renderer, BlockPos pos,
-                               BlockState state)
-{
-    if (state.id == BLOCK_BARREL && renderer->barrel_open &&
-        pos_equal(pos, renderer->open_barrel))
-        state.data.barrel.open = true;
-    return state;
-}
-
 static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
 {
     RenderRegion *region = r->regions[region_id];
@@ -299,7 +279,7 @@ static bool rebuild_part(WorldRenderer *r, size_t region_id, int kind)
             RenderCell *cell = &region->cells[section_index(p)];
             if (part_for(cell->state.id) != kind) continue;
             BlockGeometry geometry;
-            BlockState state = render_state(r, p, cell->state);
+            BlockState state = cell->state;
             block_renderer_build_geometry(r->blocks,state,(Vector3){(float)x,(float)y,(float)z},cell->solid_faces,&geometry);
             cell->first_vertex = (uint32_t)next;
             for (int face = 0; face < geometry.quads; ++face) {
@@ -347,8 +327,7 @@ static void patch_uv(WorldRenderer *r, RenderRegion *region, uint16_t index)
     RegionPart *part = &region->parts[kind];
     if (part->rebuilt || !part->mesh.texcoords) return;
     Vector2 uv[BLOCK_GEOMETRY_QUADS][4];
-    BlockPos pos = cell_position(region, index);
-    BlockState state = render_state(r, pos, cell->state);
+    BlockState state = cell->state;
     int quads = block_renderer_build_uv(r->blocks,state,cell->solid_faces,uv);
     unsigned first = cell->first_vertex;
     unsigned end = first+(unsigned)(quads*part->vertices_per_quad);
@@ -370,7 +349,6 @@ static void patch_uv(WorldRenderer *r, RenderRegion *region, uint16_t index)
     if (first < part->uv_first) part->uv_first = first;
     if (end > part->uv_end) part->uv_end = end;
 }
-
 static void destroy_region(RenderRegion *region)
 {
     for (int kind = 0; kind < PARTS; ++kind) UnloadMesh(region->parts[kind].mesh);
@@ -493,26 +471,4 @@ void world_renderer_draw(WorldRenderer *r)
         }
         if (two_sided) rlEnableBackfaceCulling();
     }
-}
-
-static void queue_barrel_visual(WorldRenderer *renderer, BlockPos pos)
-{
-    RenderRegion *region = find_region(renderer, pos);
-    if (!region) return;
-    size_t index = section_index(pos);
-    RenderCell *cell = &region->cells[index];
-    if (cell->state.id != BLOCK_BARREL || cell->pending) return;
-    cell->pending = true;
-    region->pending[region->pending_count++] = (uint16_t)index;
-}
-
-void world_renderer_set_barrel_open(WorldRenderer *renderer, BlockPos pos,
-                                    bool open)
-{
-    if (!renderer) return;
-    if (renderer->barrel_open)
-        queue_barrel_visual(renderer, renderer->open_barrel);
-    renderer->barrel_open = open;
-    renderer->open_barrel = pos;
-    if (open) queue_barrel_visual(renderer, pos);
 }

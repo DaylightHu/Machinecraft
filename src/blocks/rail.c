@@ -18,9 +18,7 @@ bool block_is_rail(BlockId id)
 
 bool rail_supported(const World *world, BlockPos position)
 {
-    /* For the supported blocks, the hopper's rim also satisfies Java's
-     * RIGID support test, despite not having a full upper face. */
-    return block_supports_wire(world, block_offset(position, DIR_DOWN));
+    return block_supports_rigid(world, block_offset(position, DIR_DOWN));
 }
 
 static bool x_axis(BlockState state)
@@ -132,7 +130,7 @@ static void neighbor_changed(World *world, BlockPos pos, BlockState state)
         return;
     if (!rail_supported(world, pos) ||
         (state.data.rail.ascending &&
-         !block_supports_wire(world,
+         !block_supports_rigid(world,
              block_offset(pos, (Direction)state.data.rail.facing)))) {
         world_remove_internal(world, pos);
         return;

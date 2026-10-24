@@ -6,10 +6,11 @@
 typedef struct {
     BlockPos pos;
     ContainerStack *slots;
-    uint64_t cooldown_until, last_tick;
+    uint64_t last_tick;
     size_t tick_slot;
-    uint8_t id, facing;
-    bool enabled;
+    unsigned openers;
+    uint8_t cooldown;
+    uint8_t id;
 } ContainerRuntime;
 typedef struct {
     PosMap positions;
@@ -24,7 +25,6 @@ ContainerRuntime *container_runtime(const World *world, BlockPos pos);
 bool container_attach(World *world, BlockPos pos, BlockState state);
 void container_forget(World *world, BlockPos pos);
 void container_destroy(World *world);
-void container_sync_hopper(World *world, BlockPos pos, BlockState state);
 void container_tick_hopper(World *world, BlockPos pos);
 void container_dispense(World *world, BlockPos pos);
 uint8_t container_level(const ContainerRuntime *container);

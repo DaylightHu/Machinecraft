@@ -4,6 +4,7 @@
 #include "block_shape.h"
 #include "hotbar.h"
 #include "inventory.h"
+#include "plot_command.h"
 #include "voxel_pick.h"
 #include "world_renderer.h"
 #include "raylib.h"
@@ -20,6 +21,7 @@ enum {
     SCREEN_WIDTH = 1000,
     SCREEN_HEIGHT = 650,
     MESSAGE_CAPACITY = 192,
+    COMMAND_CAPACITY = 128,
     VISIBLE_SAVE_ROWS = 7
 };
 
@@ -28,6 +30,7 @@ static const char save_directory[] = "saves";
 typedef enum {
     GUI_TITLE,
     GUI_WORLD,
+    GUI_COMMAND,
     GUI_INVENTORY,
     GUI_BARREL,
     GUI_HOPPER,
@@ -58,6 +61,8 @@ typedef struct {
     char world_name[GAME_SESSION_NAME_CAPACITY];
     size_t world_name_length;
     char message[MESSAGE_CAPACITY];
+    char command[COMMAND_CAPACITY];
+    size_t command_length;
     BlockPos barrel_pos;
     BlockPos container_pos;
     double accumulator;
@@ -214,8 +219,13 @@ static Rectangle barrel_signal_rectangle(ContainerLayout layout, int level)
 
 static void open_barrel(GuiApp *app, BlockPos pos)
 {
+    RsResult result = world_open_barrel(game_session_world(app->session), pos);
+    if (result != RS_OK) {
+        snprintf(app->message, sizeof(app->message),
+                 "Open barrel: %s", rs_result_name(result));
+        return;
+    }
     app->barrel_pos = pos;
-    world_renderer_set_barrel_open(app->world_renderer, pos, true);
     release_mouse(app);
     app->screen = GUI_BARREL;
     snprintf(app->message, sizeof(app->message),
@@ -224,8 +234,7 @@ static void open_barrel(GuiApp *app, BlockPos pos)
 
 static void close_barrel(GuiApp *app)
 {
-    world_renderer_set_barrel_open(app->world_renderer,
-                                   app->barrel_pos, false);
+    (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
     app->screen = GUI_WORLD;
     capture_mouse(app);
 }
@@ -266,7 +275,7 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->accumulator = 0.0;
     app->screen = GUI_WORLD;
     snprintf(app->message, sizeof(app->message),
-             "LMB remove | RMB use/place | Shift+RMB place | MMB pick | E inventory | ESC menu");
+             "LMB remove | RMB use/place | Shift+RMB place | MMB pick | E inventory | / command | ESC menu");
     capture_mouse(app);
     return true;
 }
@@ -486,6 +495,17 @@ static Direction camera_horizontal_direction(const Camera3D *camera)
     return z >= 0.0f ? DIR_SOUTH : DIR_NORTH;
 }
 
+static const char *horizontal_direction_name(Direction direction)
+{
+    switch (direction) {
+    case DIR_EAST: return "East (+X)";
+    case DIR_WEST: return "West (-X)";
+    case DIR_SOUTH: return "South (+Z)";
+    case DIR_NORTH: return "North (-Z)";
+    default: return "Unknown";
+    }
+}
+
 static Direction camera_direction(const Camera3D *camera)
 {
     float x = camera->target.x - camera->position.x;
@@ -578,9 +598,66 @@ static void advance_simulation(GuiApp *app)
     }
 }
 
+static void update_command(GuiApp *app)
+{
+    int character;
+    while ((character = GetCharPressed()) != 0) {
+        if (!app->command_length && character == '/') continue;
+        if (character >= 32 && character < 127 &&
+            app->command_length + 1 < sizeof(app->command)) {
+            app->command[app->command_length++] = (char)character;
+            app->command[app->command_length] = '\0';
+        }
+    }
+    if (IsKeyPressed(KEY_BACKSPACE) && app->command_length)
+        app->command[--app->command_length] = '\0';
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        app->screen = GUI_WORLD;
+        capture_mouse(app);
+        return;
+    }
+    if (!IsKeyPressed(KEY_ENTER)) return;
+    PlotCommand command;
+    if (!plot_command_parse(app->command, &command)) {
+        snprintf(app->message, sizeof(app->message),
+                 "Use /plot info or /plot expand DIRECTION [COUNT]");
+    } else {
+        RsResult result = plot_command_run(game_session_world(app->session),
+                                           &command, app->message,
+                                           sizeof(app->message));
+        if (result != RS_OK)
+            snprintf(app->message, sizeof(app->message), "Plot command: %s",
+                     rs_result_name(result));
+    }
+    app->screen = GUI_WORLD;
+    capture_mouse(app);
+}
+
+static void constrain_camera(GuiApp *app, const World *world)
+{
+    WorldPlotBounds bounds = world_plot_bounds(world);
+    float x = app->camera.position.x;
+    float z = app->camera.position.z;
+    if (x < bounds.min_x) x = (float)bounds.min_x;
+    if (x > bounds.max_x) x = (float)bounds.max_x;
+    if (z < bounds.min_z) z = (float)bounds.min_z;
+    if (z > bounds.max_z) z = (float)bounds.max_z;
+    app->camera.target.x += x - app->camera.position.x;
+    app->camera.target.z += z - app->camera.position.z;
+    app->camera.position.x = x;
+    app->camera.position.z = z;
+}
+
 static VoxelHit update_world(GuiApp *app)
 {
     VoxelHit hit = {0};
+    if (IsKeyPressed(KEY_SLASH)) {
+        release_mouse(app);
+        app->command[0] = '\0';
+        app->command_length = 0;
+        app->screen = GUI_COMMAND;
+        return hit;
+    }
     if (IsKeyPressed(KEY_E)) {
         release_mouse(app);
         app->screen = GUI_INVENTORY;
@@ -606,9 +683,11 @@ static VoxelHit update_world(GuiApp *app)
     app->camera.position.y += vertical_delta;
     app->camera.target.y += vertical_delta;
 
+    World *world = game_session_world(app->session);
+    constrain_camera(app, world);
+
     Ray ray = GetScreenToWorldRay(
         (Vector2){GetScreenWidth()*0.5f, GetScreenHeight()*0.5f}, app->camera);
-    World *world = game_session_world(app->session);
     double camera_x = floor((double)app->camera.position.x + 0.5);
     double camera_z = floor((double)app->camera.position.z + 0.5);
     if (!isfinite(camera_x) || !isfinite(camera_z) || camera_x < (double)INT32_MIN+16 ||
@@ -658,6 +737,17 @@ static VoxelHit update_world(GuiApp *app)
                 result = game_session_flush(app->session);
             snprintf(app->message, sizeof(app->message),
                      "Toggle comparator mode: %s", rs_result_name(result));
+        } else if (hit.hit && !shift && target == BLOCK_NOTE_BLOCK) {
+            RsResult result = world_cycle_note(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            BlockState state = world_get(world, hit.pos);
+            if ((result == RS_OK || result == RS_UNCHANGED) && state.id == BLOCK_NOTE_BLOCK)
+                snprintf(app->message, sizeof(app->message), "Note: %u (%s)",
+                    (unsigned)state.data.note_block.note,
+                    note_instrument_name((NoteInstrument)state.data.note_block.instrument));
+            else
+                snprintf(app->message, sizeof(app->message), "Tune note: %s", rs_result_name(result));
         } else {
             if (hotbar_selected(&app->hotbar).kind == INVENTORY_ITEM)
                 snprintf(app->message, sizeof(app->message),
@@ -679,7 +769,6 @@ static VoxelHit update_world(GuiApp *app)
         }
     }
 
-    advance_simulation(app);
     return hit;
 }
 
@@ -707,7 +796,6 @@ static void update_inventory(GuiApp *app)
                      inventory_slot_name(selected));
     }
 
-    advance_simulation(app);
 }
 
 static bool write_container_slot(World *world, BlockPos pos, size_t index,
@@ -879,7 +967,6 @@ static void update_barrel(GuiApp *app)
         snprintf(app->message, sizeof(app->message), "Barrel signal %d: %s",
                  level, rs_result_name(result));
     }
-    advance_simulation(app);
 }
 
 static void update_container(GuiApp *app)
@@ -893,7 +980,6 @@ static void update_container(GuiApp *app)
         return;
     }
     update_container_slots(app, app->container_pos, container_layout(id));
-    advance_simulation(app);
 }
 
 static void draw_container(const GuiApp *app, BlockId id)
@@ -1000,7 +1086,33 @@ static void draw_world(GuiApp *app, VoxelHit hit)
     } else {
         DrawText("Target: none", 15, 39, 18, DARKBLUE);
     }
+    DrawText(TextFormat("Facing: %s", horizontal_direction_name(
+                 camera_horizontal_direction(&app->camera))),
+             15, 63, 18, DARKBLUE);
     hotbar_draw(&app->hotbar, &app->inventory);
+}
+
+static void draw_command(const GuiApp *app)
+{
+    int y = GetScreenHeight() - 88;
+    int width = GetScreenWidth() - 36;
+    DrawRectangle(18, y, width, 52,
+                  (Color){15, 27, 30, 235});
+    DrawRectangleLines(18, y, width, 52,
+                       (Color){244, 190, 88, 255});
+    const char *text = TextFormat("/%s", app->command);
+    int text_x = 32;
+    int cursor_x = text_x + MeasureText(text, 21);
+    int right = 18 + width - 14;
+    if (cursor_x > right) {
+        text_x -= cursor_x - right;
+        cursor_x = right;
+    }
+    BeginScissorMode(20, y + 2, width - 4, 48);
+    DrawText(text, text_x, y + 15, 21, RAYWHITE);
+    if (((int)(GetTime()*2.0)) % 2 == 0)
+        DrawLine(cursor_x, y + 11, cursor_x, y + 40, RAYWHITE);
+    EndScissorMode();
 }
 
 static void draw_pause(GuiApp *app)
@@ -1138,8 +1250,7 @@ int gui_run(void)
             app.screen != GUI_SAVE_ERROR) {
             app.close_latched = true;
             if (app.screen == GUI_BARREL) {
-                world_renderer_set_barrel_open(app.world_renderer,
-                                               app.barrel_pos, false);
+                (void)world_close_barrel(game_session_world(app.session), app.barrel_pos);
                 app.screen = GUI_WORLD;
             }
             if (app.session && game_session_dirty(app.session))
@@ -1149,13 +1260,21 @@ int gui_run(void)
         }
         if (!app.running) break;
 
+        GameSession *frame_session = app.session;
         VoxelHit hit = {0};
         if (app.screen == GUI_TITLE) update_title(&app);
         else if (app.screen == GUI_WORLD) hit = update_world(&app);
+        else if (app.screen == GUI_COMMAND) update_command(&app);
         else if (app.screen == GUI_INVENTORY) update_inventory(&app);
         else if (app.screen == GUI_BARREL) update_barrel(&app);
         else if (app.screen == GUI_HOPPER || app.screen == GUI_DROPPER)
             update_container(&app);
+
+        if (app.session && app.session == frame_session &&
+            app.screen >= GUI_WORLD && app.screen <= GUI_DROPPER) {
+            advance_simulation(&app);
+            if (!app.running) break;
+        }
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
@@ -1178,6 +1297,7 @@ int gui_run(void)
             if (app.screen == GUI_BARREL) draw_container(&app, BLOCK_BARREL);
             if (app.screen == GUI_HOPPER) draw_container(&app, BLOCK_HOPPER);
             if (app.screen == GUI_DROPPER) draw_container(&app, BLOCK_DROPPER);
+            if (app.screen == GUI_COMMAND) draw_command(&app);
             if (app.screen == GUI_PAUSE) draw_pause(&app);
         }
         EndDrawing();

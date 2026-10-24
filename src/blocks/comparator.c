@@ -5,7 +5,7 @@ enum { COMPARATOR_DELAY = 2 };
 
 bool comparator_supported(const World *world, BlockPos position)
 {
-    return block_supports_wire(world, block_offset(position, DIR_DOWN));
+    return block_supports_rigid(world, block_offset(position, DIR_DOWN));
 }
 
 static bool valid_facing(Direction facing)
@@ -139,6 +139,7 @@ static void comparator_neighbor(World *world, BlockPos position)
 {
     if (!comparator_supported(world, position)) {
         world_remove_internal(world, position);
+        sim_update_neighbors_around(world, position);
         return;
     }
     sim_mark_input(world, position);

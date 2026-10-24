@@ -56,9 +56,6 @@ struct Simulator {
     PistonEvents piston_events;
     PistonMotions piston_motions;
     BlockEntityTicks block_entities;
-    StateChange *held_changes;
-    size_t held_count, held_capacity;
-    unsigned hold_updates;
     ContainerTable containers;
     PosMap torch_slots;
     TorchRuntime *torches;
@@ -75,15 +72,14 @@ void sim_forget_cell(World *, BlockPos);
 void sim_notify_change(World *, BlockPos);
 void sim_notify_analog(World *, BlockPos);
 void sim_update_neighbors_at(World *, BlockPos, Direction except);
+void sim_update_neighbors_around(World *, BlockPos);
 void sim_neighbor_changed(World *, BlockPos);
 void sim_update_output_neighbors(World *, BlockPos, Direction output);
 void sim_update_shape_at(World *, BlockPos, Direction toward_source,
                           BlockPos source, unsigned flags, unsigned remaining_shapes);
+void sim_update_neighbor_shapes(World *, BlockPos, unsigned flags, unsigned remaining_shapes);
 BlockState sim_update_from_neighbor_shapes(World *, BlockPos, BlockState);
 void sim_state_changed(World *, StateChange);
-bool sim_hold_change(World *, StateChange);
-void sim_begin_updates(World *);
-void sim_end_updates(World *);
 bool block_states_equal(BlockState, BlockState);
 void sim_mark_wire(World *, BlockPos);
 void sim_mark_input(World *, BlockPos);

@@ -34,6 +34,7 @@ static const char *common_sources[] = {
     "src/rail_solver.c",
     "src/power.c",
     "src/session.c",
+    "src/plot_command.c",
     "src/item.c",
     "src/container.c",
     "src/save_file.c",
