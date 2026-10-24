@@ -26,11 +26,21 @@ clang nob.c -o nob.exe
 .\nob.exe run
 ```
 
-Linux：
-```
-Just find ways by yourself.
-```
-
 After the first bootstrap, use `./nob` or `.\nob.exe` to build both the GUI and CLI. Run `help` to see the other commands. Outputs are written to
 `build/macos/` or `build/windows/`.
 
+## Plot commands
+
+A new world starts with a 512 × 512 plot. The plot can be expanded in 512-block units without creating boundaries inside the expanded world.
+
+In the GUI, press `/` to open command input, type a command, and press Enter.
+```
+/plot expand east|west|south|north [COUNT]
+```
+
+An optional count expands multiple 512-block units at once:
+```
+/plot expand east 2
+```
+
+The CLI accepts the same commands, with or without the leading `/`.
