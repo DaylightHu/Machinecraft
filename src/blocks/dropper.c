@@ -3,7 +3,8 @@
 
 static uint8_t dropper_analog(const World *world, BlockPos pos)
 {
-    return world_get(world, pos).data.dropper.level;
+    ContainerRuntime *container = container_runtime(world, pos);
+    return container ? container_level(container) : 0;
 }
 
 static void dropper_input(World *world, BlockPos pos)
@@ -17,7 +18,7 @@ static void dropper_input(World *world, BlockPos pos)
     state.data.dropper.triggered = powered;
     /* Vanilla's flags=4 changes the latch without notifying neighborChanged.
      * Falling edges leave an already scheduled dispense in the tick queue. */
-    (void)world_write_derived(world, pos, state);
+    (void)world_set_block(world, pos, state, UPDATE_NO_RERENDER);
 }
 
 static void dropper_neighbor(World *world, BlockPos pos)

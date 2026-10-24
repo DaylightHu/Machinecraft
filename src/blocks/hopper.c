@@ -3,7 +3,8 @@
 
 static uint8_t hopper_analog(const World *world, BlockPos pos)
 {
-    return world_get(world, pos).data.hopper.level;
+    ContainerRuntime *container = container_runtime(world, pos);
+    return container ? container_level(container) : 0;
 }
 
 static void hopper_input(World *world, BlockPos pos)
@@ -13,7 +14,7 @@ static void hopper_input(World *world, BlockPos pos)
     bool enabled = power_received(world, pos, SIGNAL_ALL) == 0;
     if (state.data.hopper.enabled != enabled) {
         state.data.hopper.enabled = enabled;
-        if (!world_write_derived(world, pos, state)) return;
+        if (!world_set_block(world, pos, state, UPDATE_NO_RERENDER)) return;
     }
 }
 

@@ -793,6 +793,7 @@ static void print_help(const char *program)
     printf("  gui          Build only the GUI\n");
     printf("  cli          Build only the CLI\n");
     printf("  run          Build and run the GUI from the repository root\n");
+    printf("  run-cli      Build and run the CLI from the repository root\n");
     printf("  vendor-list  Print the raylib files required by macOS and Windows\n");
     printf("  precommit    Stage the exact raylib set and verify an index-only build\n");
     printf("  clean        Remove the build directory\n");
@@ -819,6 +820,14 @@ int main(int argc, char **argv)
         if (!build_machinecraft(true, false)) return 1;
         Nob_Cmd run = {0};
         const char *binary = nob_temp_sprintf("%s/machinecraft_gui%s",
+                                              platform_build_dir(), executable_suffix());
+        nob_cmd_append(&run, binary);
+        return nob_cmd_run(&run) ? 0 : 1;
+    }
+    if (strcmp(command, "run-cli") == 0) {
+        if (!build_machinecraft(false, true)) return 1;
+        Nob_Cmd run = {0};
+        const char *binary = nob_temp_sprintf("%s/machinecraft_cli%s",
                                               platform_build_dir(), executable_suffix());
         nob_cmd_append(&run, binary);
         return nob_cmd_run(&run) ? 0 : 1;
