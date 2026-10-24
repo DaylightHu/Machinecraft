@@ -50,44 +50,47 @@ static int select_save(FILE *input, FILE *output, const GameSaveList *saves,
 int app_run(FILE *input, FILE *output, FILE *errors)
 {
     if (!input || !output || !errors) return EXIT_FAILURE;
-    GameSaveList saves;
-    GameSessionResult session_result = game_session_list_saves(save_directory,
-                                                               &saves);
-    if (session_result != GAME_SESSION_OK &&
-        session_result != GAME_SESSION_TOO_MANY_SAVES) {
-        fprintf(errors, "error: cannot list saves: %s\n",
-                game_session_result_name(session_result));
-        return EXIT_FAILURE;
+    for (;;) {
+        GameSaveList saves;
+        GameSessionResult session_result = game_session_list_saves(save_directory,
+                                                                   &saves);
+        if (session_result != GAME_SESSION_OK &&
+            session_result != GAME_SESSION_TOO_MANY_SAVES) {
+            fprintf(errors, "error: cannot list saves: %s\n",
+                    game_session_result_name(session_result));
+            return EXIT_FAILURE;
+        }
+        if (session_result == GAME_SESSION_TOO_MANY_SAVES)
+            fprintf(errors, "warning: only the first %d saves are shown\n",
+                    GAME_SESSION_MAX_SAVES);
+        if (!saves.count) {
+            fprintf(output, "No saved worlds found in %s/.\n", save_directory);
+            return EXIT_SUCCESS;
+        }
+        fputs("Machinecraft CLI\nSaved worlds:\n", output);
+        for (size_t i = 0; i < saves.count; ++i)
+            fprintf(output, "  %zu) %s\n", i + 1, saves.names[i]);
+        size_t selection;
+        int selected = select_save(input, output, &saves, &selection);
+        if (selected <= 0) return selected ? EXIT_FAILURE : EXIT_SUCCESS;
+        char path[GAME_SESSION_PATH_CAPACITY];
+        session_result = game_session_make_path(save_directory,
+                                                saves.names[selection], path);
+        if (session_result != GAME_SESSION_OK) {
+            fprintf(errors, "error: cannot resolve save path: %s\n",
+                    game_session_result_name(session_result));
+            return EXIT_FAILURE;
+        }
+        GameSession *session = game_session_load(path, &session_result);
+        if (!session) {
+            fprintf(errors, "error: cannot load %s: %s\n", saves.names[selection],
+                    game_session_result_name(session_result));
+            return EXIT_FAILURE;
+        }
+        fprintf(output, "Loaded %s.\n", saves.names[selection]);
+        CliRunResult result = cli_run(session, input, output, errors);
+        game_session_destroy(session);
+        if (result == CLI_RUN_TITLE) continue;
+        return result == CLI_RUN_EXIT ? EXIT_SUCCESS : EXIT_FAILURE;
     }
-    if (session_result == GAME_SESSION_TOO_MANY_SAVES)
-        fprintf(errors, "warning: only the first %d saves are shown\n",
-                GAME_SESSION_MAX_SAVES);
-    if (!saves.count) {
-        fprintf(output, "No saved worlds found in %s/.\n", save_directory);
-        return EXIT_SUCCESS;
-    }
-    fputs("Machinecraft CLI\nSaved worlds:\n", output);
-    for (size_t i = 0; i < saves.count; ++i)
-        fprintf(output, "  %zu) %s\n", i + 1, saves.names[i]);
-    size_t selection;
-    int selected = select_save(input, output, &saves, &selection);
-    if (selected <= 0) return selected ? EXIT_FAILURE : EXIT_SUCCESS;
-    char path[GAME_SESSION_PATH_CAPACITY];
-    session_result = game_session_make_path(save_directory,
-                                            saves.names[selection], path);
-    if (session_result != GAME_SESSION_OK) {
-        fprintf(errors, "error: cannot resolve save path: %s\n",
-                game_session_result_name(session_result));
-        return EXIT_FAILURE;
-    }
-    GameSession *session = game_session_load(path, &session_result);
-    if (!session) {
-        fprintf(errors, "error: cannot load %s: %s\n", saves.names[selection],
-                game_session_result_name(session_result));
-        return EXIT_FAILURE;
-    }
-    fprintf(output, "Loaded %s.\n", saves.names[selection]);
-    int result = cli_run(session, input, output, errors);
-    game_session_destroy(session);
-    return result;
 }

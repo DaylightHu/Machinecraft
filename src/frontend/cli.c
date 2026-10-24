@@ -15,7 +15,7 @@ typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
     COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_TUNE, COMMAND_CAPACITY,
     COMMAND_HIT, COMMAND_SLOT, COMMAND_SLOTS, COMMAND_TICK, COMMAND_STATS,
-    COMMAND_DROPPER_SEED, COMMAND_SAVE, COMMAND_QUIT
+    COMMAND_DROPPER_SEED, COMMAND_SAVE, COMMAND_TITLE, COMMAND_QUIT
 } CommandKind;
 
 typedef struct {
@@ -178,6 +178,8 @@ static bool parse_command(char *tokens[], int count, Command *command)
         command->kind = COMMAND_HELP;
     } else if (strcmp(name, "save") == 0 && count == 1) {
         command->kind = COMMAND_SAVE;
+    } else if (strcmp(name, "title") == 0 && count == 1) {
+        command->kind = COMMAND_TITLE;
     } else if (strcmp(name, "quit") == 0 && count == 1) {
         command->kind = COMMAND_QUIT;
     } else if (strcmp(name, "stats") == 0 && count == 1) {
@@ -261,7 +263,9 @@ static void print_help(FILE *output)
           "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
           "dropper-seed SEED\n"
           "plot info\nplot expand east|west|south|north [COUNT]\n"
-          "tick [COUNT]\nstats\nsave\nhelp\nquit\nBlocks:", output);
+          "tick [COUNT]\nstats\nsave\n"
+          "title (save and return to world selection)\n"
+          "help\nquit\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         fprintf(output, " %s", block_name(id));
     }
@@ -491,20 +495,22 @@ static RsResult execute_command(World *world, const Command *command,
     return RS_OK;
 }
 
-int cli_run(GameSession *session, FILE *input, FILE *output, FILE *errors)
+CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
+                     FILE *errors)
 {
     if (!session || !input || !output || !errors) {
-        return EXIT_FAILURE;
+        return CLI_RUN_ERROR;
     }
     World *world = game_session_world(session);
 
     fputs("Redstone Sandbox (headless). Type help for commands.\n", output);
     bool running = true;
     bool failed = false;
+    bool return_to_title = false;
 
     while (running) {
         if (fflush(output) == EOF) {
-            return EXIT_FAILURE;
+            return CLI_RUN_ERROR;
         }
         char line[LINE_CAPACITY];
         int read = read_line(input, line);
@@ -548,10 +554,14 @@ int cli_run(GameSession *session, FILE *input, FILE *output, FILE *errors)
             continue;
         }
 
-        if (command.kind == COMMAND_SAVE) {
+        if (command.kind == COMMAND_SAVE || command.kind == COMMAND_TITLE) {
             GameSessionResult save_result = game_session_save(session);
             if (save_result == GAME_SESSION_OK) {
                 fputs("saved\n", output);
+                if (command.kind == COMMAND_TITLE) {
+                    return_to_title = true;
+                    break;
+                }
             } else {
                 fprintf(errors, "error: %s\n",
                         game_session_result_name(save_result));
@@ -571,7 +581,8 @@ int cli_run(GameSession *session, FILE *input, FILE *output, FILE *errors)
     }
 
     if (fflush(output) == EOF || fflush(errors) == EOF || ferror(output) || ferror(errors)) {
-        return EXIT_FAILURE;
+        return CLI_RUN_ERROR;
     }
-    return failed ? EXIT_FAILURE : EXIT_SUCCESS;
+    if (return_to_title) return CLI_RUN_TITLE;
+    return failed ? CLI_RUN_ERROR : CLI_RUN_EXIT;
 }

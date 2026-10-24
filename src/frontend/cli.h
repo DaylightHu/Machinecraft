@@ -5,6 +5,13 @@
 
 #include <stdio.h>
 
-int cli_run(GameSession *session, FILE *input, FILE *output, FILE *errors);
+typedef enum {
+    CLI_RUN_EXIT,
+    CLI_RUN_ERROR,
+    CLI_RUN_TITLE
+} CliRunResult;
+
+CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
+                     FILE *errors);
 
 #endif
