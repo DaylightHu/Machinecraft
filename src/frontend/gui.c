@@ -1095,11 +1095,24 @@ static void draw_world(GuiApp *app, VoxelHit hit)
 static void draw_command(const GuiApp *app)
 {
     int y = GetScreenHeight() - 88;
-    DrawRectangle(18, y, GetScreenWidth() - 36, 52,
+    int width = GetScreenWidth() - 36;
+    DrawRectangle(18, y, width, 52,
                   (Color){15, 27, 30, 235});
-    DrawRectangleLines(18, y, GetScreenWidth() - 36, 52,
+    DrawRectangleLines(18, y, width, 52,
                        (Color){244, 190, 88, 255});
-    DrawText(TextFormat("/%s", app->command), 32, y + 15, 21, RAYWHITE);
+    const char *text = TextFormat("/%s", app->command);
+    int text_x = 32;
+    int cursor_x = text_x + MeasureText(text, 21);
+    int right = 18 + width - 14;
+    if (cursor_x > right) {
+        text_x -= cursor_x - right;
+        cursor_x = right;
+    }
+    BeginScissorMode(20, y + 2, width - 4, 48);
+    DrawText(text, text_x, y + 15, 21, RAYWHITE);
+    if (((int)(GetTime()*2.0)) % 2 == 0)
+        DrawLine(cursor_x, y + 11, cursor_x, y + 40, RAYWHITE);
+    EndScissorMode();
 }
 
 static void draw_pause(GuiApp *app)
