@@ -8,26 +8,33 @@ redstone behavior, predictable timing, and performance.
 
 
 ## Build
-This repository includes the raylib 6.0 source files required by Machinecraft. You do not need to install raylib, CMake, Make, Ninja, or a package manager.
-The only prerequisite is a C11-capable toolchain for your platform.
-Machinecraft uses [nob.h](https://github.com/tsoding/nob.h) (by Tsoding) as its build system. 
+A C11 compiler is the only required build tool; raylib is included in the repository. Compile the `nob` build runner once:
 
-MacOS:
+macOS:
 
 ```sh
 cc nob.c -o nob
-./nob run
 ```
 
-Windows:
+Windows PowerShell:
 
 ```powershell
 clang nob.c -o nob.exe
-.\nob.exe run
 ```
 
-After the first bootstrap, use `./nob` or `.\nob.exe` to build both the GUI and CLI. Run `help` to see the other commands. Outputs are written to
-`build/macos/` or `build/windows/`.
+Run `./nob COMMAND` on macOS or `.\nob.exe COMMAND` on Windows.
+
+| Command | Action |
+| --- | --- |
+| `build` | Build the GUI and CLI. This is the default when no command is given. |
+| `gui` | Build only the GUI. |
+| `cli` | Build only the CLI. |
+| `run` | Build and run the GUI. |
+| `run-cli` | Build and run the CLI. |
+| `vendor-list` | Print the raylib files required by macOS and Windows. |
+| `precommit` | Stage the required raylib files and verify an index-only build. |
+| `clean` | Remove the build directory. |
+| `help` | Show the command list. |
 
 ## Plot commands
 
