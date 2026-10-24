@@ -495,6 +495,17 @@ static Direction camera_horizontal_direction(const Camera3D *camera)
     return z >= 0.0f ? DIR_SOUTH : DIR_NORTH;
 }
 
+static const char *horizontal_direction_name(Direction direction)
+{
+    switch (direction) {
+    case DIR_EAST: return "East (+X)";
+    case DIR_WEST: return "West (-X)";
+    case DIR_SOUTH: return "South (+Z)";
+    case DIR_NORTH: return "North (-Z)";
+    default: return "Unknown";
+    }
+}
+
 static Direction camera_direction(const Camera3D *camera)
 {
     float x = camera->target.x - camera->position.x;
@@ -1075,7 +1086,9 @@ static void draw_world(GuiApp *app, VoxelHit hit)
     } else {
         DrawText("Target: none", 15, 39, 18, DARKBLUE);
     }
-    if (app->message[0]) DrawText(app->message, 15, 64, 16, DARKBLUE);
+    DrawText(TextFormat("Facing: %s", horizontal_direction_name(
+                 camera_horizontal_direction(&app->camera))),
+             15, 63, 18, DARKBLUE);
     hotbar_draw(&app->hotbar, &app->inventory);
 }
 
