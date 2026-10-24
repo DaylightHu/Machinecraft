@@ -14,8 +14,8 @@
 #endif
 
 enum {
-    SAVE_VERSION = 11,
-    SAVE_HEADER_SIZE = 64,
+    SAVE_VERSION = 12,
+    SAVE_HEADER_SIZE = 80,
     SAVE_CRC_OFFSET = 36
 };
 static const unsigned char save_magic[8] = {'M','C','W','O','R','L','D',0};
@@ -193,6 +193,10 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     bytes_u32(&b, (uint32_t)piston_count);
     bytes_u32(&b, (uint32_t)motion_count);
     bytes_u32(&b, (uint32_t)s->block_entities.active);
+    bytes_u32(&b, (uint32_t)w->plot.min_x);
+    bytes_u32(&b, (uint32_t)w->plot.min_z);
+    bytes_u32(&b, (uint32_t)w->plot.max_x);
+    bytes_u32(&b, (uint32_t)w->plot.max_z);
     GameSessionResult result = GAME_SESSION_OK;
     for (size_t i = 0; i < chunk_count; ++i) {
         ByteBuffer snapshot; bytes_init(&snapshot);
@@ -341,6 +345,12 @@ static unsigned char *read_whole_file(const char *path, size_t *size,
     return bytes;
 }
 
+static int read_signed32(ByteBuffer *buffer)
+{
+    uint32_t value = bytes_read32(buffer);
+    return value <= INT32_MAX ? (int)value : -1 - (int)(UINT32_MAX - value);
+}
+
 
 World *save_file_read(const char *path, GameSessionResult *result)
 {
@@ -369,7 +379,11 @@ World *save_file_read(const char *path, GameSessionResult *result)
     uint32_t piston_count = bytes_read32(&b);
     uint32_t motion_count = bytes_read32(&b);
     uint32_t entity_count = bytes_read32(&b);
-    if (dropper_random >> 48) goto fail;
+    WorldPlotBounds plot = {
+        read_signed32(&b), read_signed32(&b),
+        read_signed32(&b), read_signed32(&b)
+    };
+    if (!b.ok || dropper_random >> 48 || !world_plot_bounds_valid(plot)) goto fail;
     memset(b.data + SAVE_CRC_OFFSET, 0, 4);
     if (crc32_bytes(b.data, b.size) != crc || ground > 65 ||
         (uint64_t)chunk_count * 20 + (uint64_t)torch_count * 86 +
@@ -380,6 +394,7 @@ World *save_file_read(const char *path, GameSessionResult *result)
         goto fail;
     w = world_create((WorldConfig){(int)ground});
     if (!w) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
+    w->plot = plot;
     w->tick = tick;
     w->sim->containers.dropper_random = dropper_random;
     for (uint32_t i = 0; i < chunk_count; ++i) {

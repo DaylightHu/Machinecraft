@@ -60,13 +60,31 @@ static void invalidate_reads(World *w, bool wire_properties_only)
     }
 }
 static BlockPos chunk_key(BlockPos p) { return (BlockPos){floor_div16(p.x), 0, floor_div16(p.z)}; }
+bool world_plot_bounds_valid(WorldPlotBounds b)
+{
+    int64_t max_x = b.max_x, max_z = b.max_z;
+    return b.min_x >= INT32_MIN + 16 && b.min_z >= INT32_MIN + 16 &&
+           b.max_x <= INT32_MAX - 16 && b.max_z <= INT32_MAX - 16 &&
+           b.min_x <= b.max_x && b.min_z <= b.max_z &&
+           b.min_x % WORLD_PLOT_SIZE == 0 && b.min_z % WORLD_PLOT_SIZE == 0 &&
+           (max_x + 1) % WORLD_PLOT_SIZE == 0 &&
+           (max_z + 1) % WORLD_PLOT_SIZE == 0;
+}
+bool world_chunk_in_bounds(const World *w, BlockPos key)
+{
+    if (!w || key.y) return false;
+    int64_t x = (int64_t)key.x * CHUNK_SIZE;
+    int64_t z = (int64_t)key.z * CHUNK_SIZE;
+    return x >= w->plot.min_x && x + CHUNK_SIZE - 1 <= w->plot.max_x &&
+           z >= w->plot.min_z && z + CHUNK_SIZE - 1 <= w->plot.max_z;
+}
 Chunk *world_find_chunk(const World *w, BlockPos key)
 {
     size_t slot; return posmap_get(&w->chunk_map, key, &slot) ? w->chunks[slot] : NULL;
 }
 bool world_insert_chunk(World *w, Chunk *c)
 {
-    if (world_find_chunk(w, c->key)) return false;
+    if (!world_chunk_in_bounds(w, c->key) || world_find_chunk(w, c->key)) return false;
     if (w->chunk_count == w->chunk_capacity) {
         size_t capacity = w->chunk_capacity ? w->chunk_capacity * 2 : 16;
         if (capacity < w->chunk_capacity || capacity > SIZE_MAX / sizeof(Chunk *)) return false;
@@ -150,6 +168,8 @@ World *world_create(WorldConfig config)
     World *w = calloc(1, sizeof(*w));
     if (!w) return NULL;
     w->config = config; w->view_radius = -1;
+    w->plot = (WorldPlotBounds){0, 0, WORLD_PLOT_SIZE - 1,
+                               WORLD_PLOT_SIZE - 1};
     w->read_stamp = 1;
     w->external_power_stamp = 1;
     if (!sim_init_internal(w)) { world_destroy(w); return NULL; }
@@ -166,10 +186,47 @@ void world_destroy(World *w)
 }
 bool world_in_bounds(const World *w, BlockPos p)
 {
-    /* Leave one chunk of headroom for neighbor arithmetic at integer limits. */
     return w && p.y >= WORLD_MIN_Y && p.y <= WORLD_MAX_Y &&
-           p.x >= INT32_MIN + 16 && p.x <= INT32_MAX - 16 &&
-           p.z >= INT32_MIN + 16 && p.z <= INT32_MAX - 16;
+           p.x >= w->plot.min_x && p.x <= w->plot.max_x &&
+           p.z >= w->plot.min_z && p.z <= w->plot.max_z;
+}
+WorldPlotBounds world_plot_bounds(const World *w)
+{
+    return w ? w->plot : (WorldPlotBounds){0};
+}
+RsResult world_expand_plot(World *w, Direction direction, uint32_t count)
+{
+    if (!w || !count || !direction_horizontal(direction))
+        return RS_INVALID_ARGUMENT;
+    if (w->sim->handling_tick || w->sim->block_entities.ticking)
+        return RS_INVALID_ARGUMENT;
+    WorldPlotBounds next = w->plot;
+    int64_t delta = (int64_t)count * WORLD_PLOT_SIZE;
+    if (direction == DIR_EAST) {
+        int64_t value = (int64_t)next.max_x + delta;
+        if (value > INT_MAX) return RS_OUT_OF_BOUNDS;
+        next.max_x = (int)value;
+    } else if (direction == DIR_WEST) {
+        int64_t value = (int64_t)next.min_x - delta;
+        if (value < INT_MIN) return RS_OUT_OF_BOUNDS;
+        next.min_x = (int)value;
+    } else if (direction == DIR_SOUTH) {
+        int64_t value = (int64_t)next.max_z + delta;
+        if (value > INT_MAX) return RS_OUT_OF_BOUNDS;
+        next.max_z = (int)value;
+    } else {
+        int64_t value = (int64_t)next.min_z - delta;
+        if (value < INT_MIN) return RS_OUT_OF_BOUNDS;
+        next.min_z = (int)value;
+    }
+    if (!world_plot_bounds_valid(next)) return RS_OUT_OF_BOUNDS;
+    RsResult result = sim_flush(w);
+    if (result != RS_OK) return result;
+    w->plot = next;
+    invalidate_reads(w, false);
+    ++w->revision;
+    ++w->topology_revision;
+    return RS_OK;
 }
 BlockState world_get(const World *w, BlockPos p)
 {
@@ -488,8 +545,7 @@ RsResult world_stream(World *w, BlockPos focus, int radius)
     BlockPos center = chunk_key(focus);
     for (int dz = -radius; dz <= radius; ++dz) for (int dx = -radius; dx <= radius; ++dx) {
         BlockPos key = {center.x + dx, 0, center.z + dz};
-        int64_t x = (int64_t)key.x * 16, z = (int64_t)key.z * 16;
-        if (x < INT32_MIN + 16 || x + 15 > INT32_MAX - 16 || z < INT32_MIN + 16 || z + 15 > INT32_MAX - 16) continue;
+        if (!world_chunk_in_bounds(w, key)) continue;
         if (!world_ensure_chunk(w, key)) return RS_OUT_OF_MEMORY;
     }
     if (!pos_equal(w->view_center, center) || w->view_radius != radius) ++w->topology_revision;

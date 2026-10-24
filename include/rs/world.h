@@ -14,8 +14,10 @@ typedef enum {
     RS_INVALID_ARGUMENT, RS_OUT_OF_MEMORY, RS_INTERNAL_ERROR
 } RsResult;
 enum { CHUNK_SIZE = 16, SECTION_VOLUME = 4096, WORLD_MIN_Y = -64,
-       WORLD_MAX_Y = 319, SECTION_COUNT = 24, STATE_ID_LIMIT = 32768 };
+       WORLD_MAX_Y = 319, SECTION_COUNT = 24, STATE_ID_LIMIT = 32768,
+       WORLD_PLOT_SIZE = 512 };
 typedef struct { int ground_layers; } WorldConfig;
+typedef struct { int min_x, min_z, max_x, max_z; } WorldPlotBounds;
 typedef ItemStack ContainerStack;
 typedef void (*WorldSectionVisitor)(void *context, BlockPos origin);
 typedef struct {
@@ -32,6 +34,8 @@ WorldConfig world_config_default(void);
 World *world_create(WorldConfig config);
 void world_destroy(World *world);
 bool world_in_bounds(const World *world, BlockPos pos);
+WorldPlotBounds world_plot_bounds(const World *world);
+RsResult world_expand_plot(World *world, Direction direction, uint32_t count);
 BlockState world_get(const World *world, BlockPos pos); /* Outside vertical/coordinate limits = air; reads may restore archived chunks. */
 /* Returns false unless pos contains an active moving-piston placeholder. */
 bool world_get_piston_motion(const World *world, BlockPos pos,

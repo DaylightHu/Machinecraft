@@ -1,4 +1,5 @@
 #include "cli.h"
+#include "plot_command.h"
 #include "rs/sim.h"
 
 #include <ctype.h>
@@ -257,6 +258,7 @@ static void print_help(FILE *output)
           "slots X Y Z\nslot X Y Z INDEX ITEM COUNT LIMIT (zero based; 0 0 0 clears)\n"
           "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
           "dropper-seed SEED\n"
+          "plot info\nplot expand east|west|south|north [COUNT]\n"
           "tick [COUNT]\nstats\nhelp\nquit\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         fprintf(output, " %s", block_name(id));
@@ -511,6 +513,22 @@ int cli_run(World *world, FILE *input, FILE *output, FILE *errors)
             failed = true;
             if (read == -2) {
                 break;
+            }
+            continue;
+        }
+
+        PlotCommand plot;
+        if (plot_command_parse(line, &plot)) {
+            char message[PLOT_COMMAND_MESSAGE_CAPACITY];
+            RsResult result = plot_command_run(world, &plot, message,
+                                               sizeof(message));
+            if (result == RS_OK) {
+                fprintf(output, "%s\n", message);
+            } else {
+                fprintf(errors, "error: %s\n", rs_result_name(result));
+                failed = true;
+                if (result == RS_INTERNAL_ERROR || result == RS_OUT_OF_MEMORY)
+                    break;
             }
             continue;
         }

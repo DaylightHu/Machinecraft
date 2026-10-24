@@ -23,6 +23,7 @@ struct World {
     FILE *backing;
     BlockPos view_center;
     int view_radius;
+    WorldPlotBounds plot;
     uint64_t tick, revision, topology_revision;
     Simulator *sim;
     WorldChangeObserver observer;
@@ -45,6 +46,8 @@ void world_remove_internal(World *world, BlockPos pos);
 Chunk *world_find_chunk(const World *world, BlockPos key);
 Chunk *world_ensure_chunk(World *world, BlockPos key);
 bool world_insert_chunk(World *world, Chunk *chunk);
+bool world_plot_bounds_valid(WorldPlotBounds bounds);
+bool world_chunk_in_bounds(const World *world, BlockPos key);
 bool world_chunk_snapshot(World *world, Chunk *chunk, ByteBuffer *bytes);
 bool world_archive_chunk(World *world, Chunk *chunk);
 #endif

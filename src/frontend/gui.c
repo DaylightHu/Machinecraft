@@ -4,6 +4,7 @@
 #include "block_shape.h"
 #include "hotbar.h"
 #include "inventory.h"
+#include "plot_command.h"
 #include "voxel_pick.h"
 #include "world_renderer.h"
 #include "raylib.h"
@@ -20,6 +21,7 @@ enum {
     SCREEN_WIDTH = 1000,
     SCREEN_HEIGHT = 650,
     MESSAGE_CAPACITY = 192,
+    COMMAND_CAPACITY = 128,
     VISIBLE_SAVE_ROWS = 7
 };
 
@@ -28,6 +30,7 @@ static const char save_directory[] = "saves";
 typedef enum {
     GUI_TITLE,
     GUI_WORLD,
+    GUI_COMMAND,
     GUI_INVENTORY,
     GUI_BARREL,
     GUI_HOPPER,
@@ -58,6 +61,8 @@ typedef struct {
     char world_name[GAME_SESSION_NAME_CAPACITY];
     size_t world_name_length;
     char message[MESSAGE_CAPACITY];
+    char command[COMMAND_CAPACITY];
+    size_t command_length;
     BlockPos barrel_pos;
     BlockPos container_pos;
     double accumulator;
@@ -270,7 +275,7 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->accumulator = 0.0;
     app->screen = GUI_WORLD;
     snprintf(app->message, sizeof(app->message),
-             "LMB remove | RMB use/place | Shift+RMB place | MMB pick | E inventory | ESC menu");
+             "LMB remove | RMB use/place | Shift+RMB place | MMB pick | E inventory | / command | ESC menu");
     capture_mouse(app);
     return true;
 }
@@ -582,9 +587,66 @@ static void advance_simulation(GuiApp *app)
     }
 }
 
+static void update_command(GuiApp *app)
+{
+    int character;
+    while ((character = GetCharPressed()) != 0) {
+        if (!app->command_length && character == '/') continue;
+        if (character >= 32 && character < 127 &&
+            app->command_length + 1 < sizeof(app->command)) {
+            app->command[app->command_length++] = (char)character;
+            app->command[app->command_length] = '\0';
+        }
+    }
+    if (IsKeyPressed(KEY_BACKSPACE) && app->command_length)
+        app->command[--app->command_length] = '\0';
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        app->screen = GUI_WORLD;
+        capture_mouse(app);
+        return;
+    }
+    if (!IsKeyPressed(KEY_ENTER)) return;
+    PlotCommand command;
+    if (!plot_command_parse(app->command, &command)) {
+        snprintf(app->message, sizeof(app->message),
+                 "Use /plot info or /plot expand DIRECTION [COUNT]");
+    } else {
+        RsResult result = plot_command_run(game_session_world(app->session),
+                                           &command, app->message,
+                                           sizeof(app->message));
+        if (result != RS_OK)
+            snprintf(app->message, sizeof(app->message), "Plot command: %s",
+                     rs_result_name(result));
+    }
+    app->screen = GUI_WORLD;
+    capture_mouse(app);
+}
+
+static void constrain_camera(GuiApp *app, const World *world)
+{
+    WorldPlotBounds bounds = world_plot_bounds(world);
+    float x = app->camera.position.x;
+    float z = app->camera.position.z;
+    if (x < bounds.min_x) x = (float)bounds.min_x;
+    if (x > bounds.max_x) x = (float)bounds.max_x;
+    if (z < bounds.min_z) z = (float)bounds.min_z;
+    if (z > bounds.max_z) z = (float)bounds.max_z;
+    app->camera.target.x += x - app->camera.position.x;
+    app->camera.target.z += z - app->camera.position.z;
+    app->camera.position.x = x;
+    app->camera.position.z = z;
+}
+
 static VoxelHit update_world(GuiApp *app)
 {
     VoxelHit hit = {0};
+    if (IsKeyPressed(KEY_SLASH)) {
+        release_mouse(app);
+        app->command[0] = '\0';
+        app->command_length = 0;
+        app->screen = GUI_COMMAND;
+        return hit;
+    }
     if (IsKeyPressed(KEY_E)) {
         release_mouse(app);
         app->screen = GUI_INVENTORY;
@@ -610,9 +672,11 @@ static VoxelHit update_world(GuiApp *app)
     app->camera.position.y += vertical_delta;
     app->camera.target.y += vertical_delta;
 
+    World *world = game_session_world(app->session);
+    constrain_camera(app, world);
+
     Ray ray = GetScreenToWorldRay(
         (Vector2){GetScreenWidth()*0.5f, GetScreenHeight()*0.5f}, app->camera);
-    World *world = game_session_world(app->session);
     double camera_x = floor((double)app->camera.position.x + 0.5);
     double camera_z = floor((double)app->camera.position.z + 0.5);
     if (!isfinite(camera_x) || !isfinite(camera_z) || camera_x < (double)INT32_MIN+16 ||
@@ -1011,7 +1075,18 @@ static void draw_world(GuiApp *app, VoxelHit hit)
     } else {
         DrawText("Target: none", 15, 39, 18, DARKBLUE);
     }
+    if (app->message[0]) DrawText(app->message, 15, 64, 16, DARKBLUE);
     hotbar_draw(&app->hotbar, &app->inventory);
+}
+
+static void draw_command(const GuiApp *app)
+{
+    int y = GetScreenHeight() - 88;
+    DrawRectangle(18, y, GetScreenWidth() - 36, 52,
+                  (Color){15, 27, 30, 235});
+    DrawRectangleLines(18, y, GetScreenWidth() - 36, 52,
+                       (Color){244, 190, 88, 255});
+    DrawText(TextFormat("/%s", app->command), 32, y + 15, 21, RAYWHITE);
 }
 
 static void draw_pause(GuiApp *app)
@@ -1163,6 +1238,7 @@ int gui_run(void)
         VoxelHit hit = {0};
         if (app.screen == GUI_TITLE) update_title(&app);
         else if (app.screen == GUI_WORLD) hit = update_world(&app);
+        else if (app.screen == GUI_COMMAND) update_command(&app);
         else if (app.screen == GUI_INVENTORY) update_inventory(&app);
         else if (app.screen == GUI_BARREL) update_barrel(&app);
         else if (app.screen == GUI_HOPPER || app.screen == GUI_DROPPER)
@@ -1195,6 +1271,7 @@ int gui_run(void)
             if (app.screen == GUI_BARREL) draw_container(&app, BLOCK_BARREL);
             if (app.screen == GUI_HOPPER) draw_container(&app, BLOCK_HOPPER);
             if (app.screen == GUI_DROPPER) draw_container(&app, BLOCK_DROPPER);
+            if (app.screen == GUI_COMMAND) draw_command(&app);
             if (app.screen == GUI_PAUSE) draw_pause(&app);
         }
         EndDrawing();
