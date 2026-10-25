@@ -66,7 +66,6 @@ typedef struct {
     size_t command_length;
     BlockPos barrel_pos;
     BlockPos container_pos;
-    double accumulator;
     bool mouse_captured;
     bool close_latched;
     bool running;
@@ -247,7 +246,6 @@ static void close_world(GuiApp *app)
     app->world_renderer = NULL;
     game_session_destroy(app->session);
     app->session = NULL;
-    app->accumulator = 0.0;
 }
 
 static bool open_world(GuiApp *app, GameSession *session)
@@ -273,7 +271,6 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->camera.up = (Vector3){0.0f, 1.0f, 0.0f};
     app->camera.fovy = 65.0f;
     app->camera.projection = CAMERA_PERSPECTIVE;
-    app->accumulator = 0.0;
     app->screen = GUI_WORLD;
     snprintf(app->message, sizeof(app->message),
              "LMB remove | RMB use/place | Shift+RMB place | MMB pick | E inventory | / command | ESC menu");
@@ -583,33 +580,12 @@ static BlockId pickable_block(BlockId id)
 
 static void advance_simulation(GuiApp *app)
 {
-    World *world = game_session_world(app->session);
-    bool manual = sim_pending_steps(world) != 0;
-    double frame = GetFrameTime();
-    if (frame > 0.25) frame = 0.25;
-    if (manual) app->accumulator = 0.0;
-    else app->accumulator += frame;
-    /* Manual steps run without real-time pacing, with a per-frame budget so
-     * input/rendering remain responsive and /tick freeze can cancel a batch. */
-    double deadline = GetTime() + 0.008;
-    unsigned steps = 0;
-    while (manual ? (sim_pending_steps(world) && steps < 1024 &&
-                    (steps == 0 || GetTime() < deadline)) :
-                   app->accumulator >= 0.05) {
-        RsResult result = game_session_step(app->session);
-        if (result == RS_UNCHANGED) {
-            app->accumulator = 0.0;
-            break;
-        }
-        if (result != RS_OK) {
-            snprintf(app->message, sizeof(app->message), "Simulation: %s",
-                     rs_result_name(result));
-            app->fatal_error = true;
-            app->running = false;
-            break;
-        }
-        if (!manual) app->accumulator -= 0.05;
-        ++steps;
+    RsResult result = game_session_advance(app->session, GetFrameTime());
+    if (result != RS_OK && result != RS_UNCHANGED) {
+        snprintf(app->message, sizeof(app->message), "Simulation: %s",
+                 rs_result_name(result));
+        app->fatal_error = true;
+        app->running = false;
     }
 }
 
@@ -637,8 +613,6 @@ static void update_command(GuiApp *app)
     if (tick_command_parse(app->command, &tick)) {
         RsResult result = tick_command_run(game_session_world(app->session),
             &tick, app->message, sizeof(app->message));
-        if (tick.kind == TICK_COMMAND_FREEZE && result == RS_OK)
-            app->accumulator = 0.0;
         if (result != RS_OK && !app->message[0])
             snprintf(app->message, sizeof(app->message), "Tick command: %s",
                      rs_result_name(result));
@@ -692,7 +666,7 @@ static VoxelHit update_world(GuiApp *app)
     if (IsKeyPressed(KEY_ESCAPE) || !IsWindowFocused()) {
         release_mouse(app);
         app->screen = GUI_PAUSE;
-        app->accumulator = 0.0;
+        game_session_reset_clock(app->session);
         return hit;
     }
 

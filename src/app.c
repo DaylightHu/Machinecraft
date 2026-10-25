@@ -1,5 +1,6 @@
 #include "app.h"
 #include "frontend/cli.h"
+#include "line_input.h"
 #include "rs/session.h"
 
 #include <ctype.h>
@@ -13,15 +14,16 @@ static int select_save(FILE *input, FILE *output, const GameSaveList *saves,
                        size_t *selection)
 {
     char line[64];
+    LineInput reader;
+    if (!line_input_init(&reader, input, output, line, sizeof(line))) return -1;
     for (;;) {
         fprintf(output, "Select a world [1-%zu], or q to quit: ", saves->count);
         if (fflush(output) == EOF) return -1;
-        if (!fgets(line, sizeof(line), input))
-            return ferror(input) ? -1 : 0;
-        if (!strchr(line, '\n') && !feof(input)) {
-            int character;
-            while ((character = fgetc(input)) != '\n' && character != EOF) {}
-            if (ferror(input)) return -1;
+        int read;
+        do { read = line_input_poll(&reader, 1000); } while (read == LINE_INPUT_PENDING);
+        if (read == LINE_INPUT_EOF) return 0;
+        if (read == LINE_INPUT_ERROR) return -1;
+        if (read == LINE_INPUT_TOO_LONG) {
             fputs("Invalid selection.\n", output);
             continue;
         }

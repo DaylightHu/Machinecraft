@@ -53,8 +53,11 @@ A new world starts with a 512 × 512 plot. The plot can be expanded without crea
 Manual steps run without waiting for the usual real-time tick interval. The GUI
 processes them in bounded batches so input and rendering remain responsive;
 another step command adds to the remaining batch. The CLI finishes the batch
-before reading its next command. The CLI has no automatic clock; use
-`tick freeze` before `tick NUMBER`.
+before reading its next command. Both the GUI and CLI advance automatically
+at 20 game ticks per second while running. Waiting for CLI input, including
+an unfinished command, does not pause the world. Use `tick freeze` for precise
+manual stepping; unfreezing resumes automatic time without catching up the
+time spent frozen.
 
 Freezing still allows block edits and their synchronous redstone updates.
 `noupdate` instead suppresses those updates, including support checks caused by
