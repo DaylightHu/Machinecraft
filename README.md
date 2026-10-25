@@ -39,6 +39,10 @@ Run `./nob COMMAND` on macOS or `.\nob.exe COMMAND` on Windows.
 ## Commands
 
 In the GUI, press `/` to open command input, type a command, and press Enter.
+Command replies appear above the hotbar for ten seconds. Press `/` to view
+the reply history; use the mouse wheel or Page Up/Down to scroll. The latest
+100 replies are kept in memory and cleared when leaving the world or exiting
+the GUI. Empty input and Escape close the input without running a command.
 The CLI accepts the same commands, with or without the leading `/`.
 
 | Command | Action |
@@ -47,28 +51,3 @@ The CLI accepts the same commands, with or without the leading `/`.
 | `/tick freeze` | Toggle automatic game ticks. Toggling also cancels any remaining manual steps. |
 | `/tick step NUMBER` | While frozen, queue this many game ticks, then remain frozen. `NUMBER` is required and accepts positive decimal integers through 4294967295. |
 | `/tick noupdate` | Toggle block callbacks, neighbor notifications and shape updates. Enabling does not replay skipped updates. |
-
-A new world starts with a 512 × 512 plot. The plot can be expanded without creating boundaries inside the expanded world.
-
-Manual steps run without waiting for the usual real-time tick interval. The GUI
-processes them in bounded batches so input and rendering remain responsive;
-another step command adds to the remaining batch. The CLI finishes the batch
-before reading its next command. Both the GUI and CLI advance automatically
-at 20 game ticks per second while running. Waiting for CLI input, including
-an unfinished command, does not pause the world. Use `tick freeze` for precise
-manual stepping; unfreezing resumes automatic time without catching up the
-time spent frozen.
-
-Freezing still allows block edits and their synchronous redstone updates.
-`noupdate` instead suppresses those updates, including support checks caused by
-removing a block. Storage, rendering, inventories and runtime cleanup remain
-active. Existing scheduled ticks, piston events/motions and hoppers continue
-when time advances, but their neighbor/shape notifications are suppressed too.
-Combine `freeze` and `noupdate` when both time and update propagation must stop.
-
-Freeze state is saved with the world and restored in both the GUI and CLI.
-The CLI saves before `quit` or `title`; a failed save keeps the command loop
-open. Manual-step replies report only the ticks advanced by that command.
-Pending manual steps and `noupdate` reset when a world is reopened.
-Existing `.mcw` files remain readable; newly saved files require this version
-or a newer version that supports the updated save format.

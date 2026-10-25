@@ -75,7 +75,7 @@ RsResult tick_command_run(World *world, const TickCommand *command,
     }
     case TICK_COMMAND_STEP:
         if (!sim_is_frozen(world)) {
-            snprintf(message, capacity, "Use /tick freeze before stepping");
+            snprintf(message, capacity, "Use tick freeze before stepping");
             return RS_INVALID_ARGUMENT;
         }
         result = sim_request_steps(world, command->count);

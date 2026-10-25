@@ -23,6 +23,10 @@ enum {
     SCREEN_HEIGHT = 650,
     MESSAGE_CAPACITY = 192,
     COMMAND_CAPACITY = 128,
+    CHAT_HISTORY_CAPACITY = 100,
+    CHAT_TEXT_CAPACITY = MESSAGE_CAPACITY + 8,
+    CHAT_FONT_SIZE = 18,
+    CHAT_LINE_HEIGHT = 22,
     VISIBLE_SAVE_ROWS = 7
 };
 
@@ -47,6 +51,12 @@ typedef enum {
 } AfterSave;
 
 typedef struct {
+    char text[CHAT_TEXT_CAPACITY];
+    double time;
+    bool error;
+} ChatMessage;
+
+typedef struct {
     BlockRenderer blocks;
     Inventory inventory;
     Hotbar hotbar;
@@ -64,6 +74,9 @@ typedef struct {
     char message[MESSAGE_CAPACITY];
     char command[COMMAND_CAPACITY];
     size_t command_length;
+    ChatMessage chat[CHAT_HISTORY_CAPACITY];
+    size_t chat_count;
+    int chat_scroll;
     BlockPos barrel_pos;
     BlockPos container_pos;
     bool mouse_captured;
@@ -71,6 +84,22 @@ typedef struct {
     bool running;
     bool fatal_error;
 } GuiApp;
+
+static void add_chat_message(GuiApp *app, const char *text, bool error)
+{
+    if (!text[0]) return;
+    if (app->chat_count == CHAT_HISTORY_CAPACITY) {
+        memmove(app->chat, app->chat + 1,
+                (CHAT_HISTORY_CAPACITY - 1)*sizeof(app->chat[0]));
+        --app->chat_count;
+    }
+    ChatMessage *message = &app->chat[app->chat_count++];
+    snprintf(message->text, sizeof(message->text), "%s%s",
+             error ? "error: " : "", text);
+    message->time = GetTime();
+    message->error = error;
+    app->chat_scroll = 0;
+}
 
 typedef struct {
     Rectangle panel;
@@ -246,6 +275,10 @@ static void close_world(GuiApp *app)
     app->world_renderer = NULL;
     game_session_destroy(app->session);
     app->session = NULL;
+    app->chat_count = 0;
+    app->chat_scroll = 0;
+    app->command[0] = '\0';
+    app->command_length = 0;
 }
 
 static bool open_world(GuiApp *app, GameSession *session)
@@ -591,6 +624,12 @@ static void advance_simulation(GuiApp *app)
 
 static void update_command(GuiApp *app)
 {
+    float wheel = GetMouseWheelMove();
+    if (wheel > 0.0f || IsKeyPressed(KEY_PAGE_UP)) app->chat_scroll += 3;
+    if (wheel < 0.0f || IsKeyPressed(KEY_PAGE_DOWN)) app->chat_scroll -= 3;
+    if (app->chat_scroll < 0) app->chat_scroll = 0;
+    if (app->chat_scroll > CHAT_HISTORY_CAPACITY*CHAT_TEXT_CAPACITY)
+        app->chat_scroll = CHAT_HISTORY_CAPACITY*CHAT_TEXT_CAPACITY;
     int character;
     while ((character = GetCharPressed()) != 0) {
         if (!app->command_length && character == '/') continue;
@@ -608,11 +647,18 @@ static void update_command(GuiApp *app)
         return;
     }
     if (!IsKeyPressed(KEY_ENTER)) return;
+    if (!app->command[strspn(app->command, " \t")]) {
+        app->screen = GUI_WORLD;
+        capture_mouse(app);
+        return;
+    }
     PlotCommand command;
     TickCommand tick;
+    bool error = false;
     if (tick_command_parse(app->command, &tick)) {
         RsResult result = tick_command_run(game_session_world(app->session),
             &tick, app->message, sizeof(app->message));
+        error = result != RS_OK;
         if (result != RS_OK && !app->message[0])
             snprintf(app->message, sizeof(app->message), "Tick command: %s",
                      rs_result_name(result));
@@ -620,13 +666,16 @@ static void update_command(GuiApp *app)
         RsResult result = plot_command_run(game_session_world(app->session),
                                            &command, app->message,
                                            sizeof(app->message));
+        error = result != RS_OK;
         if (result != RS_OK)
             snprintf(app->message, sizeof(app->message), "Plot command: %s",
                      rs_result_name(result));
     } else {
+        error = true;
         snprintf(app->message, sizeof(app->message),
                  "Use /tick freeze, /tick step NUMBER, /tick noupdate, or /plot info|expand");
     }
+    add_chat_message(app, app->message, error);
     app->screen = GUI_WORLD;
     capture_mouse(app);
 }
@@ -653,6 +702,7 @@ static VoxelHit update_world(GuiApp *app)
         release_mouse(app);
         app->command[0] = '\0';
         app->command_length = 0;
+        app->chat_scroll = 0;
         app->screen = GUI_COMMAND;
         return hit;
     }
@@ -1090,6 +1140,79 @@ static void draw_world(GuiApp *app, VoxelHit hit)
     hotbar_draw(&app->hotbar, &app->inventory);
 }
 
+/* Return wrapped ranges so resizing also reflows messages already in history. */
+static int wrap_chat_message(const char *text, int width,
+                             size_t starts[CHAT_TEXT_CAPACITY],
+                             size_t lengths[CHAT_TEXT_CAPACITY])
+{
+    int rows = 0;
+    size_t offset = 0;
+    while (text[offset] && rows < CHAT_TEXT_CAPACITY) {
+        char line[CHAT_TEXT_CAPACITY];
+        size_t length = 0, word_end = 0;
+        while (text[offset + length] && text[offset + length] != '\n' &&
+               length + 1 < sizeof(line)) {
+            line[length] = text[offset + length];
+            line[length + 1] = '\0';
+            if (length && MeasureText(line, CHAT_FONT_SIZE) > width) break;
+            ++length;
+            if (line[length - 1] == ' ') word_end = length;
+        }
+        if (text[offset + length] && text[offset + length] != '\n' && word_end)
+            length = word_end;
+        starts[rows] = offset;
+        lengths[rows] = length;
+        while (lengths[rows] && text[offset + lengths[rows] - 1] == ' ')
+            --lengths[rows];
+        ++rows;
+        offset += length;
+        if (text[offset] == '\n') ++offset;
+        while (text[offset] == ' ') ++offset;
+    }
+    return rows;
+}
+
+static void draw_chat(GuiApp *app)
+{
+    bool open = app->screen == GUI_COMMAND;
+    int width = GetScreenWidth() - 36;
+    if (width > 760) width = 760;
+    int bottom = GetScreenHeight() - 100;
+    int visible = (bottom - 100)/CHAT_LINE_HEIGHT;
+    int limit = open ? 20 : 6;
+    if (visible > limit) visible = limit;
+    if (width < 24 || visible <= 0) return;
+
+    size_t starts[CHAT_TEXT_CAPACITY], lengths[CHAT_TEXT_CAPACITY];
+    if (open) {
+        int total = 0;
+        for (size_t i = 0; i < app->chat_count; ++i)
+            total += wrap_chat_message(app->chat[i].text, width - 12,
+                                       starts, lengths);
+        int maximum = total > visible ? total - visible : 0;
+        if (app->chat_scroll > maximum) app->chat_scroll = maximum;
+    }
+    int skip = open ? app->chat_scroll : 0;
+    int drawn = 0;
+    double now = GetTime();
+    for (size_t i = app->chat_count; i > 0 && drawn < visible; --i) {
+        const ChatMessage *message = &app->chat[i - 1];
+        if (!open && now - message->time >= 10.0) continue;
+        int rows = wrap_chat_message(message->text, width - 12, starts, lengths);
+        for (int row = rows - 1; row >= 0 && drawn < visible; --row) {
+            if (skip) { --skip; continue; }
+            char line[CHAT_TEXT_CAPACITY];
+            memcpy(line, message->text + starts[row], lengths[row]);
+            line[lengths[row]] = '\0';
+            int y = bottom - (++drawn)*CHAT_LINE_HEIGHT;
+            DrawRectangle(18, y - 2, width, CHAT_LINE_HEIGHT,
+                          (Color){15, 27, 30, open ? 230 : 190});
+            DrawText(line, 24, y, CHAT_FONT_SIZE,
+                     message->error ? (Color){255, 125, 125, 255} : RAYWHITE);
+        }
+    }
+}
+
 static void draw_command(const GuiApp *app)
 {
     int y = GetScreenHeight() - 88;
@@ -1295,6 +1418,8 @@ int gui_run(void)
             if (app.screen == GUI_BARREL) draw_container(&app, BLOCK_BARREL);
             if (app.screen == GUI_HOPPER) draw_container(&app, BLOCK_HOPPER);
             if (app.screen == GUI_DROPPER) draw_container(&app, BLOCK_DROPPER);
+            if (app.screen == GUI_WORLD || app.screen == GUI_COMMAND)
+                draw_chat(&app);
             if (app.screen == GUI_COMMAND) draw_command(&app);
             if (app.screen == GUI_PAUSE) draw_pause(&app);
         }
