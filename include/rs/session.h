@@ -49,6 +49,12 @@ bool game_session_dirty(const GameSession *session);
 GameSessionResult game_session_save(GameSession *session);
 RsResult game_session_flush(GameSession *session);
 RsResult game_session_step(GameSession *session);
+/* Shared GUI/CLI driver. Automatic time runs at 20 TPS; frozen manual steps
+ * run in bounded batches without real-time pacing. elapsed must be finite and
+ * nonnegative. Freeze transitions discard automatic-clock carryover. */
+RsResult game_session_advance(GameSession *session, double elapsed_seconds);
+/* Discard real-time carryover when a host pauses its input/render loop. */
+void game_session_reset_clock(GameSession *session);
 
 /* World names are deliberately portable: ASCII letters, digits, spaces,
  * '-' and '_'. Leading/trailing spaces and path separators are rejected. */

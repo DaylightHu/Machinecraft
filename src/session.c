@@ -2,9 +2,11 @@
 
 #include "rs/sim.h"
 #include "save_file.h"
+#include "runtime_clock.h"
 
 #include <ctype.h>
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +25,8 @@ struct GameSession {
     char save_path[GAME_SESSION_PATH_CAPACITY];
     uint64_t saved_revision;
     uint64_t saved_tick;
+    double accumulator;
+    bool clock_frozen;
     bool has_saved;
 };
 
@@ -51,6 +55,7 @@ static GameSession *allocate_session(World *world, const char *save_path,
     memcpy(session->save_path, save_path, length + 1);
     session->saved_revision = world_revision(world);
     session->saved_tick = world_tick(world);
+    session->clock_frozen = sim_is_frozen(world);
     session->has_saved = has_saved;
     set_result(result, GAME_SESSION_OK);
     return session;
@@ -146,6 +151,54 @@ RsResult game_session_flush(GameSession *session)
 RsResult game_session_step(GameSession *session)
 {
     return session ? sim_step(session->world) : RS_INVALID_ARGUMENT;
+}
+
+RsResult game_session_advance(GameSession *session, double elapsed)
+{
+    if (!session || !isfinite(elapsed) || elapsed < 0.0) return RS_INVALID_ARGUMENT;
+    World *world = session->world;
+    RsResult result = sim_flush(world);
+    if (result != RS_OK) return result;
+    bool frozen = sim_is_frozen(world);
+    if (frozen != session->clock_frozen) {
+        session->clock_frozen = frozen;
+        session->accumulator = 0.0;
+        elapsed = 0.0;
+    }
+    if (sim_pending_steps(world)) {
+        session->accumulator = 0.0;
+        double deadline = runtime_clock_now() + 0.008;
+        unsigned steps = 0;
+        while (sim_pending_steps(world) && steps < 1024 &&
+               (steps == 0 || runtime_clock_now() < deadline)) {
+            result = sim_step(world);
+            if (result != RS_OK) return result;
+            ++steps;
+        }
+        return RS_OK;
+    }
+    if (frozen) {
+        session->accumulator = 0.0;
+        return RS_UNCHANGED;
+    }
+    if (elapsed > 0.25) elapsed = 0.25;
+    session->accumulator += elapsed;
+    while (session->accumulator >= 0.05) {
+        result = sim_step(world);
+        if (result != RS_OK) {
+            session->accumulator = 0.0;
+            return result;
+        }
+        session->accumulator -= 0.05;
+    }
+    return RS_OK;
+}
+
+void game_session_reset_clock(GameSession *session)
+{
+    if (!session) return;
+    session->accumulator = 0.0;
+    session->clock_frozen = sim_is_frozen(session->world);
 }
 
 bool game_session_valid_name(const char *name)

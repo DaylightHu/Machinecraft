@@ -11,7 +11,7 @@ NoteInstrument note_instrument(BlockState state)
     case BLOCK_BARREL:
     case BLOCK_NOTE_BLOCK: return NOTE_BASS;
     case BLOCK_SLIME:
-    case BLOCK_HONEY: return NOTE_FLUTE;
+    case BLOCK_HONEY: return NOTE_HARP;
     default: return NOTE_HARP;
     }
 }

@@ -45,7 +45,8 @@ bool block_states_equal(BlockState a, BlockState b)
 
 void sim_neighbor_changed(World *w, BlockPos pos)
 {
-    if (w->sim->error != RS_OK || !world_in_bounds(w, pos)) return;
+    if (w->sim->error != RS_OK || w->sim->updates_suppressed ||
+        !world_in_bounds(w, pos)) return;
     const BlockDef *d = block_definition((BlockId)world_get(w, pos).id);
     if (d->neighbor_changed) {
         ++w->sim->stats.neighbor_checks;
@@ -210,6 +211,7 @@ static BlockState update_shape(World *w, BlockPos pos, BlockState state,
 
 BlockState sim_update_from_neighbor_shapes(World *w, BlockPos pos, BlockState state)
 {
+    if (w->sim->updates_suppressed) return state;
     /* Block.updateFromNeighbourShapes evaluates a carried state while its
      * world cell still contains MOVING_PISTON, in W/E/N/S/D/U order. */
     for (unsigned i = 0; i < DIR_COUNT && w->sim->error == RS_OK; ++i)
@@ -220,7 +222,8 @@ BlockState sim_update_from_neighbor_shapes(World *w, BlockPos pos, BlockState st
 void sim_update_shape_at(World *w, BlockPos pos, Direction toward,
                           BlockPos source, unsigned flags, unsigned limit)
 {
-    if (w->sim->error != RS_OK || !world_in_bounds(w, pos)) return;
+    if (w->sim->error != RS_OK || w->sim->updates_suppressed ||
+        !world_in_bounds(w, pos)) return;
     BlockState previous = world_get(w, pos);
     BlockState state = update_shape(w, pos, previous, toward, source);
     if (!block_states_equal(previous, state))
@@ -238,6 +241,18 @@ void sim_update_neighbor_shapes(World *w, BlockPos pos, unsigned flags, unsigned
 void sim_state_changed(World *w, StateChange c)
 {
     bool changed_type = scheduler_block_type(c.previous) != scheduler_block_type(c.current);
+    if (w->sim->updates_suppressed) {
+        /* Silent edits still release and attach per-cell runtime resources. */
+        if (changed_type) {
+            sim_forget_cell(w, c.pos);
+            if (c.current.id == BLOCK_REDSTONE_TORCH && !sim_attach_torch(w, c.pos))
+                w->sim->error = RS_OUT_OF_MEMORY;
+            if (container_is_block((BlockId)c.current.id) &&
+                !container_attach(w, c.pos, c.current))
+                w->sim->error = RS_OUT_OF_MEMORY;
+        }
+        return;
+    }
     removed(w, c, changed_type);
     if (changed_type) sim_forget_cell(w, c.pos);
     if (world_get(w, c.pos).id != c.current.id || w->sim->error != RS_OK) return;

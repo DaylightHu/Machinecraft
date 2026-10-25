@@ -5,6 +5,7 @@
 #include "hotbar.h"
 #include "inventory.h"
 #include "plot_command.h"
+#include "tick_command.h"
 #include "voxel_pick.h"
 #include "world_renderer.h"
 #include "raylib.h"
@@ -65,7 +66,6 @@ typedef struct {
     size_t command_length;
     BlockPos barrel_pos;
     BlockPos container_pos;
-    double accumulator;
     bool mouse_captured;
     bool close_latched;
     bool running;
@@ -246,7 +246,6 @@ static void close_world(GuiApp *app)
     app->world_renderer = NULL;
     game_session_destroy(app->session);
     app->session = NULL;
-    app->accumulator = 0.0;
 }
 
 static bool open_world(GuiApp *app, GameSession *session)
@@ -272,7 +271,6 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->camera.up = (Vector3){0.0f, 1.0f, 0.0f};
     app->camera.fovy = 65.0f;
     app->camera.projection = CAMERA_PERSPECTIVE;
-    app->accumulator = 0.0;
     app->screen = GUI_WORLD;
     snprintf(app->message, sizeof(app->message),
              "LMB remove | RMB use/place | Shift+RMB place | MMB pick | E inventory | / command | ESC menu");
@@ -582,19 +580,12 @@ static BlockId pickable_block(BlockId id)
 
 static void advance_simulation(GuiApp *app)
 {
-    double frame = GetFrameTime();
-    if (frame > 0.25) frame = 0.25;
-    app->accumulator += frame;
-    while (app->accumulator >= 0.05) {
-        RsResult result = game_session_step(app->session);
-        if (result != RS_OK) {
-            snprintf(app->message, sizeof(app->message), "Simulation: %s",
-                     rs_result_name(result));
-            app->fatal_error = true;
-            app->running = false;
-            break;
-        }
-        app->accumulator -= 0.05;
+    RsResult result = game_session_advance(app->session, GetFrameTime());
+    if (result != RS_OK && result != RS_UNCHANGED) {
+        snprintf(app->message, sizeof(app->message), "Simulation: %s",
+                 rs_result_name(result));
+        app->fatal_error = true;
+        app->running = false;
     }
 }
 
@@ -618,16 +609,23 @@ static void update_command(GuiApp *app)
     }
     if (!IsKeyPressed(KEY_ENTER)) return;
     PlotCommand command;
-    if (!plot_command_parse(app->command, &command)) {
-        snprintf(app->message, sizeof(app->message),
-                 "Use /plot info or /plot expand DIRECTION [COUNT]");
-    } else {
+    TickCommand tick;
+    if (tick_command_parse(app->command, &tick)) {
+        RsResult result = tick_command_run(game_session_world(app->session),
+            &tick, app->message, sizeof(app->message));
+        if (result != RS_OK && !app->message[0])
+            snprintf(app->message, sizeof(app->message), "Tick command: %s",
+                     rs_result_name(result));
+    } else if (plot_command_parse(app->command, &command)) {
         RsResult result = plot_command_run(game_session_world(app->session),
                                            &command, app->message,
                                            sizeof(app->message));
         if (result != RS_OK)
             snprintf(app->message, sizeof(app->message), "Plot command: %s",
                      rs_result_name(result));
+    } else {
+        snprintf(app->message, sizeof(app->message),
+                 "Use /tick freeze, /tick COUNT, /tick noupdate, or /plot info|expand");
     }
     app->screen = GUI_WORLD;
     capture_mouse(app);
@@ -668,7 +666,7 @@ static VoxelHit update_world(GuiApp *app)
     if (IsKeyPressed(KEY_ESCAPE) || !IsWindowFocused()) {
         release_mouse(app);
         app->screen = GUI_PAUSE;
-        app->accumulator = 0.0;
+        game_session_reset_clock(app->session);
         return hit;
     }
 
