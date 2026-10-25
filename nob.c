@@ -36,6 +36,7 @@ static const char *common_sources[] = {
     "src/session.c",
     "src/runtime_clock.c",
     "src/line_input.c",
+    "src/command_completion.c",
     "src/plot_command.c",
     "src/tick_command.c",
     "src/item.c",
