@@ -2,6 +2,7 @@
 #include "plot_command.h"
 #include "tick_command.h"
 #include "line_input.h"
+#include "command_completion.h"
 #include "runtime_clock.h"
 #include "rs/sim.h"
 
@@ -462,6 +463,14 @@ static RsResult execute_command(World *world, const Command *command,
     return RS_OK;
 }
 
+static bool complete_command(char *line, size_t capacity, bool restart,
+                              void *context)
+{
+    CommandCompletion *completion = context;
+    if (restart) completion->active = false;
+    return command_complete(completion, line, capacity, false);
+}
+
 CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
                      FILE *errors)
 {
@@ -479,11 +488,18 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
         fputs("error: cannot read input\n", errors);
         return CLI_RUN_ERROR;
     }
+    CommandCompletion completion = {0};
+    if (!line_input_set_completion(&reader, complete_command, &completion)) {
+        fputs("error: cannot configure terminal input\n", errors);
+        line_input_close(&reader);
+        return CLI_RUN_ERROR;
+    }
     double previous = runtime_clock_now();
 
     for (;;) {
         if (fflush(output) == EOF) {
-            return CLI_RUN_ERROR;
+            failed = true;
+            break;
         }
         int read = line_input_poll(&reader, 10);
         double now = runtime_clock_now();
@@ -593,6 +609,7 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
         }
     }
 
+    line_input_close(&reader);
     if (fflush(output) == EOF || fflush(errors) == EOF || ferror(output) || ferror(errors)) {
         return CLI_RUN_ERROR;
     }

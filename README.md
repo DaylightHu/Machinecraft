@@ -44,6 +44,8 @@ the reply history; use the mouse wheel or Page Up/Down to scroll. The latest
 100 replies are kept in memory and cleared when leaving the world or exiting
 the GUI. Empty input and Escape close the input without running a command.
 The CLI accepts the same commands, with or without the leading `/`.
+Press Tab in either interface to complete the current word (for example,
+`tick f` becomes `tick freeze`); repeated Tab presses cycle through matches.
 
 | Command | Action |
 | --- | --- |

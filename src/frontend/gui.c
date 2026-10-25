@@ -2,6 +2,7 @@
 
 #include "block_renderer.h"
 #include "block_shape.h"
+#include "command_completion.h"
 #include "hotbar.h"
 #include "inventory.h"
 #include "plot_command.h"
@@ -74,6 +75,7 @@ typedef struct {
     char message[MESSAGE_CAPACITY];
     char command[COMMAND_CAPACITY];
     size_t command_length;
+    CommandCompletion completion;
     ChatMessage chat[CHAT_HISTORY_CAPACITY];
     size_t chat_count;
     int chat_scroll;
@@ -279,6 +281,7 @@ static void close_world(GuiApp *app)
     app->chat_scroll = 0;
     app->command[0] = '\0';
     app->command_length = 0;
+    app->completion = (CommandCompletion){0};
 }
 
 static bool open_world(GuiApp *app, GameSession *session)
@@ -637,10 +640,17 @@ static void update_command(GuiApp *app)
             app->command_length + 1 < sizeof(app->command)) {
             app->command[app->command_length++] = (char)character;
             app->command[app->command_length] = '\0';
+            app->completion.active = false;
         }
     }
-    if (IsKeyPressed(KEY_BACKSPACE) && app->command_length)
+    if (IsKeyPressed(KEY_BACKSPACE) && app->command_length) {
         app->command[--app->command_length] = '\0';
+        app->completion.active = false;
+    }
+    if (IsKeyPressed(KEY_TAB)) {
+        command_complete(&app->completion, app->command, sizeof(app->command), true);
+        app->command_length = strlen(app->command);
+    }
     if (IsKeyPressed(KEY_ESCAPE)) {
         app->screen = GUI_WORLD;
         capture_mouse(app);
@@ -702,6 +712,7 @@ static VoxelHit update_world(GuiApp *app)
         release_mouse(app);
         app->command[0] = '\0';
         app->command_length = 0;
+        app->completion = (CommandCompletion){0};
         app->chat_scroll = 0;
         app->screen = GUI_COMMAND;
         return hit;
