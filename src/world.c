@@ -414,7 +414,8 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
     if (id == BLOCK_REDSTONE_REPEATER)
         state.data.repeater.locked = repeater_is_locked(w, p, state);
     if (!world_set_block(w, p, state, 3)) return w->sim->error;
-    if (id == BLOCK_REDSTONE_REPEATER || id == BLOCK_REDSTONE_COMPARATOR) {
+    if (!w->sim->updates_suppressed &&
+        (id == BLOCK_REDSTONE_REPEATER || id == BLOCK_REDSTONE_COMPARATOR)) {
         Direction rear = direction_opposite((Direction)(id == BLOCK_REDSTONE_REPEATER ?
             state.data.repeater.facing : state.data.comparator.facing));
         BlockPos input = block_offset(p, rear);
@@ -433,7 +434,7 @@ RsResult world_remove(World *w, BlockPos p)
     if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
     BlockState removed = world_get(w, p);
     if (removed.id == BLOCK_AIR) return RS_UNCHANGED;
-    if (block_is_piston_head((BlockId)removed.id)) {
+    if (!w->sim->updates_suppressed && block_is_piston_head((BlockId)removed.id)) {
         Direction facing = (Direction)removed.data.piston.facing;
         BlockPos behind = block_offset(p, direction_opposite(facing));
         BlockState base = world_get(w, behind);
@@ -443,7 +444,8 @@ RsResult world_remove(World *w, BlockPos p)
         if (w->sim->error != RS_OK) return w->sim->error;
     }
     world_remove_internal(w, p);
-    if (removed.id == BLOCK_MOVING_PISTON && w->sim->error == RS_OK) {
+    if (!w->sim->updates_suppressed && removed.id == BLOCK_MOVING_PISTON &&
+        w->sim->error == RS_OK) {
         Direction facing = (Direction)removed.data.moving_piston.facing;
         BlockPos behind = block_offset(p, direction_opposite(facing));
         BlockState base = world_get(w, behind);

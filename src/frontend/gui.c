@@ -5,6 +5,7 @@
 #include "hotbar.h"
 #include "inventory.h"
 #include "plot_command.h"
+#include "tick_command.h"
 #include "voxel_pick.h"
 #include "world_renderer.h"
 #include "raylib.h"
@@ -66,6 +67,7 @@ typedef struct {
     BlockPos barrel_pos;
     BlockPos container_pos;
     double accumulator;
+    TickControl tick_control;
     bool mouse_captured;
     bool close_latched;
     bool running;
@@ -265,6 +267,7 @@ static bool open_world(GuiApp *app, GameSession *session)
     }
 
     app->session = session;
+    app->tick_control = (TickControl){0};
     app->world_renderer = renderer;
     app->camera = (Camera3D){0};
     app->camera.position = (Vector3){16.0f, 3.0f, 16.0f};
@@ -582,11 +585,20 @@ static BlockId pickable_block(BlockId id)
 
 static void advance_simulation(GuiApp *app)
 {
+    bool frozen = app->tick_control.frozen;
     double frame = GetFrameTime();
     if (frame > 0.25) frame = 0.25;
-    app->accumulator += frame;
-    while (app->accumulator >= 0.05) {
-        RsResult result = game_session_step(app->session);
+    if (frozen) app->accumulator = 0.0;
+    else app->accumulator += frame;
+    /* Manual steps run without real-time pacing, with a per-frame budget so
+     * input/rendering remain responsive and /tick freeze can cancel a batch. */
+    double deadline = GetTime() + 0.008;
+    unsigned steps = 0;
+    while (frozen ? (app->tick_control.remaining && steps < 1024 &&
+                    (steps == 0 || GetTime() < deadline)) :
+                   app->accumulator >= 0.05) {
+        RsResult result = tick_control_step(game_session_world(app->session),
+                                            &app->tick_control);
         if (result != RS_OK) {
             snprintf(app->message, sizeof(app->message), "Simulation: %s",
                      rs_result_name(result));
@@ -594,7 +606,8 @@ static void advance_simulation(GuiApp *app)
             app->running = false;
             break;
         }
-        app->accumulator -= 0.05;
+        if (!frozen) app->accumulator -= 0.05;
+        ++steps;
     }
 }
 
@@ -618,16 +631,25 @@ static void update_command(GuiApp *app)
     }
     if (!IsKeyPressed(KEY_ENTER)) return;
     PlotCommand command;
-    if (!plot_command_parse(app->command, &command)) {
-        snprintf(app->message, sizeof(app->message),
-                 "Use /plot info or /plot expand DIRECTION [COUNT]");
-    } else {
+    TickCommand tick;
+    if (tick_command_parse(app->command, &tick)) {
+        RsResult result = tick_command_run(game_session_world(app->session),
+            &app->tick_control, &tick, app->message, sizeof(app->message));
+        if (tick.kind == TICK_COMMAND_FREEZE && result == RS_OK)
+            app->accumulator = 0.0;
+        if (result != RS_OK && !app->message[0])
+            snprintf(app->message, sizeof(app->message), "Tick command: %s",
+                     rs_result_name(result));
+    } else if (plot_command_parse(app->command, &command)) {
         RsResult result = plot_command_run(game_session_world(app->session),
                                            &command, app->message,
                                            sizeof(app->message));
         if (result != RS_OK)
             snprintf(app->message, sizeof(app->message), "Plot command: %s",
                      rs_result_name(result));
+    } else {
+        snprintf(app->message, sizeof(app->message),
+                 "Use /tick freeze, /tick COUNT, /tick noupdate, or /plot info|expand");
     }
     app->screen = GUI_WORLD;
     capture_mouse(app);
@@ -1089,6 +1111,12 @@ static void draw_world(GuiApp *app, VoxelHit hit)
     DrawText(TextFormat("Facing: %s", horizontal_direction_name(
                  camera_horizontal_direction(&app->camera))),
              15, 63, 18, DARKBLUE);
+    DrawText(TextFormat("Tick: %llu | %s | pending: %llu | updates: %s",
+             (unsigned long long)world_tick(game_session_world(app->session)),
+             app->tick_control.frozen ? "FROZEN" : "RUNNING",
+             (unsigned long long)app->tick_control.remaining,
+             sim_updates_enabled(game_session_world(app->session)) ? "ON" : "OFF"),
+             15, 87, 18, DARKBLUE);
     hotbar_draw(&app->hotbar, &app->inventory);
 }
 

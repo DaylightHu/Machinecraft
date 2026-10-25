@@ -1,5 +1,6 @@
 #include "cli.h"
 #include "plot_command.h"
+#include "tick_command.h"
 #include "rs/sim.h"
 
 #include <ctype.h>
@@ -14,7 +15,7 @@ enum { LINE_CAPACITY = 512, TOKEN_CAPACITY = 8 };
 typedef enum {
     COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
     COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_TUNE, COMMAND_CAPACITY,
-    COMMAND_HIT, COMMAND_SLOT, COMMAND_SLOTS, COMMAND_TICK, COMMAND_STATS,
+    COMMAND_HIT, COMMAND_SLOT, COMMAND_SLOTS, COMMAND_STATS,
     COMMAND_DROPPER_SEED, COMMAND_SAVE, COMMAND_TITLE, COMMAND_QUIT
 } CommandKind;
 
@@ -184,9 +185,6 @@ static bool parse_command(char *tokens[], int count, Command *command)
         command->kind = COMMAND_QUIT;
     } else if (strcmp(name, "stats") == 0 && count == 1) {
         command->kind = COMMAND_STATS;
-    } else if (strcmp(name, "tick") == 0 && (count == 1 || count == 2)) {
-        command->kind = COMMAND_TICK;
-        return count == 1 || parse_ticks(tokens[1], &command->ticks);
     } else if (strcmp(name, "dropper-seed") == 0 && count == 2) {
         command->kind = COMMAND_DROPPER_SEED;
         return parse_seed(tokens[1], &command->seed);
@@ -263,7 +261,10 @@ static void print_help(FILE *output)
           "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
           "dropper-seed SEED\n"
           "plot info\nplot expand east|west|south|north [COUNT]\n"
-          "tick [COUNT]\nstats\nsave\n"
+          "tick freeze (toggle; also cancels pending manual steps)\n"
+          "tick [COUNT] (positive integer; requires freeze; default 1)\n"
+          "tick noupdate (toggle block updates; skipped updates are not replayed)\n"
+          "stats\nsave\n"
           "title (save and return to world selection)\n"
           "help\nquit\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
@@ -437,15 +438,6 @@ static RsResult execute_command(World *world, const Command *command,
     case COMMAND_STATS:
         print_stats(world, output);
         return RS_OK;
-    case COMMAND_TICK:
-        for (uint32_t tick = 0; tick < command->ticks; ++tick) {
-            result = sim_step(world);
-            if (result != RS_OK) {
-                return result;
-            }
-        }
-        fprintf(output, "tick=%" PRIu64 "\n", world_tick(world));
-        return RS_OK;
     case COMMAND_PLACE:
         result = world_place(world, command->position, command->block, command->support);
         break;
@@ -507,6 +499,7 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
     bool running = true;
     bool failed = false;
     bool return_to_title = false;
+    TickControl tick_control = {0};
 
     while (running) {
         if (fflush(output) == EOF) {
@@ -522,6 +515,29 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
             failed = true;
             if (read == -2) {
                 break;
+            }
+            continue;
+        }
+
+        TickCommand tick;
+        if (tick_command_parse(line, &tick)) {
+            char message[TICK_COMMAND_MESSAGE_CAPACITY];
+            RsResult result = tick_command_run(world, &tick_control, &tick,
+                                               message, sizeof(message));
+            if (result == RS_OK) {
+                fprintf(output, "%s\n", message);
+                while (tick_control.remaining && result == RS_OK)
+                    result = tick_control_step(world, &tick_control);
+                if (result != RS_OK) message[0] = '\0';
+                if (result == RS_OK && tick.kind == TICK_COMMAND_STEP)
+                    fprintf(output, "tick=%" PRIu64 " (frozen)\n", world_tick(world));
+            }
+            if (result != RS_OK) {
+                fprintf(errors, "error: %s\n",
+                        message[0] ? message : rs_result_name(result));
+                failed = true;
+                if (result == RS_INTERNAL_ERROR || result == RS_OUT_OF_MEMORY)
+                    break;
             }
             continue;
         }

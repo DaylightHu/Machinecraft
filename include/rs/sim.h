@@ -27,6 +27,11 @@ typedef struct {
  * Torch delay = 2 game ticks (100 ms at 20 TPS). */
 RsResult sim_flush(World *world);
 RsResult sim_step(World *world);
+/* Suppress block callbacks and neighbor/shape propagation, retaining storage,
+ * container/motion cleanup and existing timed work. Enabling does not replay
+ * skipped updates. This runtime switch defaults to enabled on world creation. */
+bool sim_updates_enabled(const World *world);
+RsResult sim_set_updates_enabled(World *world, bool enabled);
 SimStats sim_stats(const World *world);
 void sim_reset_stats(World *world);
 SolidPower redstone_solid_power(const World *world, BlockPos pos);

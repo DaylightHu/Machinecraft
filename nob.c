@@ -35,6 +35,7 @@ static const char *common_sources[] = {
     "src/power.c",
     "src/session.c",
     "src/plot_command.c",
+    "src/tick_command.c",
     "src/item.c",
     "src/container.c",
     "src/save_file.c",

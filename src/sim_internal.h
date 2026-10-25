@@ -63,6 +63,7 @@ struct Simulator {
     SimStats stats;
     RsResult error;
     bool handling_tick;
+    bool updates_suppressed;
 };
 bool sim_init_internal(World *);
 void sim_destroy_internal(World *);

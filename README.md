@@ -51,3 +51,29 @@ An optional count expands multiple 512-block units at once:
 ```
 
 The CLI accepts the same commands, with or without the leading `/`.
+
+## Tick commands
+
+The GUI chat input and CLI share these commands (the leading `/` is optional):
+
+| Command | Action |
+| --- | --- |
+| `/tick freeze` | Toggle automatic game ticks. Toggling also cancels any remaining manual steps. |
+| `/tick NUMBER` | While frozen, queue this many game ticks, then remain frozen. Accepts positive decimal integers through 4294967295. `/tick` alone requests one tick. |
+| `/tick noupdate` | Toggle block callbacks, neighbor notifications and shape updates. Enabling does not replay skipped updates. |
+
+Manual steps run without waiting for the usual real-time tick interval. The GUI
+processes them in bounded batches so input and rendering remain responsive;
+another step command adds to the remaining batch. The HUD shows the game tick,
+freeze state, pending manual steps and update state. The CLI finishes the batch
+before reading its next command. The CLI has no automatic clock; use
+`tick freeze` before `tick NUMBER`.
+
+Freezing still allows block edits and their synchronous redstone updates.
+`noupdate` instead suppresses those updates, including support checks caused by
+removing a block. Storage, rendering, inventories and runtime cleanup remain
+active. Existing scheduled ticks, piston events/motions and hoppers continue
+when time advances, but their neighbor/shape notifications are suppressed too.
+Combine `freeze` and `noupdate` when both time and update propagation must stop.
+
+Both controls reset when a world is reopened and are not saved in `.mcw` files.

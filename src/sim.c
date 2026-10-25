@@ -81,12 +81,13 @@ TorchRuntime *sim_torch_runtime(const World *w, BlockPos p)
 }
 void sim_mark_wire(World *w, BlockPos p)
 {
+    if (w->sim->updates_suppressed) return;
     if (world_get(w, p).id == BLOCK_REDSTONE_WIRE)
         wire_update_power(w, p, world_get(w, p));
 }
 void sim_mark_input(World *w, BlockPos p)
 {
-    if (w->sim->error != RS_OK) return;
+    if (w->sim->error != RS_OK || w->sim->updates_suppressed) return;
     const BlockDef *d = block_definition((BlockId)world_get(w, p).id);
     if (d->input_changed) d->input_changed(w, p);
 }
@@ -96,6 +97,7 @@ void sim_notify_change(World *w, BlockPos p)
 }
 void sim_notify_analog(World *w, BlockPos p)
 {
+    if (w->sim->updates_suppressed) return;
     static const Direction horizontal[] = {DIR_NORTH, DIR_EAST, DIR_SOUTH, DIR_WEST};
     for (unsigned i = 0; i < 4; ++i) {
         Direction direction = horizontal[i];
@@ -318,6 +320,19 @@ RsResult sim_flush(World *w)
 {
     if (!w) return RS_INVALID_ARGUMENT;
     return w->sim->error;
+}
+bool sim_updates_enabled(const World *w)
+{
+    return w && !w->sim->updates_suppressed;
+}
+RsResult sim_set_updates_enabled(World *w, bool enabled)
+{
+    if (!w || w->sim->handling_tick || w->sim->block_entities.ticking)
+        return RS_INVALID_ARGUMENT;
+    if (w->sim->error != RS_OK) return w->sim->error;
+    if (sim_updates_enabled(w) == enabled) return RS_UNCHANGED;
+    w->sim->updates_suppressed = !enabled;
+    return RS_OK;
 }
 RsResult sim_step(World *w)
 {
