@@ -76,6 +76,7 @@ typedef struct {
     char command[COMMAND_CAPACITY];
     size_t command_length;
     CommandCompletion completion;
+    PlotCommandState plot_command;
     ChatMessage chat[CHAT_HISTORY_CAPACITY];
     size_t chat_count;
     int chat_scroll;
@@ -282,12 +283,28 @@ static void close_world(GuiApp *app)
     app->command[0] = '\0';
     app->command_length = 0;
     app->completion = (CommandCompletion){0};
+    app->plot_command = (PlotCommandState){0};
+}
+
+static float camera_axis_within(float value, int minimum, int maximum)
+{
+    if ((double)value < minimum) return (float)minimum;
+    if ((double)value > maximum) {
+        float edge = (float)maximum;
+        return (double)edge > maximum ? nextafterf(edge, -INFINITY) : edge;
+    }
+    return value;
 }
 
 static bool open_world(GuiApp *app, GameSession *session)
 {
     World *world = game_session_world(session);
-    if (world_stream(world,(BlockPos){16,3,16},5) != RS_OK) {
+    WorldPlotBounds bounds = world_plot_bounds(world);
+    BlockPos spawn = {
+        (int)camera_axis_within(16.0f, bounds.min_x, bounds.max_x), 3,
+        (int)camera_axis_within(16.0f, bounds.min_z, bounds.max_z)
+    };
+    if (world_stream(world,spawn,5) != RS_OK) {
         snprintf(app->message,sizeof(app->message),"Cannot load world chunks");
         return false;
     }
@@ -302,8 +319,8 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->session = session;
     app->world_renderer = renderer;
     app->camera = (Camera3D){0};
-    app->camera.position = (Vector3){16.0f, 3.0f, 16.0f};
-    app->camera.target = (Vector3){16.0f, 2.0f, 15.0f};
+    app->camera.position = (Vector3){(float)spawn.x, 3.0f, (float)spawn.z};
+    app->camera.target = (Vector3){(float)spawn.x, 2.0f, (float)spawn.z - 1.0f};
     app->camera.up = (Vector3){0.0f, 1.0f, 0.0f};
     app->camera.fovy = 65.0f;
     app->camera.projection = CAMERA_PERSPECTIVE;
@@ -635,7 +652,7 @@ static void update_command(GuiApp *app)
         app->chat_scroll = CHAT_HISTORY_CAPACITY*CHAT_TEXT_CAPACITY;
     int character;
     while ((character = GetCharPressed()) != 0) {
-        if (!app->command_length && character == '/') continue;
+        if (!app->plot_command.pending && !app->command_length && character == '/') continue;
         if (character >= 32 && character < 127 &&
             app->command_length + 1 < sizeof(app->command)) {
             app->command[app->command_length++] = (char)character;
@@ -647,17 +664,22 @@ static void update_command(GuiApp *app)
         app->command[--app->command_length] = '\0';
         app->completion.active = false;
     }
-    if (IsKeyPressed(KEY_TAB)) {
+    if (IsKeyPressed(KEY_TAB) && !app->plot_command.pending) {
         command_complete(&app->completion, app->command, sizeof(app->command), true);
         app->command_length = strlen(app->command);
     }
     if (IsKeyPressed(KEY_ESCAPE)) {
+        if (app->plot_command.pending) {
+            (void)plot_command_answer(game_session_world(app->session), &app->plot_command,
+                                       "n", app->message, sizeof(app->message));
+            add_chat_message(app, app->message, false);
+        }
         app->screen = GUI_WORLD;
         capture_mouse(app);
         return;
     }
     if (!IsKeyPressed(KEY_ENTER)) return;
-    if (!app->command[strspn(app->command, " \t")]) {
+    if (!app->plot_command.pending && !app->command[strspn(app->command, " \t")]) {
         app->screen = GUI_WORLD;
         capture_mouse(app);
         return;
@@ -665,7 +687,13 @@ static void update_command(GuiApp *app)
     PlotCommand command;
     TickCommand tick;
     bool error = false;
-    if (tick_command_parse(app->command, &tick)) {
+    if (app->plot_command.pending) {
+        RsResult result = plot_command_answer(game_session_world(app->session), &app->plot_command,
+                                               app->command, app->message, sizeof(app->message));
+        error = result != RS_OK;
+        if (error && !app->message[0])
+            snprintf(app->message, sizeof(app->message), "Shrink: %s", rs_result_name(result));
+    } else if (tick_command_parse(app->command, &tick)) {
         RsResult result = tick_command_run(game_session_world(app->session),
             &tick, app->message, sizeof(app->message));
         error = result != RS_OK;
@@ -674,18 +702,24 @@ static void update_command(GuiApp *app)
                      rs_result_name(result));
     } else if (plot_command_parse(app->command, &command)) {
         RsResult result = plot_command_run(game_session_world(app->session),
-                                           &command, app->message,
+                                           &command, &app->plot_command, app->message,
                                            sizeof(app->message));
         error = result != RS_OK;
-        if (result != RS_OK)
+        if (result != RS_OK && !app->message[0])
             snprintf(app->message, sizeof(app->message), "Plot command: %s",
                      rs_result_name(result));
     } else {
         error = true;
         snprintf(app->message, sizeof(app->message),
-                 "Use /tick freeze, /tick step NUMBER, /tick noupdate, or /plot info|expand");
+                 "Use /tick freeze, /tick step NUMBER, /tick noupdate, or /plot info|expand|shrink");
     }
     add_chat_message(app, app->message, error);
+    if (app->plot_command.pending) {
+        app->command[0] = '\0';
+        app->command_length = 0;
+        app->completion = (CommandCompletion){0};
+        return;
+    }
     app->screen = GUI_WORLD;
     capture_mouse(app);
 }
@@ -695,10 +729,8 @@ static void constrain_camera(GuiApp *app, const World *world)
     WorldPlotBounds bounds = world_plot_bounds(world);
     float x = app->camera.position.x;
     float z = app->camera.position.z;
-    if (x < bounds.min_x) x = (float)bounds.min_x;
-    if (x > bounds.max_x) x = (float)bounds.max_x;
-    if (z < bounds.min_z) z = (float)bounds.min_z;
-    if (z > bounds.max_z) z = (float)bounds.max_z;
+    x = camera_axis_within(x, bounds.min_x, bounds.max_x);
+    z = camera_axis_within(z, bounds.min_z, bounds.max_z);
     app->camera.target.x += x - app->camera.position.x;
     app->camera.target.z += z - app->camera.position.z;
     app->camera.position.x = x;
@@ -1226,13 +1258,37 @@ static void draw_chat(GuiApp *app)
 
 static void draw_command(const GuiApp *app)
 {
+    if (app->plot_command.pending) {
+        int panel_width = GetScreenWidth() - 36;
+        if (panel_width > 660) panel_width = 660;
+        if (panel_width >= 48) {
+            WorldPlotBounds b = app->plot_command.preview.removed;
+            char warning[CHAT_TEXT_CAPACITY];
+            snprintf(warning, sizeof(warning),
+                     "Shrinking deletes cropped blocks and inventories, and may break connected blocks.\n"
+                     "X %d..%d, Z %d..%d\nType y to confirm, or n to cancel.",
+                     b.min_x,b.max_x,b.min_z,b.max_z);
+            size_t starts[CHAT_TEXT_CAPACITY], lengths[CHAT_TEXT_CAPACITY];
+            int rows = wrap_chat_message(warning, panel_width - 32, starts, lengths);
+            int height = rows*CHAT_LINE_HEIGHT + 32;
+            int x = (GetScreenWidth() - panel_width)/2, top = (GetScreenHeight() - height)/2;
+            DrawRectangle(x,top,panel_width,height,(Color){15,27,30,245});
+            DrawRectangleLines(x,top,panel_width,height,(Color){244,190,88,255});
+            for (int i = 0; i < rows; ++i) {
+                char line[CHAT_TEXT_CAPACITY];
+                memcpy(line,warning + starts[i],lengths[i]); line[lengths[i]] = '\0';
+                DrawText(line,x + 16,top + 16 + i*CHAT_LINE_HEIGHT,CHAT_FONT_SIZE,
+                         (Color){244,190,88,255});
+            }
+        }
+    }
     int y = GetScreenHeight() - 88;
     int width = GetScreenWidth() - 36;
     DrawRectangle(18, y, width, 52,
                   (Color){15, 27, 30, 235});
     DrawRectangleLines(18, y, width, 52,
                        (Color){244, 190, 88, 255});
-    const char *text = TextFormat("/%s", app->command);
+    const char *text = TextFormat("%s%s", app->plot_command.pending ? "y/n > " : "/", app->command);
     int text_x = 32;
     int cursor_x = text_x + MeasureText(text, 21);
     int right = 18 + width - 14;

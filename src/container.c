@@ -139,6 +139,24 @@ void container_destroy(World *w)
     *t = (ContainerTable){0};
 }
 
+void container_forget_outside_plot(World *w)
+{
+    ContainerTable *t = &w->sim->containers;
+    size_t output = 0;
+    for (size_t i = 0; i < t->count; ++i) {
+        ContainerRuntime c = t->items[i];
+        if (!world_in_bounds(w, c.pos)) {
+            if (c.id == BLOCK_HOPPER) sim_discard_block_entity(w, c.tick_slot);
+            free(c.slots);
+            posmap_remove(&t->positions, c.pos);
+        } else {
+            t->items[output] = c;
+            (void)posmap_set(&t->positions, c.pos, output++);
+        }
+    }
+    t->count = output;
+}
+
 static void sync_level(World *w, const ContainerRuntime *c)
 {
     BlockState state = world_get(w, c->pos);

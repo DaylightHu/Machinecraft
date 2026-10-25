@@ -18,6 +18,10 @@ enum { CHUNK_SIZE = 16, SECTION_VOLUME = 4096, WORLD_MIN_Y = -64,
        WORLD_PLOT_SIZE = 512 };
 typedef struct { int ground_layers; } WorldConfig;
 typedef struct { int min_x, min_z, max_x, max_z; } WorldPlotBounds;
+typedef struct {
+    WorldPlotBounds before, after, removed;
+    bool has_edits;
+} WorldShrinkPreview;
 typedef ItemStack ContainerStack;
 typedef void (*WorldSectionVisitor)(void *context, BlockPos origin);
 typedef struct {
@@ -36,6 +40,12 @@ void world_destroy(World *world);
 bool world_in_bounds(const World *world, BlockPos pos);
 WorldPlotBounds world_plot_bounds(const World *world);
 RsResult world_expand_plot(World *world, Direction direction, uint32_t count);
+/* Preview does not change blocks or bounds. Default terrain is not an edit. */
+RsResult world_preview_shrink(World *world, Direction direction, uint32_t count,
+                               WorldShrinkPreview *preview);
+/* Permanently discard the specified outer strips, leaving at least one plot
+ * on both axes. Callers own confirmation; freeze/noupdate retain their meaning. */
+RsResult world_shrink_plot(World *world, Direction direction, uint32_t count);
 BlockState world_get(const World *world, BlockPos pos); /* Outside vertical/coordinate limits = air; reads may restore archived chunks. */
 /* Returns false unless pos contains an active moving-piston placeholder. */
 bool world_get_piston_motion(const World *world, BlockPos pos,

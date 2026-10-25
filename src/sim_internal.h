@@ -72,6 +72,7 @@ void sim_destroy_internal(World *);
 RsResult sim_prepare_torch(World *);
 bool sim_attach_torch(World *, BlockPos);
 void sim_forget_cell(World *, BlockPos);
+void sim_forget_outside_plot(World *);
 void sim_notify_change(World *, BlockPos);
 void sim_notify_analog(World *, BlockPos);
 void sim_update_neighbors_at(World *, BlockPos, Direction except);

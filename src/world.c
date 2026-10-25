@@ -228,6 +228,193 @@ RsResult world_expand_plot(World *w, Direction direction, uint32_t count)
     ++w->topology_revision;
     return RS_OK;
 }
+static bool chunk_within(BlockPos key, WorldPlotBounds bounds)
+{
+    int64_t x = (int64_t)key.x * CHUNK_SIZE, z = (int64_t)key.z * CHUNK_SIZE;
+    return x >= bounds.min_x && x + CHUNK_SIZE - 1 <= bounds.max_x &&
+           z >= bounds.min_z && z + CHUNK_SIZE - 1 <= bounds.max_z;
+}
+
+static RsResult shrink_bounds(World *w, Direction direction, uint32_t count,
+                               WorldShrinkPreview *plan)
+{
+    if (!w || !plan || !count || !direction_horizontal(direction) ||
+        w->sim->handling_tick || w->sim->block_entities.ticking)
+        return RS_INVALID_ARGUMENT;
+    *plan = (WorldShrinkPreview){.before = w->plot, .after = w->plot, .removed = w->plot};
+    int64_t delta = (int64_t)count * WORLD_PLOT_SIZE;
+    bool x_axis = direction == DIR_EAST || direction == DIR_WEST;
+    int64_t extent = x_axis ? (int64_t)w->plot.max_x - w->plot.min_x + 1 :
+                              (int64_t)w->plot.max_z - w->plot.min_z + 1;
+    if (extent - delta < WORLD_PLOT_SIZE) return RS_OUT_OF_BOUNDS;
+    if (direction == DIR_EAST) {
+        plan->after.max_x = (int)((int64_t)w->plot.max_x - delta);
+        plan->removed.min_x = plan->after.max_x + 1;
+    } else if (direction == DIR_WEST) {
+        plan->after.min_x = (int)((int64_t)w->plot.min_x + delta);
+        plan->removed.max_x = plan->after.min_x - 1;
+    } else if (direction == DIR_SOUTH) {
+        plan->after.max_z = (int)((int64_t)w->plot.max_z - delta);
+        plan->removed.min_z = plan->after.max_z + 1;
+    } else {
+        plan->after.min_z = (int)((int64_t)w->plot.min_z + delta);
+        plan->removed.max_z = plan->after.min_z - 1;
+    }
+    return sim_flush(w);
+}
+
+static bool chunk_has_edits(const World *w, const Chunk *c)
+{
+    for (unsigned s = 0; s < SECTION_COUNT; ++s) {
+        ChunkSection *section = c->sections[s];
+        int low_y = WORLD_MIN_Y + (int)s*CHUNK_SIZE;
+        if (!section && (low_y > 0 || low_y + CHUNK_SIZE <= 1 - w->config.ground_layers))
+            continue;
+        for (size_t i = 0; i < SECTION_VOLUME; ++i) {
+            int y = low_y + (int)(i / (CHUNK_SIZE*CHUNK_SIZE));
+            StateId expected = y <= 0 && y > -w->config.ground_layers ? BLOCK_IRON : BLOCK_AIR;
+            if ((section ? section_get(section, i) : BLOCK_AIR) != expected) return true;
+        }
+    }
+    return false;
+}
+
+RsResult world_preview_shrink(World *w, Direction direction, uint32_t count,
+                               WorldShrinkPreview *plan)
+{
+    RsResult result = shrink_bounds(w, direction, count, plan);
+    if (result != RS_OK) return result;
+    for (size_t i = 0; i < w->chunk_count; ++i) {
+        Chunk *c = w->chunks[i], *snapshot = NULL;
+        if (!c->modified || chunk_within(c->key, plan->after)) continue;
+        if (!c->resident) {
+            ByteBuffer bytes; bytes_init(&bytes);
+            bool ok = world_chunk_snapshot(w, c, &bytes);
+            if (ok) snapshot = chunk_decode(&bytes);
+            ok = ok && snapshot && bytes.ok && bytes.cursor == bytes.size &&
+                 pos_equal(snapshot->key, c->key);
+            bytes_destroy(&bytes);
+            if (!ok) {
+                if (snapshot) { chunk_release_sections(snapshot); free(snapshot); }
+                return RS_INTERNAL_ERROR;
+            }
+        }
+        bool edited = chunk_has_edits(w, snapshot ? snapshot : c);
+        if (snapshot) { chunk_release_sections(snapshot); free(snapshot); }
+        if (edited) { plan->has_edits = true; break; }
+    }
+    /* Default terrain can support an edited block just inside the new edge.
+     * Warn before its removal would drop that block as a shape update. */
+    if (!plan->has_edits && !w->sim->updates_suppressed) {
+        bool x_axis = direction == DIR_EAST || direction == DIR_WEST;
+        int edge = direction == DIR_EAST ? plan->after.max_x : direction == DIR_WEST ? plan->after.min_x :
+                   direction == DIR_SOUTH ? plan->after.max_z : plan->after.min_z;
+        for (size_t i = 0; i < w->chunk_count; ++i) {
+            Chunk *c = w->chunks[i];
+            if (!c->modified || !chunk_within(c->key, plan->after) ||
+                (x_axis ? c->key.x : c->key.z) != floor_div16(edge)) continue;
+            int start = (x_axis ? c->key.z : c->key.x)*CHUNK_SIZE;
+            for (int t = start; t < start + CHUNK_SIZE; ++t)
+                for (int y = WORLD_MIN_Y; y <= WORLD_MAX_Y; ++y) {
+                    BlockPos pos = x_axis ? (BlockPos){edge,y,t} : (BlockPos){t,y,edge};
+                    BlockState s = world_get(w, pos);
+                    bool supported_outside =
+                        (s.id == BLOCK_REDSTONE_TORCH && s.data.torch.support_dir == direction) ||
+                        (block_is_rail((BlockId)s.id) && s.data.rail.ascending && s.data.rail.facing == direction);
+                    if (supported_outside && world_get(w, block_offset(pos,direction)).id != BLOCK_AIR) {
+                        plan->has_edits = true;
+                        return sim_flush(w);
+                    }
+                    if (w->sim->error != RS_OK) return w->sim->error;
+                }
+        }
+    }
+    return RS_OK;
+}
+
+typedef struct { BlockPos pos; BlockState before; } BoundaryRemoval;
+static int compare_removals(const void *a, const void *b)
+{
+    return pos_compare(((const BoundaryRemoval *)a)->pos, ((const BoundaryRemoval *)b)->pos);
+}
+
+static RsResult collect_boundary_removals(World *w, Direction direction,
+                                         WorldPlotBounds after,
+                                         BoundaryRemoval **items, size_t *count)
+{
+    bool x_axis = direction == DIR_EAST || direction == DIR_WEST;
+    int edge = direction == DIR_EAST ? after.max_x : direction == DIR_WEST ? after.min_x :
+               direction == DIR_SOUTH ? after.max_z : after.min_z;
+    int outside = edge + (direction == DIR_EAST || direction == DIR_SOUTH ? 1 : -1);
+    PosMap seen = {0}; size_t capacity = 0;
+    RsResult result = RS_OK;
+    for (size_t c = 0; c < w->chunk_count && result == RS_OK; ++c) {
+        Chunk *chunk = w->chunks[c];
+        if (!chunk->modified || !chunk_within(chunk->key, after) ||
+            (x_axis ? chunk->key.x : chunk->key.z) != floor_div16(edge)) continue;
+        if (!chunk->resident && !restore_chunk(w, chunk)) { result = RS_INTERNAL_ERROR; break; }
+        int start = (x_axis ? chunk->key.z : chunk->key.x)*CHUNK_SIZE;
+        for (int t = start - 1; t <= start + CHUNK_SIZE && result == RS_OK; ++t)
+            for (int y = WORLD_MIN_Y; y <= WORLD_MAX_Y; ++y) {
+                BlockPos pos = x_axis ? (BlockPos){outside,y,t} : (BlockPos){t,y,outside};
+                if (!world_in_bounds(w, pos) || posmap_get(&seen, pos, NULL)) continue;
+                BlockState before = world_get(w, pos);
+                if (w->sim->error != RS_OK) { result = w->sim->error; break; }
+                if (before.id == BLOCK_AIR) continue;
+                if (*count == capacity) {
+                    size_t next = capacity ? capacity*2 : 32;
+                    if (next < capacity || next > SIZE_MAX/sizeof(**items)) { result = RS_OUT_OF_MEMORY; break; }
+                    BoundaryRemoval *p = realloc(*items, next*sizeof(**items));
+                    if (!p) { result = RS_OUT_OF_MEMORY; break; }
+                    *items = p; capacity = next;
+                }
+                if (!posmap_set(&seen, pos, *count)) { result = RS_OUT_OF_MEMORY; break; }
+                (*items)[(*count)++] = (BoundaryRemoval){pos, before};
+            }
+    }
+    posmap_destroy(&seen);
+    if (result == RS_OK && *count > 1) qsort(*items, *count, sizeof(**items), compare_removals);
+    return result;
+}
+
+RsResult world_shrink_plot(World *w, Direction direction, uint32_t count)
+{
+    WorldShrinkPreview plan;
+    RsResult result = shrink_bounds(w, direction, count, &plan);
+    if (result != RS_OK) return result;
+    BoundaryRemoval *removals = NULL; size_t removed_count = 0;
+    if (!w->sim->updates_suppressed)
+        result = collect_boundary_removals(w, direction, plan.after, &removals, &removed_count);
+    if (result != RS_OK) { free(removals); return result; }
+    w->plot = plan.after;
+    invalidate_reads(w, false);
+    ++w->revision; ++w->topology_revision;
+    for (size_t i = 0; i < w->chunk_count;) {
+        Chunk *c = w->chunks[i];
+        if (world_chunk_in_bounds(w, c->key)) { ++i; continue; }
+        posmap_remove(&w->chunk_map, c->key);
+        if (c->resident) --w->loaded_count;
+        chunk_release_sections(c); free(c);
+        if (i < --w->chunk_count) {
+            w->chunks[i] = w->chunks[w->chunk_count];
+            (void)posmap_set(&w->chunk_map, w->chunks[i]->key, i);
+        }
+    }
+    for (size_t i = 0; i < removed_count && w->sim->error == RS_OK; ++i) {
+        BoundaryRemoval r = removals[i];
+        sim_state_changed(w, (StateChange){r.pos,r.before,block_default(BLOCK_AIR),3,UPDATE_SHAPE_LIMIT});
+        if (r.before.id == BLOCK_MOVING_PISTON) {
+            BlockPos behind = block_offset(r.pos, direction_opposite((Direction)r.before.data.moving_piston.facing));
+            BlockState base = world_get(w, behind);
+            if (block_is_piston_base((BlockId)base.id) && base.data.piston.extended)
+                world_remove_internal(w, behind);
+        }
+    }
+    free(removals);
+    sim_forget_outside_plot(w);
+    return sim_flush(w);
+}
+
 BlockState world_get(const World *w, BlockPos p)
 {
     if (!world_in_bounds(w, p)) return block_default(BLOCK_AIR);

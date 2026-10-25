@@ -10,7 +10,7 @@ static const char *const cli_commands[] = {
     "save", "title", "quit"
 };
 static const char *const tick_commands[] = {"freeze", "step", "noupdate"};
-static const char *const plot_commands[] = {"info", "expand"};
+static const char *const plot_commands[] = {"info", "expand", "shrink"};
 static const char *const plot_directions[] = {"east", "west", "south", "north"};
 static const char *const directions[] = {"east", "west", "up", "down", "south", "north"};
 static const char *const projectiles[] = {"arrow", "trident", "other"};
@@ -62,7 +62,7 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
     } else if (count == 2 && strcmp(name, "plot") == 0) {
         ADD(plot_commands);
     } else if (count == 3 && strcmp(name, "plot") == 0 &&
-               strcmp(tokens[1], "expand") == 0) {
+               (strcmp(tokens[1], "expand") == 0 || strcmp(tokens[1], "shrink") == 0)) {
         ADD(plot_directions);
     } else if (!gui && !slash && strcmp(name, "place") == 0) {
         if (count == 5) {

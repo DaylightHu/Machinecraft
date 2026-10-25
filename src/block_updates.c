@@ -254,7 +254,9 @@ void sim_state_changed(World *w, StateChange c)
         return;
     }
     removed(w, c, changed_type);
-    if (changed_type) sim_forget_cell(w, c.pos);
+    /* A plot crop reports virtual removals outside the new bounds. Its
+     * discarded runtimes are released together, preserving linear cleanup. */
+    if (changed_type && world_in_bounds(w, c.pos)) sim_forget_cell(w, c.pos);
     if (world_get(w, c.pos).id != c.current.id || w->sim->error != RS_OK) return;
     placed(w, c, changed_type);
     if (changed_type && w->sim->error == RS_OK &&

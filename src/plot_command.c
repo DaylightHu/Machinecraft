@@ -67,10 +67,11 @@ bool plot_command_parse(const char *line, PlotCommand *command)
         command->kind = PLOT_COMMAND_INFO;
         return true;
     }
-    if ((count == 3 || count == 4) && strcmp(tokens[1], "expand") == 0 &&
+    if ((count == 3 || count == 4) &&
+        (strcmp(tokens[1], "expand") == 0 || strcmp(tokens[1], "shrink") == 0) &&
         parse_direction(tokens[2], &command->direction) &&
         (count == 3 || parse_count(tokens[3], &command->count))) {
-        command->kind = PLOT_COMMAND_EXPAND;
+        command->kind = strcmp(tokens[1], "expand") == 0 ? PLOT_COMMAND_EXPAND : PLOT_COMMAND_SHRINK;
         return true;
     }
     return false;
@@ -90,15 +91,64 @@ static void describe(const World *world, const char *prefix,
 }
 
 RsResult plot_command_run(World *world, const PlotCommand *command,
-                          char *message, size_t capacity)
+                          PlotCommandState *state, char *message, size_t capacity)
 {
-    if (!world || !command || !message || !capacity) return RS_INVALID_ARGUMENT;
+    if (!world || !command || !state || !message || !capacity || state->pending)
+        return RS_INVALID_ARGUMENT;
+    message[0] = '\0';
     if (command->kind == PLOT_COMMAND_INFO) {
         describe(world, "Plot: ", message, capacity);
         return RS_OK;
     }
+    if (command->kind == PLOT_COMMAND_SHRINK) {
+        WorldShrinkPreview preview;
+        RsResult result = world_preview_shrink(world, command->direction, command->count, &preview);
+        if (result == RS_OUT_OF_BOUNDS)
+            snprintf(message, capacity, "Cannot shrink: both axes must keep at least %d blocks", WORLD_PLOT_SIZE);
+        if (result != RS_OK) return result;
+        if (preview.has_edits) {
+            *state = (PlotCommandState){.command = *command, .preview = preview, .pending = true};
+            WorldPlotBounds b = preview.removed;
+            snprintf(message, capacity,
+                     "WARNING: removing X %d..%d, Z %d..%d may delete edits and inventories. Enter y/n:",
+                     b.min_x,b.max_x,b.min_z,b.max_z);
+            return RS_OK;
+        }
+        result = world_shrink_plot(world, command->direction, command->count);
+        if (result == RS_OK) describe(world, "Shrunk: ", message, capacity);
+        return result;
+    }
     if (command->kind != PLOT_COMMAND_EXPAND) return RS_INVALID_ARGUMENT;
     RsResult result = world_expand_plot(world, command->direction, command->count);
     if (result == RS_OK) describe(world, "Expanded: ", message, capacity);
+    return result;
+}
+
+RsResult plot_command_answer(World *world, PlotCommandState *state,
+                              const char *answer, char *message, size_t capacity)
+{
+    if (!world || !state || !state->pending || !answer || !message || !capacity)
+        return RS_INVALID_ARGUMENT;
+    message[0] = '\0';
+    answer += strspn(answer, " \t\r\n");
+    size_t length = strcspn(answer, " \t\r\n");
+    const char *end = answer + length;
+    end += strspn(end, " \t\r\n");
+    bool yes = length == 1 && (answer[0] == 'y' || answer[0] == 'Y') && !*end;
+    bool no = length == 1 && (answer[0] == 'n' || answer[0] == 'N') && !*end;
+    if (!yes && !no) {
+        snprintf(message, capacity, "Please enter y to shrink, or n to cancel.");
+        return RS_OK;
+    }
+    state->pending = false;
+    if (no) { snprintf(message, capacity, "Shrink cancelled"); return RS_OK; }
+    WorldPlotBounds before = state->preview.before, now = world_plot_bounds(world);
+    if (before.min_x != now.min_x || before.max_x != now.max_x ||
+        before.min_z != now.min_z || before.max_z != now.max_z) {
+        snprintf(message, capacity, "Plot bounds changed; run the shrink command again.");
+        return RS_INVALID_ARGUMENT;
+    }
+    RsResult result = world_shrink_plot(world, state->command.direction, state->command.count);
+    if (result == RS_OK) describe(world, "Shrunk: ", message, capacity);
     return result;
 }

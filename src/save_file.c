@@ -424,18 +424,10 @@ World *save_file_read(const char *path, GameSessionResult *result)
                 BlockState state;
                 if (!state_decode(section_get(c->sections[sec], j), &state)) goto fail;
                 if (state.id == BLOCK_MOVING_PISTON) ++actual_motions;
-                BlockPos p = {c->key.x * 16 + (int)(j & 15), WORLD_MIN_Y + (int)sec * 16 + (int)(j >> 8),
-                              c->key.z * 16 + (int)((j >> 4) & 15)};
                 if (container_is_block((BlockId)state.id)) ++actual_containers;
-                if (state.id == BLOCK_REDSTONE_WIRE && !wire_supported(w, p)) goto fail;
-                if (state.id == BLOCK_REDSTONE_REPEATER && !repeater_supported(w, p))
-                    goto fail;
-                if (state.id == BLOCK_REDSTONE_COMPARATOR &&
-                    !comparator_supported(w, p)) goto fail;
-                if (block_is_rail((BlockId)state.id) && !rail_supported(w, p))
-                    goto fail;
+                /* Silent edits can intentionally leave unsupported blocks.
+                 * Loading restores states; it does not replay shape updates. */
                 if (state.id == BLOCK_REDSTONE_TORCH) {
-                    if (!torch_supported(w, p, (Direction)state.data.torch.support_dir)) goto fail;
                     ++actual_torches;
                 }
             }

@@ -50,6 +50,7 @@ Press Tab in either interface to complete the current word (for example,
 | Command | Action |
 | --- | --- |
 | `/plot expand DIRECTION [COUNT]` | Expand toward `east`, `west`, `south` or `north` in 512-block units. Optional `COUNT` expands multiple units at once; for example, `/plot expand east 2`. |
+| `/plot shrink DIRECTION [COUNT]` | Remove outer 512-block strips from the specified side, keeping at least 512 blocks on both axes. If edits may be deleted, enter `y` to confirm or `n` to cancel. |
 | `/tick freeze` | Toggle automatic game ticks. Toggling also cancels any remaining manual steps. |
 | `/tick step NUMBER` | While frozen, queue this many game ticks, then remain frozen. `NUMBER` is required and accepts positive decimal integers through 4294967295. |
 | `/tick noupdate` | Toggle block callbacks, neighbor notifications and shape updates. Enabling does not replay skipped updates. |
