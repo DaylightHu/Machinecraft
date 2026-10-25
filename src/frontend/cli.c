@@ -240,6 +240,7 @@ static void print_help(FILE *output)
           "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
           "dropper-seed SEED\n"
           "plot info\nplot expand east|west|south|north [COUNT]\n"
+          "plot shrink east|west|south|north [COUNT] (y/n confirmation when deleting edits)\n"
           "tick freeze (toggle; also cancels pending manual steps)\n"
           "tick step NUMBER (positive integer; requires freeze)\n"
           "tick noupdate (toggle block updates; skipped updates are not replayed)\n"
@@ -463,10 +464,17 @@ static RsResult execute_command(World *world, const Command *command,
     return RS_OK;
 }
 
+typedef struct {
+    CommandCompletion completion;
+    PlotCommandState plot;
+} CliCommandInput;
+
 static bool complete_command(char *line, size_t capacity, bool restart,
                               void *context)
 {
-    CommandCompletion *completion = context;
+    CliCommandInput *input = context;
+    if (input->plot.pending) return false;
+    CommandCompletion *completion = &input->completion;
     if (restart) completion->active = false;
     return command_complete(completion, line, capacity, false);
 }
@@ -488,8 +496,8 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
         fputs("error: cannot read input\n", errors);
         return CLI_RUN_ERROR;
     }
-    CommandCompletion completion = {0};
-    if (!line_input_set_completion(&reader, complete_command, &completion)) {
+    CliCommandInput command_input = {0};
+    if (!line_input_set_completion(&reader, complete_command, &command_input)) {
         fputs("error: cannot configure terminal input\n", errors);
         line_input_close(&reader);
         return CLI_RUN_ERROR;
@@ -524,6 +532,15 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
             continue;
         }
 
+        if (command_input.plot.pending) {
+            char message[PLOT_COMMAND_MESSAGE_CAPACITY];
+            RsResult result = plot_command_answer(world, &command_input.plot, line,
+                                                   message, sizeof(message));
+            if (result == RS_OK) fprintf(output, "%s\n", message);
+            else { fprintf(errors, "error: %s\n", message[0] ? message : rs_result_name(result)); failed = true; }
+            if (result == RS_INTERNAL_ERROR || result == RS_OUT_OF_MEMORY) break;
+            continue;
+        }
         TickCommand tick;
         if (tick_command_parse(line, &tick)) {
             char message[TICK_COMMAND_MESSAGE_CAPACITY];
@@ -556,12 +573,12 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
         PlotCommand plot;
         if (plot_command_parse(line, &plot)) {
             char message[PLOT_COMMAND_MESSAGE_CAPACITY];
-            RsResult result = plot_command_run(world, &plot, message,
+            RsResult result = plot_command_run(world, &plot, &command_input.plot, message,
                                                sizeof(message));
             if (result == RS_OK) {
                 fprintf(output, "%s\n", message);
             } else {
-                fprintf(errors, "error: %s\n", rs_result_name(result));
+                fprintf(errors, "error: %s\n", message[0] ? message : rs_result_name(result));
                 failed = true;
                 if (result == RS_INTERNAL_ERROR || result == RS_OUT_OF_MEMORY)
                     break;
@@ -586,6 +603,7 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
             GameSessionResult save_result = game_session_save(session);
             if (save_result == GAME_SESSION_OK) {
                 fputs("saved\n", output);
+                if (reader.interactive) failed = false;
                 if (command.kind == COMMAND_TITLE) {
                     return_to_title = true;
                     break;

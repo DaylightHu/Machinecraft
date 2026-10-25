@@ -12,6 +12,7 @@ typedef struct {
     BlockPos pos;
     Direction face;
     float distance;
+    PickVec3 local; /* Hit point relative to the block centre, on face. */
 } VoxelHit;
 
 VoxelHit voxel_pick(const World *world, PickVec3 origin,

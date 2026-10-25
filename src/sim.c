@@ -200,6 +200,32 @@ static bool pop_piston_event(PistonEvents *q, PistonEvent *event)
     return true;
 }
 
+void sim_forget_outside_plot(World *w)
+{
+    Simulator *s = w->sim;
+    for (size_t i = 0; i < s->scheduler.count;) {
+        ScheduledEvent e = s->scheduler.heap[i];
+        if (!world_in_bounds(w, e.pos)) scheduler_cancel(&s->scheduler, e.pos, e.block);
+        else ++i;
+    }
+    PistonEvents *q = &s->piston_events;
+    size_t output = 0;
+    for (size_t i = q->head; i < q->count; ++i) {
+        PistonEvent e = q->items[i];
+        if (!world_in_bounds(w, e.pos)) posmap_remove(&q->pending, piston_event_key(e));
+        else q->items[output++] = e;
+    }
+    q->head = 0; q->count = output;
+    for (size_t i = 0; i < s->piston_motions.count; ++i)
+        if (s->piston_motions.items[i].used &&
+            !world_in_bounds(w, s->piston_motions.items[i].pos))
+            sim_discard_piston_motion(w, s->piston_motions.items[i].pos);
+    container_forget_outside_plot(w);
+    for (size_t i = 0; i < s->torch_used; ++i)
+        if (s->torches[i].used && !world_in_bounds(w, s->torches[i].pos))
+            discard_torch(s, i);
+}
+
 static size_t *block_entity_slot(const World *w, BlockEntityTick entity)
 {
     if (entity.block == BLOCK_HOPPER) {

@@ -3,6 +3,7 @@
 #include "block_renderer.h"
 #include "block_shape.h"
 #include "command_completion.h"
+#include "flexible_placement.h"
 #include "hotbar.h"
 #include "inventory.h"
 #include "plot_command.h"
@@ -76,6 +77,7 @@ typedef struct {
     char command[COMMAND_CAPACITY];
     size_t command_length;
     CommandCompletion completion;
+    PlotCommandState plot_command;
     ChatMessage chat[CHAT_HISTORY_CAPACITY];
     size_t chat_count;
     int chat_scroll;
@@ -282,12 +284,28 @@ static void close_world(GuiApp *app)
     app->command[0] = '\0';
     app->command_length = 0;
     app->completion = (CommandCompletion){0};
+    app->plot_command = (PlotCommandState){0};
+}
+
+static float camera_axis_within(float value, int minimum, int maximum)
+{
+    if ((double)value < minimum) return (float)minimum;
+    if ((double)value > maximum) {
+        float edge = (float)maximum;
+        return (double)edge > maximum ? nextafterf(edge, -INFINITY) : edge;
+    }
+    return value;
 }
 
 static bool open_world(GuiApp *app, GameSession *session)
 {
     World *world = game_session_world(session);
-    if (world_stream(world,(BlockPos){16,3,16},5) != RS_OK) {
+    WorldPlotBounds bounds = world_plot_bounds(world);
+    BlockPos spawn = {
+        (int)camera_axis_within(16.0f, bounds.min_x, bounds.max_x), 3,
+        (int)camera_axis_within(16.0f, bounds.min_z, bounds.max_z)
+    };
+    if (world_stream(world,spawn,5) != RS_OK) {
         snprintf(app->message,sizeof(app->message),"Cannot load world chunks");
         return false;
     }
@@ -302,8 +320,8 @@ static bool open_world(GuiApp *app, GameSession *session)
     app->session = session;
     app->world_renderer = renderer;
     app->camera = (Camera3D){0};
-    app->camera.position = (Vector3){16.0f, 3.0f, 16.0f};
-    app->camera.target = (Vector3){16.0f, 2.0f, 15.0f};
+    app->camera.position = (Vector3){(float)spawn.x, 3.0f, (float)spawn.z};
+    app->camera.target = (Vector3){(float)spawn.x, 2.0f, (float)spawn.z - 1.0f};
     app->camera.up = (Vector3){0.0f, 1.0f, 0.0f};
     app->camera.fovy = 65.0f;
     app->camera.projection = CAMERA_PERSPECTIVE;
@@ -550,6 +568,12 @@ static Direction camera_direction(const Camera3D *camera)
     return camera_horizontal_direction(camera);
 }
 
+static bool flexible_placement_held(BlockId selected)
+{
+    return selected > BLOCK_AIR && selected < BLOCK_INTERNAL_FIRST &&
+           (IsKeyDown(KEY_G) || IsKeyDown(KEY_H));
+}
+
 static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                        Direction facing)
 {
@@ -562,40 +586,40 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
 
     World *world = game_session_world(app->session);
     RsResult result;
+    bool flexible = place && flexible_placement_held(selected);
     if (place) {
         if (!hit.has_face) {
             snprintf(app->message, sizeof(app->message),
                      "Cannot place while inside a block");
+            if (flexible) add_chat_message(app, app->message, true);
             return;
         }
-        BlockPos target = block_offset(hit.pos, hit.face);
+        PlacementTarget plan = flexible_placement_target(hit, selected, facing,
+            camera_direction(&app->camera), IsKeyDown(KEY_G), IsKeyDown(KEY_H));
+        if (!plan.valid) {
+            snprintf(app->message, sizeof(app->message),
+                     "%s does not support that direction", block_name(selected));
+            if (flexible) add_chat_message(app, app->message, true);
+            return;
+        }
+        BlockPos target = plan.pos;
         if (!world_in_bounds(world, target) ||
             world_get(world, target).id != BLOCK_AIR) {
             snprintf(app->message, sizeof(app->message),
                      "Target occupied or outside world");
+            if (flexible) add_chat_message(app, app->message, true);
             return;
         }
         if ((selected == BLOCK_REDSTONE_WIRE ||
              selected == BLOCK_REDSTONE_REPEATER ||
              selected == BLOCK_REDSTONE_COMPARATOR ||
              selected == BLOCK_POWERED_RAIL ||
-             selected == BLOCK_ACTIVATOR_RAIL) && hit.face != DIR_UP) {
+             selected == BLOCK_ACTIVATOR_RAIL) && hit.face != DIR_UP && !flexible) {
             snprintf(app->message, sizeof(app->message),
                      "%s must be placed on a top face", block_name(selected));
             return;
         }
-        bool directional = selected == BLOCK_REDSTONE_REPEATER ||
-                           selected == BLOCK_REDSTONE_COMPARATOR ||
-                           selected == BLOCK_POWERED_RAIL ||
-                           selected == BLOCK_ACTIVATOR_RAIL;
-        Direction placement = (selected == BLOCK_OBSERVER ||
-                               selected == BLOCK_BARREL ||
-                               selected == BLOCK_DROPPER ||
-                               block_is_piston_base(selected)) ?
-                              direction_opposite(
-                                  camera_direction(&app->camera)) :
-                              (directional ? facing : direction_opposite(hit.face));
-        result = world_place(world, target, selected, placement);
+        result = world_place(world, target, selected, plan.placement);
     } else {
         result = world_remove(world, hit.pos);
     }
@@ -605,6 +629,8 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
     }
     snprintf(app->message, sizeof(app->message), "%s: %s",
              place ? "Place" : "Remove", rs_result_name(result));
+    if (flexible && result != RS_OK && result != RS_UNCHANGED)
+        add_chat_message(app, app->message, true);
 }
 
 static BlockId pickable_block(BlockId id)
@@ -635,7 +661,7 @@ static void update_command(GuiApp *app)
         app->chat_scroll = CHAT_HISTORY_CAPACITY*CHAT_TEXT_CAPACITY;
     int character;
     while ((character = GetCharPressed()) != 0) {
-        if (!app->command_length && character == '/') continue;
+        if (!app->plot_command.pending && !app->command_length && character == '/') continue;
         if (character >= 32 && character < 127 &&
             app->command_length + 1 < sizeof(app->command)) {
             app->command[app->command_length++] = (char)character;
@@ -647,17 +673,22 @@ static void update_command(GuiApp *app)
         app->command[--app->command_length] = '\0';
         app->completion.active = false;
     }
-    if (IsKeyPressed(KEY_TAB)) {
+    if (IsKeyPressed(KEY_TAB) && !app->plot_command.pending) {
         command_complete(&app->completion, app->command, sizeof(app->command), true);
         app->command_length = strlen(app->command);
     }
     if (IsKeyPressed(KEY_ESCAPE)) {
+        if (app->plot_command.pending) {
+            (void)plot_command_answer(game_session_world(app->session), &app->plot_command,
+                                       "n", app->message, sizeof(app->message));
+            add_chat_message(app, app->message, false);
+        }
         app->screen = GUI_WORLD;
         capture_mouse(app);
         return;
     }
     if (!IsKeyPressed(KEY_ENTER)) return;
-    if (!app->command[strspn(app->command, " \t")]) {
+    if (!app->plot_command.pending && !app->command[strspn(app->command, " \t")]) {
         app->screen = GUI_WORLD;
         capture_mouse(app);
         return;
@@ -665,7 +696,13 @@ static void update_command(GuiApp *app)
     PlotCommand command;
     TickCommand tick;
     bool error = false;
-    if (tick_command_parse(app->command, &tick)) {
+    if (app->plot_command.pending) {
+        RsResult result = plot_command_answer(game_session_world(app->session), &app->plot_command,
+                                               app->command, app->message, sizeof(app->message));
+        error = result != RS_OK;
+        if (error && !app->message[0])
+            snprintf(app->message, sizeof(app->message), "Shrink: %s", rs_result_name(result));
+    } else if (tick_command_parse(app->command, &tick)) {
         RsResult result = tick_command_run(game_session_world(app->session),
             &tick, app->message, sizeof(app->message));
         error = result != RS_OK;
@@ -674,18 +711,24 @@ static void update_command(GuiApp *app)
                      rs_result_name(result));
     } else if (plot_command_parse(app->command, &command)) {
         RsResult result = plot_command_run(game_session_world(app->session),
-                                           &command, app->message,
+                                           &command, &app->plot_command, app->message,
                                            sizeof(app->message));
         error = result != RS_OK;
-        if (result != RS_OK)
+        if (result != RS_OK && !app->message[0])
             snprintf(app->message, sizeof(app->message), "Plot command: %s",
                      rs_result_name(result));
     } else {
         error = true;
         snprintf(app->message, sizeof(app->message),
-                 "Use /tick freeze, /tick step NUMBER, /tick noupdate, or /plot info|expand");
+                 "Use /tick freeze, /tick step NUMBER, /tick noupdate, or /plot info|expand|shrink");
     }
     add_chat_message(app, app->message, error);
+    if (app->plot_command.pending) {
+        app->command[0] = '\0';
+        app->command_length = 0;
+        app->completion = (CommandCompletion){0};
+        return;
+    }
     app->screen = GUI_WORLD;
     capture_mouse(app);
 }
@@ -695,10 +738,8 @@ static void constrain_camera(GuiApp *app, const World *world)
     WorldPlotBounds bounds = world_plot_bounds(world);
     float x = app->camera.position.x;
     float z = app->camera.position.z;
-    if (x < bounds.min_x) x = (float)bounds.min_x;
-    if (x > bounds.max_x) x = (float)bounds.max_x;
-    if (z < bounds.min_z) z = (float)bounds.min_z;
-    if (z > bounds.max_z) z = (float)bounds.max_z;
+    x = camera_axis_within(x, bounds.min_x, bounds.max_x);
+    z = camera_axis_within(z, bounds.min_z, bounds.max_z);
     app->camera.target.x += x - app->camera.position.x;
     app->camera.target.z += z - app->camera.position.z;
     app->camera.position.x = x;
@@ -768,7 +809,9 @@ static VoxelHit update_world(GuiApp *app)
                      IsKeyDown(KEY_RIGHT_SHIFT);
         BlockId target = hit.hit ? (BlockId)world_get(world, hit.pos).id :
                                   BLOCK_AIR;
-        if (hit.hit && !shift &&
+        if (flexible_placement_held(selected)) {
+            apply_edit(app, hit, selected, true, facing);
+        } else if (hit.hit && !shift &&
             target == BLOCK_BARREL) {
             open_barrel(app, hit.pos);
         } else if (hit.hit && !shift &&
@@ -1114,6 +1157,94 @@ static void draw_block_outline(BlockState state, Vector3 center)
     }
 }
 
+static Vector3 placement_axis(Direction direction)
+{
+    BlockPos axis = block_offset((BlockPos){0}, direction);
+    return (Vector3){(float)axis.x, (float)axis.y, (float)axis.z};
+}
+
+static Vector3 placement_grid_point(VoxelHit hit, PlacementTarget plan,
+                                    float u, float v, float lift)
+{
+    Vector3 normal = placement_axis(hit.face);
+    Vector3 right = placement_axis(plan.right), up = placement_axis(plan.up);
+    float plane = hit.local.x*normal.x + hit.local.y*normal.y + hit.local.z*normal.z;
+    return (Vector3){
+        hit.pos.x + normal.x*(plane + lift) + right.x*u + up.x*v,
+        hit.pos.y + normal.y*(plane + lift) + right.y*u + up.y*v,
+        hit.pos.z + normal.z*(plane + lift) + right.z*u + up.z*v};
+}
+
+static void draw_placement_quad(VoxelHit hit, PlacementTarget plan,
+                                const float points[4][2], float lift, Color color)
+{
+    Vector3 vertices[4];
+    for (int i = 0; i < 4; ++i)
+        vertices[i] = placement_grid_point(hit, plan, points[i][0], points[i][1], lift);
+    DrawTriangle3D(vertices[0], vertices[1], vertices[2], color);
+    DrawTriangle3D(vertices[0], vertices[2], vertices[3], color);
+}
+
+static void draw_flexible_placement(GuiApp *app, VoxelHit hit)
+{
+    BlockId selected = hotbar_selected_block(&app->hotbar);
+    if (app->screen != GUI_WORLD || !hit.hit || !hit.has_face ||
+        !flexible_placement_held(selected)) return;
+    PlacementTarget plan = flexible_placement_target(hit, selected,
+        camera_horizontal_direction(&app->camera), camera_direction(&app->camera),
+        IsKeyDown(KEY_G), IsKeyDown(KEY_H));
+    if ((unsigned)plan.right >= DIR_COUNT) return;
+    World *world = game_session_world(app->session);
+    bool available = plan.valid && world_in_bounds(world, plan.pos) &&
+                     world_get(world, plan.pos).id == BLOCK_AIR;
+    Color color = available ? (Color){72, 48, 184, 255} : RED;
+    static const float outer[4][2] = {
+        {-0.5f,-0.5f}, {0.5f,-0.5f}, {0.5f,0.5f}, {-0.5f,0.5f}};
+    static const float regions[5][4][2] = {
+        {{-0.25f,-0.25f}, {0.25f,-0.25f}, {0.25f,0.25f}, {-0.25f,0.25f}},
+        {{-0.5f,-0.5f}, {-0.25f,-0.25f}, {-0.25f,0.25f}, {-0.5f,0.5f}},
+        {{0.25f,-0.25f}, {0.5f,-0.5f}, {0.5f,0.5f}, {0.25f,0.25f}},
+        {{-0.25f,0.25f}, {0.25f,0.25f}, {0.5f,0.5f}, {-0.5f,0.5f}},
+        {{-0.5f,-0.5f}, {0.5f,-0.5f}, {0.25f,-0.25f}, {-0.25f,-0.25f}}
+    };
+    Color background = color;
+    background.a = 40;
+    draw_placement_quad(hit, plan, outer, 0.002f, background);
+    Color highlight = color;
+    highlight.a = 160;
+    draw_placement_quad(hit, plan, regions[plan.region], 0.004f, highlight);
+    for (int i = 0; i < 4; ++i) {
+        int next = (i + 1)%4;
+        Vector3 corner = placement_grid_point(hit, plan, outer[i][0], outer[i][1], 0.006f);
+        Vector3 inner = placement_grid_point(hit, plan,
+            regions[PLACEMENT_CENTER][i][0], regions[PLACEMENT_CENTER][i][1], 0.006f);
+        DrawLine3D(corner, placement_grid_point(hit, plan,
+            outer[next][0], outer[next][1], 0.006f), color);
+        DrawLine3D(inner, placement_grid_point(hit, plan,
+            regions[PLACEMENT_CENTER][next][0], regions[PLACEMENT_CENTER][next][1], 0.006f), color);
+        DrawLine3D(corner, inner, color);
+    }
+    Vector3 center = {(float)plan.pos.x, (float)plan.pos.y, (float)plan.pos.z};
+    DrawCubeWires(center, 1.002f, 1.002f, 1.002f, color);
+    if (IsKeyDown(KEY_H) && plan.directional) {
+        Vector3 direction = placement_axis(plan.direction);
+        Direction wing_axis = plan.direction == plan.up ||
+            direction_opposite(plan.direction) == plan.up ? plan.right : plan.up;
+        Vector3 wing = placement_axis(wing_axis);
+        Vector3 start = {center.x - direction.x*0.3f, center.y - direction.y*0.3f,
+                         center.z - direction.z*0.3f};
+        Vector3 end = {center.x + direction.x*0.4f, center.y + direction.y*0.4f,
+                       center.z + direction.z*0.4f};
+        DrawLine3D(start, end, color);
+        for (int side = -1; side <= 1; side += 2) {
+            Vector3 tip = {end.x - direction.x*0.16f + wing.x*0.12f*side,
+                           end.y - direction.y*0.16f + wing.y*0.12f*side,
+                           end.z - direction.z*0.16f + wing.z*0.12f*side};
+            DrawLine3D(end, tip, color);
+        }
+    }
+}
+
 static void draw_world(GuiApp *app, VoxelHit hit)
 {
     ClearBackground((Color){184, 211, 214, 255});
@@ -1125,6 +1256,7 @@ static void draw_world(GuiApp *app, VoxelHit hit)
             draw_block_outline(world_get(game_session_world(app->session), hit.pos),
                                 center);
         }
+        draw_flexible_placement(app, hit);
     EndMode3D();
 
     if (app->screen == GUI_WORLD) {
@@ -1226,13 +1358,37 @@ static void draw_chat(GuiApp *app)
 
 static void draw_command(const GuiApp *app)
 {
+    if (app->plot_command.pending) {
+        int panel_width = GetScreenWidth() - 36;
+        if (panel_width > 660) panel_width = 660;
+        if (panel_width >= 48) {
+            WorldPlotBounds b = app->plot_command.preview.removed;
+            char warning[CHAT_TEXT_CAPACITY];
+            snprintf(warning, sizeof(warning),
+                     "Shrinking deletes cropped blocks and inventories, and may break connected blocks.\n"
+                     "X %d..%d, Z %d..%d\nType y to confirm, or n to cancel.",
+                     b.min_x,b.max_x,b.min_z,b.max_z);
+            size_t starts[CHAT_TEXT_CAPACITY], lengths[CHAT_TEXT_CAPACITY];
+            int rows = wrap_chat_message(warning, panel_width - 32, starts, lengths);
+            int height = rows*CHAT_LINE_HEIGHT + 32;
+            int x = (GetScreenWidth() - panel_width)/2, top = (GetScreenHeight() - height)/2;
+            DrawRectangle(x,top,panel_width,height,(Color){15,27,30,245});
+            DrawRectangleLines(x,top,panel_width,height,(Color){244,190,88,255});
+            for (int i = 0; i < rows; ++i) {
+                char line[CHAT_TEXT_CAPACITY];
+                memcpy(line,warning + starts[i],lengths[i]); line[lengths[i]] = '\0';
+                DrawText(line,x + 16,top + 16 + i*CHAT_LINE_HEIGHT,CHAT_FONT_SIZE,
+                         (Color){244,190,88,255});
+            }
+        }
+    }
     int y = GetScreenHeight() - 88;
     int width = GetScreenWidth() - 36;
     DrawRectangle(18, y, width, 52,
                   (Color){15, 27, 30, 235});
     DrawRectangleLines(18, y, width, 52,
                        (Color){244, 190, 88, 255});
-    const char *text = TextFormat("/%s", app->command);
+    const char *text = TextFormat("%s%s", app->plot_command.pending ? "y/n > " : "/", app->command);
     int text_x = 32;
     int cursor_x = text_x + MeasureText(text, 21);
     int right = 18 + width - 14;

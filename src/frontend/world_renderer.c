@@ -45,6 +45,7 @@ struct WorldRenderer {
     size_t region_count, region_capacity;
     RenderRegion **regions;
     uint64_t topology_revision;
+    WorldPlotBounds plot;
     bool failed;
     Material materials[PARTS];
 };
@@ -411,6 +412,16 @@ void world_renderer_destroy(WorldRenderer *r)
 bool world_renderer_sync(WorldRenderer *r)
 {
     if (!r || r->failed) return false;
+    WorldPlotBounds plot = world_plot_bounds(r->world);
+    if (plot.min_x != r->plot.min_x || plot.max_x != r->plot.max_x ||
+        plot.min_z != r->plot.min_z || plot.max_z != r->plot.max_z) {
+        /* Border faces can change without a retained cell being written. */
+        for (size_t i = 0; i < r->region_count; ++i) {
+            r->regions[i]->parts[SOLIDS].dirty = true;
+            r->regions[i]->parts[GLASS].dirty = true;
+        }
+        r->plot = plot;
+    }
     uint64_t topology = world_topology_revision(r->world);
     if (r->topology_revision != topology) {
         for (size_t i = 0; i < r->region_count; ++i) r->regions[i]->seen = false;
