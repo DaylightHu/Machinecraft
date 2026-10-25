@@ -14,8 +14,10 @@
 #endif
 
 enum {
-    SAVE_VERSION = 12,
-    SAVE_HEADER_SIZE = 80,
+    SAVE_VERSION = 13,
+    SAVE_HEADER_SIZE = 81,
+    SAVE_PREVIOUS_VERSION = 12,
+    SAVE_PREVIOUS_HEADER_SIZE = 80,
     SAVE_CRC_OFFSET = 36
 };
 static const unsigned char save_magic[8] = {'M','C','W','O','R','L','D',0};
@@ -197,6 +199,7 @@ static GameSessionResult write_save_contents(const World *world, FILE *file)
     bytes_u32(&b, (uint32_t)w->plot.min_z);
     bytes_u32(&b, (uint32_t)w->plot.max_x);
     bytes_u32(&b, (uint32_t)w->plot.max_z);
+    bytes_u8(&b, s->frozen ? 1u : 0u);
     GameSessionResult result = GAME_SESSION_OK;
     for (size_t i = 0; i < chunk_count; ++i) {
         ByteBuffer snapshot; bytes_init(&snapshot);
@@ -366,11 +369,13 @@ World *save_file_read(const char *path, GameSessionResult *result)
     if (b.size < 12 || memcmp(b.data, save_magic, 8)) goto fail;
     b.cursor = 8;
     unsigned version = bytes_read16(&b), header = bytes_read16(&b);
-    if (version != SAVE_VERSION) {
+    if (version != SAVE_VERSION && version != SAVE_PREVIOUS_VERSION) {
         *result = GAME_SESSION_UNSUPPORTED_SAVE;
         goto fail;
     }
-    if (header != SAVE_HEADER_SIZE || b.size < header) goto fail;
+    unsigned expected_header = version == SAVE_PREVIOUS_VERSION ?
+                               SAVE_PREVIOUS_HEADER_SIZE : SAVE_HEADER_SIZE;
+    if (header != expected_header || b.size < header) goto fail;
     uint32_t ground = bytes_read32(&b); uint64_t tick = bytes_read64(&b);
     uint32_t chunk_count = bytes_read32(&b), torch_count = bytes_read32(&b), event_count = bytes_read32(&b);
     uint32_t crc = bytes_read32(&b);
@@ -383,7 +388,9 @@ World *save_file_read(const char *path, GameSessionResult *result)
         read_signed32(&b), read_signed32(&b),
         read_signed32(&b), read_signed32(&b)
     };
-    if (!b.ok || dropper_random >> 48 || !world_plot_bounds_valid(plot)) goto fail;
+    uint8_t frozen = version == SAVE_PREVIOUS_VERSION ? 0 : bytes_read8(&b);
+    if (!b.ok || frozen > 1 || dropper_random >> 48 ||
+        !world_plot_bounds_valid(plot)) goto fail;
     memset(b.data + SAVE_CRC_OFFSET, 0, 4);
     if (crc32_bytes(b.data, b.size) != crc || ground > 65 ||
         (uint64_t)chunk_count * 20 + (uint64_t)torch_count * 86 +
@@ -396,6 +403,7 @@ World *save_file_read(const char *path, GameSessionResult *result)
     if (!w) { *result = GAME_SESSION_OUT_OF_MEMORY; goto fail; }
     w->plot = plot;
     w->tick = tick;
+    w->sim->frozen = frozen != 0;
     w->sim->containers.dropper_random = dropper_random;
     for (uint32_t i = 0; i < chunk_count; ++i) {
         uint32_t size = bytes_read32(&b);

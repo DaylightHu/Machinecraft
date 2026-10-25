@@ -62,7 +62,9 @@ struct Simulator {
     size_t torch_used, torch_capacity, free_torch;
     SimStats stats;
     RsResult error;
+    uint64_t manual_steps;
     bool handling_tick;
+    bool frozen;
     bool updates_suppressed;
 };
 bool sim_init_internal(World *);

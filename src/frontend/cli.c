@@ -266,7 +266,7 @@ static void print_help(FILE *output)
           "tick noupdate (toggle block updates; skipped updates are not replayed)\n"
           "stats\nsave\n"
           "title (save and return to world selection)\n"
-          "help\nquit\nBlocks:", output);
+          "help\nquit (save and exit)\nBlocks:", output);
     for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
         fprintf(output, " %s", block_name(id));
     }
@@ -410,16 +410,13 @@ static void print_stats(const World *world, FILE *output)
 }
 
 static RsResult execute_command(World *world, const Command *command,
-                                FILE *output, bool *running)
+                                FILE *output)
 {
     RsResult result;
 
     switch (command->kind) {
     case COMMAND_HELP:
         print_help(output);
-        return RS_OK;
-    case COMMAND_QUIT:
-        *running = false;
         return RS_OK;
     case COMMAND_GET:
         return print_block(world, command->position, output);
@@ -496,12 +493,10 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
     World *world = game_session_world(session);
 
     fputs("Redstone Sandbox (headless). Type help for commands.\n", output);
-    bool running = true;
     bool failed = false;
     bool return_to_title = false;
-    TickControl tick_control = {0};
 
-    while (running) {
+    for (;;) {
         if (fflush(output) == EOF) {
             return CLI_RUN_ERROR;
         }
@@ -522,15 +517,18 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
         TickCommand tick;
         if (tick_command_parse(line, &tick)) {
             char message[TICK_COMMAND_MESSAGE_CAPACITY];
-            RsResult result = tick_command_run(world, &tick_control, &tick,
+            RsResult result = tick_command_run(world, &tick,
                                                message, sizeof(message));
             if (result == RS_OK) {
-                fprintf(output, "%s\n", message);
-                while (tick_control.remaining && result == RS_OK)
-                    result = tick_control_step(world, &tick_control);
+                if (tick.kind != TICK_COMMAND_STEP)
+                    fprintf(output, "%s\n", message);
+                uint64_t before = world_tick(world);
+                while (sim_pending_steps(world) && result == RS_OK)
+                    result = game_session_step(session);
                 if (result != RS_OK) message[0] = '\0';
                 if (result == RS_OK && tick.kind == TICK_COMMAND_STEP)
-                    fprintf(output, "tick=%" PRIu64 " (frozen)\n", world_tick(world));
+                    fprintf(output, "Advanced %" PRIu64 " ticks (frozen)\n",
+                            world_tick(world) - before);
             }
             if (result != RS_OK) {
                 fprintf(errors, "error: %s\n",
@@ -570,7 +568,8 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
             continue;
         }
 
-        if (command.kind == COMMAND_SAVE || command.kind == COMMAND_TITLE) {
+        if (command.kind == COMMAND_SAVE || command.kind == COMMAND_TITLE ||
+            command.kind == COMMAND_QUIT) {
             GameSessionResult save_result = game_session_save(session);
             if (save_result == GAME_SESSION_OK) {
                 fputs("saved\n", output);
@@ -578,6 +577,7 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
                     return_to_title = true;
                     break;
                 }
+                if (command.kind == COMMAND_QUIT) break;
             } else {
                 fprintf(errors, "error: %s\n",
                         game_session_result_name(save_result));
@@ -586,7 +586,7 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
             continue;
         }
 
-        RsResult result = execute_command(world, &command, output, &running);
+        RsResult result = execute_command(world, &command, output);
         if (result != RS_OK) {
             fprintf(errors, "error: %s\n", rs_result_name(result));
             failed = true;

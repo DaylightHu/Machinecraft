@@ -52,21 +52,19 @@ bool tick_command_parse(const char *line, TickCommand *command)
     return true;
 }
 
-RsResult tick_command_run(World *world, TickControl *control,
-                          const TickCommand *command,
+RsResult tick_command_run(World *world, const TickCommand *command,
                           char *message, size_t capacity)
 {
-    if (!world || !control || !command || !message || !capacity)
+    if (!world || !command || !message || !capacity)
         return RS_INVALID_ARGUMENT;
     message[0] = '\0';
     RsResult result = sim_flush(world);
     if (result != RS_OK) return result;
     switch (command->kind) {
     case TICK_COMMAND_FREEZE:
-        control->frozen = !control->frozen;
-        control->remaining = 0;
-        snprintf(message, capacity, "%s at tick %" PRIu64,
-                 control->frozen ? "Frozen" : "Running", world_tick(world));
+        result = sim_set_frozen(world, !sim_is_frozen(world));
+        if (result != RS_OK) return result;
+        snprintf(message, capacity, "%s", sim_is_frozen(world) ? "Frozen" : "Running");
         return RS_OK;
     case TICK_COMMAND_NOUPDATE: {
         bool enabled = !sim_updates_enabled(world);
@@ -77,33 +75,18 @@ RsResult tick_command_run(World *world, TickControl *control,
         return result;
     }
     case TICK_COMMAND_STEP:
-        if (!control->frozen) {
+        if (!sim_is_frozen(world)) {
             snprintf(message, capacity, "Use /tick freeze before stepping");
             return RS_INVALID_ARGUMENT;
         }
-        if (!command->count || control->remaining > UINT64_MAX - world_tick(world) ||
-            command->count > UINT64_MAX - world_tick(world) - control->remaining) {
+        result = sim_request_steps(world, command->count);
+        if (result == RS_OK)
+            snprintf(message, capacity, "Queued %" PRIu32 " ticks; %" PRIu64 " pending (frozen)",
+                     command->count, sim_pending_steps(world));
+        else if (result == RS_INVALID_ARGUMENT)
             snprintf(message, capacity, "Tick count exceeds the remaining game time");
-            return RS_INVALID_ARGUMENT;
-        }
-        control->remaining += command->count;
-        snprintf(message, capacity, "Queued %" PRIu32 " ticks; %" PRIu64 " pending (frozen)",
-                 command->count, control->remaining);
-        return RS_OK;
+        return result;
     default:
         return RS_INVALID_ARGUMENT;
     }
-}
-
-RsResult tick_control_step(World *world, TickControl *control)
-{
-    if (!world || !control) return RS_INVALID_ARGUMENT;
-    RsResult status = sim_flush(world);
-    if (status != RS_OK) return status;
-    if (control->frozen && !control->remaining) return RS_UNCHANGED;
-    uint64_t before = world_tick(world);
-    RsResult result = sim_step(world);
-    /* A failed callback can still have advanced the clock. Never repeat it. */
-    if (control->remaining && world_tick(world) != before) --control->remaining;
-    return result;
 }

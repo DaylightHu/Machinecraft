@@ -321,6 +321,37 @@ RsResult sim_flush(World *w)
     if (!w) return RS_INVALID_ARGUMENT;
     return w->sim->error;
 }
+bool sim_is_frozen(const World *w)
+{
+    return w && w->sim->frozen;
+}
+RsResult sim_set_frozen(World *w, bool frozen)
+{
+    if (!w || w->sim->handling_tick || w->sim->block_entities.ticking)
+        return RS_INVALID_ARGUMENT;
+    if (w->sim->error != RS_OK) return w->sim->error;
+    if (w->sim->frozen == frozen) return RS_UNCHANGED;
+    w->sim->frozen = frozen;
+    w->sim->manual_steps = 0;
+    ++w->revision;
+    return RS_OK;
+}
+uint64_t sim_pending_steps(const World *w)
+{
+    return w ? w->sim->manual_steps : 0;
+}
+RsResult sim_request_steps(World *w, uint32_t count)
+{
+    if (!w || !count || w->sim->handling_tick || w->sim->block_entities.ticking)
+        return RS_INVALID_ARGUMENT;
+    Simulator *s = w->sim;
+    if (s->error != RS_OK) return s->error;
+    if (!s->frozen || s->manual_steps > UINT64_MAX - w->tick ||
+        count > UINT64_MAX - w->tick - s->manual_steps)
+        return RS_INVALID_ARGUMENT;
+    s->manual_steps += count;
+    return RS_OK;
+}
 bool sim_updates_enabled(const World *w)
 {
     return w && !w->sim->updates_suppressed;
@@ -338,9 +369,12 @@ RsResult sim_step(World *w)
 {
     RsResult result = sim_flush(w);
     if (result != RS_OK) return result;
-    if (w->tick == UINT64_MAX) return RS_INTERNAL_ERROR;
     Simulator *s = w->sim;
+    if (s->frozen && !s->manual_steps) return RS_UNCHANGED;
+    if (w->tick == UINT64_MAX) return RS_INTERNAL_ERROR;
     ++w->tick;
+    /* Consume the permit when time advances, even if a later callback fails. */
+    if (s->manual_steps) --s->manual_steps;
     s->handling_tick = true;
     if (!scheduler_begin_tick(&s->scheduler, w->tick)) {
         s->handling_tick = false;
