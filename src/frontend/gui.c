@@ -3,6 +3,7 @@
 #include "block_renderer.h"
 #include "block_shape.h"
 #include "command_completion.h"
+#include "flexible_placement.h"
 #include "hotbar.h"
 #include "inventory.h"
 #include "plot_command.h"
@@ -567,6 +568,12 @@ static Direction camera_direction(const Camera3D *camera)
     return camera_horizontal_direction(camera);
 }
 
+static bool flexible_placement_held(BlockId selected)
+{
+    return selected > BLOCK_AIR && selected < BLOCK_INTERNAL_FIRST &&
+           (IsKeyDown(KEY_G) || IsKeyDown(KEY_H));
+}
+
 static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                        Direction facing)
 {
@@ -579,40 +586,40 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
 
     World *world = game_session_world(app->session);
     RsResult result;
+    bool flexible = place && flexible_placement_held(selected);
     if (place) {
         if (!hit.has_face) {
             snprintf(app->message, sizeof(app->message),
                      "Cannot place while inside a block");
+            if (flexible) add_chat_message(app, app->message, true);
             return;
         }
-        BlockPos target = block_offset(hit.pos, hit.face);
+        PlacementTarget plan = flexible_placement_target(hit, selected, facing,
+            camera_direction(&app->camera), IsKeyDown(KEY_G), IsKeyDown(KEY_H));
+        if (!plan.valid) {
+            snprintf(app->message, sizeof(app->message),
+                     "%s does not support that direction", block_name(selected));
+            if (flexible) add_chat_message(app, app->message, true);
+            return;
+        }
+        BlockPos target = plan.pos;
         if (!world_in_bounds(world, target) ||
             world_get(world, target).id != BLOCK_AIR) {
             snprintf(app->message, sizeof(app->message),
                      "Target occupied or outside world");
+            if (flexible) add_chat_message(app, app->message, true);
             return;
         }
         if ((selected == BLOCK_REDSTONE_WIRE ||
              selected == BLOCK_REDSTONE_REPEATER ||
              selected == BLOCK_REDSTONE_COMPARATOR ||
              selected == BLOCK_POWERED_RAIL ||
-             selected == BLOCK_ACTIVATOR_RAIL) && hit.face != DIR_UP) {
+             selected == BLOCK_ACTIVATOR_RAIL) && hit.face != DIR_UP && !flexible) {
             snprintf(app->message, sizeof(app->message),
                      "%s must be placed on a top face", block_name(selected));
             return;
         }
-        bool directional = selected == BLOCK_REDSTONE_REPEATER ||
-                           selected == BLOCK_REDSTONE_COMPARATOR ||
-                           selected == BLOCK_POWERED_RAIL ||
-                           selected == BLOCK_ACTIVATOR_RAIL;
-        Direction placement = (selected == BLOCK_OBSERVER ||
-                               selected == BLOCK_BARREL ||
-                               selected == BLOCK_DROPPER ||
-                               block_is_piston_base(selected)) ?
-                              direction_opposite(
-                                  camera_direction(&app->camera)) :
-                              (directional ? facing : direction_opposite(hit.face));
-        result = world_place(world, target, selected, placement);
+        result = world_place(world, target, selected, plan.placement);
     } else {
         result = world_remove(world, hit.pos);
     }
@@ -622,6 +629,8 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
     }
     snprintf(app->message, sizeof(app->message), "%s: %s",
              place ? "Place" : "Remove", rs_result_name(result));
+    if (flexible && result != RS_OK && result != RS_UNCHANGED)
+        add_chat_message(app, app->message, true);
 }
 
 static BlockId pickable_block(BlockId id)
@@ -800,7 +809,9 @@ static VoxelHit update_world(GuiApp *app)
                      IsKeyDown(KEY_RIGHT_SHIFT);
         BlockId target = hit.hit ? (BlockId)world_get(world, hit.pos).id :
                                   BLOCK_AIR;
-        if (hit.hit && !shift &&
+        if (flexible_placement_held(selected)) {
+            apply_edit(app, hit, selected, true, facing);
+        } else if (hit.hit && !shift &&
             target == BLOCK_BARREL) {
             open_barrel(app, hit.pos);
         } else if (hit.hit && !shift &&
@@ -1146,6 +1157,92 @@ static void draw_block_outline(BlockState state, Vector3 center)
     }
 }
 
+static Vector3 placement_axis(Direction direction)
+{
+    BlockPos axis = block_offset((BlockPos){0}, direction);
+    return (Vector3){(float)axis.x, (float)axis.y, (float)axis.z};
+}
+
+static Vector3 placement_grid_point(VoxelHit hit, PlacementTarget plan,
+                                    float u, float v, float lift)
+{
+    Vector3 normal = placement_axis(hit.face);
+    Vector3 right = placement_axis(plan.right), up = placement_axis(plan.up);
+    float plane = hit.local.x*normal.x + hit.local.y*normal.y + hit.local.z*normal.z;
+    return (Vector3){
+        hit.pos.x + normal.x*(plane + lift) + right.x*u + up.x*v,
+        hit.pos.y + normal.y*(plane + lift) + right.y*u + up.y*v,
+        hit.pos.z + normal.z*(plane + lift) + right.z*u + up.z*v};
+}
+
+static void draw_placement_quad(VoxelHit hit, PlacementTarget plan,
+                                const float points[4][2], float lift, Color color)
+{
+    Vector3 vertices[4];
+    for (int i = 0; i < 4; ++i)
+        vertices[i] = placement_grid_point(hit, plan, points[i][0], points[i][1], lift);
+    DrawTriangle3D(vertices[0], vertices[1], vertices[2], color);
+    DrawTriangle3D(vertices[0], vertices[2], vertices[3], color);
+}
+
+static void draw_flexible_placement(GuiApp *app, VoxelHit hit)
+{
+    BlockId selected = hotbar_selected_block(&app->hotbar);
+    if (app->screen != GUI_WORLD || !hit.hit || !hit.has_face ||
+        !flexible_placement_held(selected)) return;
+    PlacementTarget plan = flexible_placement_target(hit, selected,
+        camera_horizontal_direction(&app->camera), camera_direction(&app->camera),
+        IsKeyDown(KEY_G), IsKeyDown(KEY_H));
+    if ((unsigned)plan.right >= DIR_COUNT) return;
+    World *world = game_session_world(app->session);
+    bool available = plan.valid && world_in_bounds(world, plan.pos) &&
+                     world_get(world, plan.pos).id == BLOCK_AIR;
+    Color color = available ? SKYBLUE : RED;
+    static const float outer[4][2] = {
+        {-0.5f,-0.5f}, {0.5f,-0.5f}, {0.5f,0.5f}, {-0.5f,0.5f}};
+    static const float regions[5][4][2] = {
+        {{-0.25f,-0.25f}, {0.25f,-0.25f}, {0.25f,0.25f}, {-0.25f,0.25f}},
+        {{-0.5f,-0.5f}, {-0.25f,-0.25f}, {-0.25f,0.25f}, {-0.5f,0.5f}},
+        {{0.25f,-0.25f}, {0.5f,-0.5f}, {0.5f,0.5f}, {0.25f,0.25f}},
+        {{-0.25f,0.25f}, {0.25f,0.25f}, {0.5f,0.5f}, {-0.5f,0.5f}},
+        {{-0.5f,-0.5f}, {0.5f,-0.5f}, {0.25f,-0.25f}, {-0.25f,-0.25f}}
+    };
+    draw_placement_quad(hit, plan, outer, 0.002f, (Color){255,255,255,40});
+    Color highlight = color;
+    highlight.a = 105;
+    draw_placement_quad(hit, plan, regions[plan.region], 0.004f, highlight);
+    for (int i = 0; i < 4; ++i) {
+        int next = (i + 1)%4;
+        Vector3 corner = placement_grid_point(hit, plan, outer[i][0], outer[i][1], 0.006f);
+        Vector3 inner = placement_grid_point(hit, plan,
+            regions[PLACEMENT_CENTER][i][0], regions[PLACEMENT_CENTER][i][1], 0.006f);
+        DrawLine3D(corner, placement_grid_point(hit, plan,
+            outer[next][0], outer[next][1], 0.006f), WHITE);
+        DrawLine3D(inner, placement_grid_point(hit, plan,
+            regions[PLACEMENT_CENTER][next][0], regions[PLACEMENT_CENTER][next][1], 0.006f), WHITE);
+        DrawLine3D(corner, inner, WHITE);
+    }
+    Vector3 center = {(float)plan.pos.x, (float)plan.pos.y, (float)plan.pos.z};
+    DrawCubeWires(center, 1.002f, 1.002f, 1.002f, color);
+    if (IsKeyDown(KEY_H) && plan.directional) {
+        Vector3 direction = placement_axis(plan.direction);
+        Direction wing_axis = plan.direction == plan.up ||
+            direction_opposite(plan.direction) == plan.up ? plan.right : plan.up;
+        Vector3 wing = placement_axis(wing_axis);
+        Vector3 start = {center.x - direction.x*0.3f, center.y - direction.y*0.3f,
+                         center.z - direction.z*0.3f};
+        Vector3 end = {center.x + direction.x*0.4f, center.y + direction.y*0.4f,
+                       center.z + direction.z*0.4f};
+        DrawLine3D(start, end, color);
+        for (int side = -1; side <= 1; side += 2) {
+            Vector3 tip = {end.x - direction.x*0.16f + wing.x*0.12f*side,
+                           end.y - direction.y*0.16f + wing.y*0.12f*side,
+                           end.z - direction.z*0.16f + wing.z*0.12f*side};
+            DrawLine3D(end, tip, color);
+        }
+    }
+}
+
 static void draw_world(GuiApp *app, VoxelHit hit)
 {
     ClearBackground((Color){184, 211, 214, 255});
@@ -1157,6 +1254,7 @@ static void draw_world(GuiApp *app, VoxelHit hit)
             draw_block_outline(world_get(game_session_world(app->session), hit.pos),
                                 center);
         }
+        draw_flexible_placement(app, hit);
     EndMode3D();
 
     if (app->screen == GUI_WORLD) {

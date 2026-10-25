@@ -40,7 +40,10 @@ static VoxelHit pick_shape(BlockPos pos, const BlockShape *shape,
         if (distance > nearest) continue;
         nearest = distance;
         result = (VoxelHit){.hit = true, .has_face = enter >= 0 && face != DIR_COUNT,
-                            .pos = pos, .face = face, .distance = (float)distance};
+            .pos = pos, .face = face, .distance = (float)distance,
+            .local = {(float)(origin[0] + distance*direction[0] - center[0]),
+                      (float)(origin[1] + distance*direction[1] - center[1]),
+                      (float)(origin[2] + distance*direction[2] - center[2])}};
     }
     return result;
 }
@@ -106,8 +109,10 @@ VoxelHit voxel_pick(const World *world, PickVec3 origin,
                     if (shape.count) {
                         VoxelHit interaction = pick_shape(pos, &shape, o, d, max_distance);
                         if (interaction.hit && interaction.has_face &&
-                            interaction.distance < hit.distance)
+                            interaction.distance < hit.distance) {
                             hit.face = interaction.face;
+                            hit.local = interaction.local;
+                        }
                     }
                     return hit;
                 }
