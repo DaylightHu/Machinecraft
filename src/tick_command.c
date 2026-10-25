@@ -35,16 +35,15 @@ bool tick_command_parse(const char *line, TickCommand *command)
         cursor += strcspn(cursor, " \t\r\n");
         if (*cursor) *cursor++ = '\0';
     }
-    if (count < 1 || count > 2) return false;
+    if (count < 2) return false;
     const char *name = tokens[0][0] == '/' ? tokens[0] + 1 : tokens[0];
     if (strcmp(name, "tick") != 0) return false;
-    if (count == 1) {
-        *command = (TickCommand){TICK_COMMAND_STEP, 1};
-    } else if (strcmp(tokens[1], "freeze") == 0) {
+    if (count == 2 && strcmp(tokens[1], "freeze") == 0) {
         command->kind = TICK_COMMAND_FREEZE;
-    } else if (strcmp(tokens[1], "noupdate") == 0) {
+    } else if (count == 2 && strcmp(tokens[1], "noupdate") == 0) {
         command->kind = TICK_COMMAND_NOUPDATE;
-    } else if (parse_count(tokens[1], &command->count)) {
+    } else if (count == 3 && strcmp(tokens[1], "step") == 0 &&
+               parse_count(tokens[2], &command->count)) {
         command->kind = TICK_COMMAND_STEP;
     } else {
         return false;

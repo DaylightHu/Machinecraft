@@ -45,7 +45,7 @@ The CLI accepts the same commands, with or without the leading `/`.
 | --- | --- |
 | `/plot expand DIRECTION [COUNT]` | Expand toward `east`, `west`, `south` or `north` in 512-block units. Optional `COUNT` expands multiple units at once; for example, `/plot expand east 2`. |
 | `/tick freeze` | Toggle automatic game ticks. Toggling also cancels any remaining manual steps. |
-| `/tick NUMBER` | While frozen, queue this many game ticks, then remain frozen. Accepts positive decimal integers through 4294967295. `/tick` alone requests one tick. |
+| `/tick step NUMBER` | While frozen, queue this many game ticks, then remain frozen. `NUMBER` is required and accepts positive decimal integers through 4294967295. |
 | `/tick noupdate` | Toggle block callbacks, neighbor notifications and shape updates. Enabling does not replay skipped updates. |
 
 A new world starts with a 512 × 512 plot. The plot can be expanded without creating boundaries inside the expanded world.

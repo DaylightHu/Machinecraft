@@ -625,7 +625,7 @@ static void update_command(GuiApp *app)
                      rs_result_name(result));
     } else {
         snprintf(app->message, sizeof(app->message),
-                 "Use /tick freeze, /tick COUNT, /tick noupdate, or /plot info|expand");
+                 "Use /tick freeze, /tick step NUMBER, /tick noupdate, or /plot info|expand");
     }
     app->screen = GUI_WORLD;
     capture_mouse(app);

@@ -240,7 +240,7 @@ static void print_help(FILE *output)
           "dropper-seed SEED\n"
           "plot info\nplot expand east|west|south|north [COUNT]\n"
           "tick freeze (toggle; also cancels pending manual steps)\n"
-          "tick [COUNT] (positive integer; requires freeze; default 1)\n"
+          "tick step NUMBER (positive integer; requires freeze)\n"
           "tick noupdate (toggle block updates; skipped updates are not replayed)\n"
           "stats\nsave\n"
           "title (save and return to world selection)\n"
