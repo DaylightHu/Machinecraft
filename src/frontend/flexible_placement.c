@@ -52,6 +52,9 @@ PlacementTarget flexible_placement_target(VoxelHit hit, BlockId block,
     }
     target.pos = block_offset(hit.pos, hit.face);
     if (offset) target.pos = block_offset(target.pos, target.direction);
+    /* Center rotation points inward; its placement offset still points out. */
+    if (target.region == PLACEMENT_CENTER)
+        target.direction = direction_opposite(hit.face);
 
     bool horizontal_block = block == BLOCK_REDSTONE_REPEATER ||
         block == BLOCK_REDSTONE_COMPARATOR || block == BLOCK_POWERED_RAIL ||

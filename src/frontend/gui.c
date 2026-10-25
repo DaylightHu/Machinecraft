@@ -1197,7 +1197,7 @@ static void draw_flexible_placement(GuiApp *app, VoxelHit hit)
     World *world = game_session_world(app->session);
     bool available = plan.valid && world_in_bounds(world, plan.pos) &&
                      world_get(world, plan.pos).id == BLOCK_AIR;
-    Color color = available ? SKYBLUE : RED;
+    Color color = available ? (Color){72, 48, 184, 255} : RED;
     static const float outer[4][2] = {
         {-0.5f,-0.5f}, {0.5f,-0.5f}, {0.5f,0.5f}, {-0.5f,0.5f}};
     static const float regions[5][4][2] = {
@@ -1207,9 +1207,11 @@ static void draw_flexible_placement(GuiApp *app, VoxelHit hit)
         {{-0.25f,0.25f}, {0.25f,0.25f}, {0.5f,0.5f}, {-0.5f,0.5f}},
         {{-0.5f,-0.5f}, {0.5f,-0.5f}, {0.25f,-0.25f}, {-0.25f,-0.25f}}
     };
-    draw_placement_quad(hit, plan, outer, 0.002f, (Color){255,255,255,40});
+    Color background = color;
+    background.a = 40;
+    draw_placement_quad(hit, plan, outer, 0.002f, background);
     Color highlight = color;
-    highlight.a = 105;
+    highlight.a = 160;
     draw_placement_quad(hit, plan, regions[plan.region], 0.004f, highlight);
     for (int i = 0; i < 4; ++i) {
         int next = (i + 1)%4;
@@ -1217,10 +1219,10 @@ static void draw_flexible_placement(GuiApp *app, VoxelHit hit)
         Vector3 inner = placement_grid_point(hit, plan,
             regions[PLACEMENT_CENTER][i][0], regions[PLACEMENT_CENTER][i][1], 0.006f);
         DrawLine3D(corner, placement_grid_point(hit, plan,
-            outer[next][0], outer[next][1], 0.006f), WHITE);
+            outer[next][0], outer[next][1], 0.006f), color);
         DrawLine3D(inner, placement_grid_point(hit, plan,
-            regions[PLACEMENT_CENTER][next][0], regions[PLACEMENT_CENTER][next][1], 0.006f), WHITE);
-        DrawLine3D(corner, inner, WHITE);
+            regions[PLACEMENT_CENTER][next][0], regions[PLACEMENT_CENTER][next][1], 0.006f), color);
+        DrawLine3D(corner, inner, color);
     }
     Vector3 center = {(float)plan.pos.x, (float)plan.pos.y, (float)plan.pos.z};
     DrawCubeWires(center, 1.002f, 1.002f, 1.002f, color);
