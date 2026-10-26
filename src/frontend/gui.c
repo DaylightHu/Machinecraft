@@ -105,7 +105,7 @@ typedef struct {
     RenderTexture2D gui_target;
     bool pane_prefix, pane_help;
     bool window_gui_visible, window_cli_visible, window_resize_pending;
-    int window_width, window_height;
+    int window_width, window_height, window_cli_width;
     char pane_message[MESSAGE_CAPACITY];
 } GuiApp;
 
@@ -1738,6 +1738,7 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
     app->window_gui_visible = true;
     app->window_width = GetScreenWidth();
     app->window_height = GetScreenHeight();
+    app->window_cli_width = WORKSPACE_CLI_WIDTH;
     refresh_saves(app);
     return true;
 }
@@ -1779,8 +1780,8 @@ static void workspace_geometry(const GuiApp *app, WorkspaceGeometry *geometry)
     workspace_layout_geometry(&app->workspace, GetScreenWidth(), workspace_height(app), geometry);
 }
 
-/* Add/remove the native window space belonging to a frontend. The GUI keeps
- * its width; resizing a split window changes the CLI area on its right. */
+/* Remember the split CLI width separately from its standalone window size.
+ * Either frontend alone gets at least the preferred GUI width. */
 static void sync_workspace_window(GuiApp *app)
 {
     bool gui = app->workspace.gui_visible, cli = app->workspace.root >= 0;
@@ -1791,17 +1792,18 @@ static void sync_workspace_window(GuiApp *app)
         int width = use_requested_size ? app->window_width : GetScreenWidth();
         int cli_width = WORKSPACE_CLI_WIDTH;
         if (app->window_cli_visible) {
-            cli_width = width;
+            cli_width = app->window_cli_width;
             if (app->window_gui_visible) {
                 int gui_width = app->workspace.gui_width;
                 int available = width - WORKSPACE_DIVIDER - WORKSPACE_MIN_WIDTH;
                 if (gui_width > available) gui_width = available;
-                cli_width -= gui_width + WORKSPACE_DIVIDER;
+                cli_width = width - gui_width - WORKSPACE_DIVIDER;
             }
             if (cli_width < WORKSPACE_MIN_WIDTH) cli_width = WORKSPACE_MIN_WIDTH;
         }
-        int target = gui ? app->workspace.gui_width : 0;
-        if (cli) target += cli_width + (gui ? WORKSPACE_DIVIDER : 0);
+        int target = app->workspace.gui_width;
+        if (gui && cli) target += cli_width + WORKSPACE_DIVIDER;
+        else if (cli && cli_width > target) target = cli_width;
         int minimum_width = gui ? 1000 : WORKSPACE_MIN_WIDTH;
         if (gui && cli)
             minimum_width = app->workspace.gui_width + WORKSPACE_DIVIDER + WORKSPACE_MIN_WIDTH;
@@ -1815,6 +1817,7 @@ static void sync_workspace_window(GuiApp *app)
         app->window_cli_visible = cli;
         app->window_width = target;
         app->window_height = height;
+        app->window_cli_width = cli_width;
         app->window_resize_pending = true;
         if (IsWindowMaximized()) RestoreWindow();
         SetWindowMinSize(minimum_width, minimum_height);

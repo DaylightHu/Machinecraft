@@ -225,7 +225,7 @@ void workspace_console_draw(WorkspaceConsole *console, Rectangle box, int pane,
     int cell_width = ui_text_width("M", FONT_SIZE);
     if (cell_width < 1) cell_width = 1;
     Color accent = focused ? (Color){172, 143, 255, 255} : (Color){79, 89, 99, 255};
-    DrawRectangleRec(box, (Color){17, 22, 29, 255});
+    DrawRectangleRec(box, (Color){30, 30, 30, 255});
     BeginScissorMode((int)box.x, (int)box.y, (int)box.width, (int)box.height);
     DrawRectangle((int)box.x, (int)box.y, (int)box.width, HEADER_HEIGHT, (Color){34, 42, 53, 255});
     ui_text_draw(TextFormat("%d: mc-cli%s%s", pane, zoomed ? " [zoom]" : "", focused ? " *" : ""),
