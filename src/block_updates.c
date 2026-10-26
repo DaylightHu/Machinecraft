@@ -238,6 +238,25 @@ void sim_update_neighbor_shapes(World *w, BlockPos pos, unsigned flags, unsigned
             direction_opposite(shapes[i]), pos, flags, limit);
 }
 
+static void notify_state_change(World *w, StateChange c)
+{
+    if (!block_states_equal(world_get(w, c.pos), c.current) ||
+        w->sim->error != RS_OK) return;
+    if (c.flags & UPDATE_NEIGHBORS) {
+        sim_update_neighbors_at(w, c.pos, DIR_COUNT);
+        if (block_definition((BlockId)c.current.id)->analog_output)
+            sim_notify_analog(w, c.pos);
+    }
+    if (!(c.flags & UPDATE_KNOWN_SHAPE) && c.remaining_shapes) {
+        unsigned flags = c.flags & ~33u, limit = c.remaining_shapes - 1;
+        if (c.previous.id == BLOCK_REDSTONE_WIRE)
+            wire_indirect_shapes(w, c.pos, c.previous, flags, limit);
+        sim_update_neighbor_shapes(w, c.pos, flags, limit);
+        if (c.current.id == BLOCK_REDSTONE_WIRE)
+            wire_indirect_shapes(w, c.pos, c.current, flags, limit);
+    }
+}
+
 void sim_state_changed(World *w, StateChange c)
 {
     bool changed_type = scheduler_block_type(c.previous) != scheduler_block_type(c.current);
@@ -268,19 +287,29 @@ void sim_state_changed(World *w, StateChange c)
             !container_attach(w, c.pos, state))
             w->sim->error = RS_OUT_OF_MEMORY;
     }
-    if (!block_states_equal(world_get(w, c.pos), c.current) ||
-        w->sim->error != RS_OK) return;
-    if (c.flags & UPDATE_NEIGHBORS) {
-        sim_update_neighbors_at(w, c.pos, DIR_COUNT);
+    notify_state_change(w, c);
+}
+
+void sim_edit_state_changed(World *w, StateChange c)
+{
+    if (w->sim->updates_suppressed || w->sim->error != RS_OK) return;
+    bool changed_type = scheduler_block_type(c.previous) != scheduler_block_type(c.current);
+    removed(w, c, changed_type);
+    if (world_get(w, c.pos).id != c.current.id || w->sim->error != RS_OK) return;
+    placed(w, c, true);
+    sim_neighbor_changed(w, c.pos);
+    BlockState state = world_get(w, c.pos);
+    if (state.id == BLOCK_NOTE_BLOCK || block_is_piston_head((BlockId)state.id)) {
+        Direction support = state.id == BLOCK_NOTE_BLOCK ? DIR_DOWN :
+            direction_opposite((Direction)state.data.piston.facing);
+        sim_update_shape_at(w, c.pos, support, block_offset(c.pos, support),
+                            c.flags, c.remaining_shapes);
+    }
+    c.current = world_get(w, c.pos);
+    if (block_states_equal(c.previous, c.current)) {
         if (block_definition((BlockId)c.current.id)->analog_output)
             sim_notify_analog(w, c.pos);
+        return;
     }
-    if (!(c.flags & UPDATE_KNOWN_SHAPE) && c.remaining_shapes) {
-        unsigned flags = c.flags & ~33u, limit = c.remaining_shapes - 1;
-        if (c.previous.id == BLOCK_REDSTONE_WIRE)
-            wire_indirect_shapes(w, c.pos, c.previous, flags, limit);
-        sim_update_neighbor_shapes(w, c.pos, flags, limit);
-        if (c.current.id == BLOCK_REDSTONE_WIRE)
-            wire_indirect_shapes(w, c.pos, c.current, flags, limit);
-    }
+    notify_state_change(w, c);
 }

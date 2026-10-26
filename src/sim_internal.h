@@ -72,6 +72,8 @@ void sim_destroy_internal(World *);
 RsResult sim_prepare_torch(World *);
 bool sim_attach_torch(World *, BlockPos);
 void sim_forget_cell(World *, BlockPos);
+/* Cancel destination work and release inventories once for a batch edit. */
+void sim_forget_edit_cells(World *, const PosMap *positions);
 void sim_forget_outside_plot(World *);
 void sim_notify_change(World *, BlockPos);
 void sim_notify_analog(World *, BlockPos);
@@ -84,6 +86,8 @@ void sim_update_shape_at(World *, BlockPos, Direction toward_source,
 void sim_update_neighbor_shapes(World *, BlockPos, unsigned flags, unsigned remaining_shapes);
 BlockState sim_update_from_neighbor_shapes(World *, BlockPos, BlockState);
 void sim_state_changed(World *, StateChange);
+/* Runtime resources have already been installed for every edited cell. */
+void sim_edit_state_changed(World *, StateChange);
 bool block_states_equal(BlockState, BlockState);
 void sim_mark_wire(World *, BlockPos);
 void sim_mark_input(World *, BlockPos);

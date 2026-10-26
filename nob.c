@@ -38,6 +38,8 @@ static const char *common_sources[] = {
     "src/line_input.c",
     "src/command_completion.c",
     "src/plot_command.c",
+    "src/region_edit.c",
+    "src/edit_command.c",
     "src/tick_command.c",
     "src/item.c",
     "src/container.c",

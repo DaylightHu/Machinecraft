@@ -1,6 +1,7 @@
 #include "cli.h"
 #include "plot_command.h"
 #include "tick_command.h"
+#include "edit_command.h"
 #include "line_input.h"
 #include "command_completion.h"
 #include "runtime_clock.h"
@@ -244,6 +245,10 @@ static void print_help(FILE *output)
           "tick freeze (toggle; also cancels pending manual steps)\n"
           "tick step NUMBER (positive integer; requires freeze)\n"
           "tick noupdate (toggle block updates; skipped updates are not replayed)\n"
+          "pos1 X Y Z / pos2 X Y Z (select inclusive corners)\n"
+          "copy [X Y Z] (default anchor: selection minimum)\n"
+          "paste [-a] X Y Z (paste at anchor; -a skips air)\n"
+          "stack [COUNT] DIRECTION / move [DISTANCE] DIRECTION\n"
           "stats\nsave\n"
           "title (save and return to world selection)\n"
           "help\nquit (save and exit)\nBlocks:", output);
@@ -538,6 +543,19 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
                                                    message, sizeof(message));
             if (result == RS_OK) fprintf(output, "%s\n", message);
             else { fprintf(errors, "error: %s\n", message[0] ? message : rs_result_name(result)); failed = true; }
+            if (result == RS_INTERNAL_ERROR || result == RS_OUT_OF_MEMORY) break;
+            continue;
+        }
+        EditCommand edit;
+        if (edit_command_parse(line, &edit)) {
+            char message[192];
+            RsResult result = edit_command_run(session, &edit,
+                (EditCommandContext){.facing=DIR_COUNT}, message, sizeof(message));
+            if (result == RS_OK) fprintf(output, "%s\n", message);
+            else {
+                fprintf(errors, "error: %s\n", message[0] ? message : rs_result_name(result));
+                failed = true;
+            }
             if (result == RS_INTERNAL_ERROR || result == RS_OUT_OF_MEMORY) break;
             continue;
         }
