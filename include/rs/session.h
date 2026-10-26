@@ -26,6 +26,7 @@ typedef enum {
 } GameSessionResult;
 
 typedef struct GameSession GameSession;
+typedef struct RegionEditor RegionEditor;
 
 typedef struct {
     size_t count;
@@ -41,6 +42,7 @@ GameSession *game_session_load(const char *save_path,
 void game_session_destroy(GameSession *session);
 
 World *game_session_world(GameSession *session);
+RegionEditor *game_session_editor(GameSession *session);
 const World *game_session_world_const(const GameSession *session);
 WorldConfig game_session_config(const GameSession *session);
 const char *game_session_path(const GameSession *session);
