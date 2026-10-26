@@ -37,6 +37,7 @@ static const char *common_sources[] = {
     "src/runtime_clock.c",
     "src/line_input.c",
     "src/command_completion.c",
+    "src/console_command.c",
     "src/plot_command.c",
     "src/region_edit.c",
     "src/edit_command.c",
@@ -74,6 +75,9 @@ static const char *cli_sources[] = {
 static const char *gui_sources[] = {
     "src/gui_main.c",
     "src/frontend/gui.c",
+    "src/frontend/gui_view.c",
+    "src/frontend/workspace_layout.c",
+    "src/frontend/workspace_console.c",
     "src/frontend/block_renderer.c",
     "src/frontend/world_renderer.c",
     "src/frontend/voxel_pick.c",

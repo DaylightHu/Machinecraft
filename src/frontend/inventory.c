@@ -1,3 +1,4 @@
+#include "gui_view.h"
 #include "inventory.h"
 
 #include <stddef.h>
@@ -63,8 +64,8 @@ static InventoryLayout inventory_layout(void)
         INVENTORY_FOOTER_HEIGHT + INVENTORY_PANEL_PADDING;
     InventoryLayout layout = {
         {
-            (GetScreenWidth() - panel_width)*0.5f,
-            (GetScreenHeight() - 80 - panel_height)*0.5f,
+            (gui_view_width() - panel_width)*0.5f,
+            (gui_view_height() - 80 - panel_height)*0.5f,
             (float)panel_width,
             (float)panel_height
         },
@@ -235,7 +236,7 @@ InventorySlot inventory_update(const Inventory *inventory)
         return (InventorySlot){0};
 
     InventoryLayout layout = inventory_layout();
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = gui_view_mouse();
     for (int index = 0; index < inventory->count; ++index) {
         Rectangle slot = inventory_slot_rectangle(layout, index);
         if (!CheckCollisionPointRec(mouse, slot)) continue;
@@ -255,10 +256,10 @@ void inventory_draw(const Inventory *inventory, InventorySlot selected)
     if (!inventory) return;
 
     InventoryLayout layout = inventory_layout();
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = gui_view_mouse();
     InventorySlot hovered = {0};
 
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+    DrawRectangle(0, 0, gui_view_width(), gui_view_height(),
                   (Color){10, 18, 20, 155});
     DrawRectangleRec(layout.panel, (Color){226, 218, 196, 250});
     DrawRectangleLinesEx(layout.panel, 3.0f, (Color){34, 63, 66, 255});
