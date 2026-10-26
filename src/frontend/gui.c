@@ -1,3 +1,4 @@
+#include "gui_view.h"
 #include "gui.h"
 
 #include "block_renderer.h"
@@ -11,6 +12,10 @@
 #include "tick_command.h"
 #include "voxel_pick.h"
 #include "world_renderer.h"
+#include "workspace_layout.h"
+#include "workspace_console.h"
+#include "world_command.h"
+#include "world_session_manager.h"
 #include "raylib.h"
 #include "rs/session.h"
 
@@ -22,15 +27,17 @@
 #include <string.h>
 
 enum {
-    SCREEN_WIDTH = 1000,
-    SCREEN_HEIGHT = 650,
+    SCREEN_WIDTH = 1280,
+    SCREEN_HEIGHT = 800,
+    WORKSPACE_STATUS_HEIGHT = 26,
+    WORKSPACE_HEADER_HEIGHT = 25,
     MESSAGE_CAPACITY = 192,
     COMMAND_CAPACITY = 128,
     CHAT_HISTORY_CAPACITY = 100,
     CHAT_TEXT_CAPACITY = MESSAGE_CAPACITY + 8,
     CHAT_FONT_SIZE = 18,
     CHAT_LINE_HEIGHT = 22,
-    VISIBLE_SAVE_ROWS = 7
+    MAX_VISIBLE_SAVE_ROWS = 7
 };
 
 static const char save_directory[] = "saves";
@@ -50,7 +57,8 @@ typedef enum {
 typedef enum {
     AFTER_SAVE_NONE,
     AFTER_SAVE_TITLE,
-    AFTER_SAVE_EXIT
+    AFTER_SAVE_GUI_DETACH,
+    AFTER_SAVE_HOST_EXIT
 } AfterSave;
 
 typedef struct {
@@ -88,6 +96,14 @@ typedef struct {
     bool close_latched;
     bool running;
     bool fatal_error;
+    WorkspaceLayout workspace;
+    WorkspaceConsole *consoles[WORKSPACE_CLI_LIMIT];
+    GameSession *cli_sessions[WORKSPACE_CLI_LIMIT];
+    /* Borrowed from the host; frontends may select sessions but do not own them. */
+    WorldSessionManager *world_sessions;
+    RenderTexture2D gui_target;
+    bool pane_prefix, pane_help;
+    char pane_message[MESSAGE_CAPACITY];
 } GuiApp;
 
 static void add_chat_message(GuiApp *app, const char *text, bool error)
@@ -123,7 +139,7 @@ enum {
 
 static bool point_in(Rectangle rectangle)
 {
-    return CheckCollisionPointRec(GetMousePosition(), rectangle);
+    return CheckCollisionPointRec(gui_view_mouse(), rectangle);
 }
 
 static bool button(Rectangle rectangle, const char *label, bool enabled)
@@ -148,7 +164,7 @@ static bool button(Rectangle rectangle, const char *label, bool enabled)
 
 static void draw_centered(const char *text, int y, int font_size, Color color)
 {
-    DrawText(text, (GetScreenWidth() - MeasureText(text, font_size))/2,
+    DrawText(text, (gui_view_width() - MeasureText(text, font_size))/2,
              y, font_size, color);
 }
 
@@ -167,6 +183,56 @@ static bool save_name_exists(const GuiApp *app, const char *name)
 {
     for (size_t index = 0; index < app->saves.count; ++index)
         if (names_equal(app->saves.names[index], name)) return true;
+    return false;
+}
+
+static GameSession *managed_world_find(const GuiApp *app, const char *name)
+{
+    return world_session_manager_find(app->world_sessions, name);
+}
+
+static size_t managed_world_count(const GuiApp *app)
+{
+    return world_session_manager_count(app->world_sessions);
+}
+
+static const char *managed_world_name(const GuiApp *app,
+                                      const GameSession *session)
+{
+    const char *name = world_session_manager_name(app->world_sessions, session);
+    return name ? name : "world";
+}
+
+static bool managed_world_add(GuiApp *app, const char *name, GameSession *session)
+{
+    return world_session_manager_add(app->world_sessions, name, session);
+}
+
+static bool any_world_dirty(const GuiApp *app)
+{
+    return world_session_manager_any_dirty(app->world_sessions);
+}
+
+static GameSessionResult save_all_worlds(GuiApp *app, GameSession **failed_session)
+{
+    return world_session_manager_save_dirty(app->world_sessions, failed_session);
+}
+
+static GameSessionResult list_saved_worlds(GameSaveList *saves)
+{
+    GameSessionResult result = game_session_list_saves(save_directory, saves);
+    return result;
+}
+
+static bool saved_world_exists(const char *name, GameSessionResult *list_result)
+{
+    GameSaveList saves;
+    GameSessionResult result = list_saved_worlds(&saves);
+    if (list_result) *list_result = result;
+    if (result != GAME_SESSION_OK && result != GAME_SESSION_TOO_MANY_SAVES)
+        return false;
+    for (size_t index = 0; index < saves.count; ++index)
+        if (names_equal(saves.names[index], name)) return true;
     return false;
 }
 
@@ -218,8 +284,8 @@ static ContainerLayout container_layout(BlockId id)
     int panel_height = header + grid_height + (barrel ? 42 : 0) + 18;
     ContainerLayout layout = {0};
     layout.panel = (Rectangle){
-        (GetScreenWidth() - panel_width)*0.5f,
-        (GetScreenHeight() - 80 - panel_height)*0.5f,
+        (gui_view_width() - panel_width)*0.5f,
+        (gui_view_height() - 80 - panel_height)*0.5f,
         (float)panel_width, (float)panel_height
     };
     layout.grid_x = layout.panel.x + (panel_width - grid_width)*0.5f;
@@ -276,9 +342,10 @@ static void close_barrel(GuiApp *app)
 static void close_world(GuiApp *app)
 {
     release_mouse(app);
+    app->pane_prefix = app->pane_help = false;
+    gui_view_reset();
     world_renderer_destroy(app->world_renderer);
     app->world_renderer = NULL;
-    game_session_destroy(app->session);
     app->session = NULL;
     app->chat_count = 0;
     app->chat_scroll = 0;
@@ -298,7 +365,7 @@ static float camera_axis_within(float value, int minimum, int maximum)
     return value;
 }
 
-static bool open_world(GuiApp *app, GameSession *session)
+static bool open_world(GuiApp *app, const char *name, GameSession *session)
 {
     World *world = game_session_world(session);
     WorldPlotBounds bounds = world_plot_bounds(world);
@@ -315,6 +382,12 @@ static bool open_world(GuiApp *app, GameSession *session)
         world_renderer_destroy(renderer);
         snprintf(app->message, sizeof(app->message),
                  "Cannot create the world render cache");
+        return false;
+    }
+    if (!managed_world_add(app, name, session)) {
+        world_renderer_destroy(renderer);
+        snprintf(app->message, sizeof(app->message),
+                 "Cannot register world session (limit reached or duplicate name)");
         return false;
     }
 
@@ -341,27 +414,45 @@ static void return_to_title(GuiApp *app)
     refresh_saves(app);
 }
 
+static bool close_pane(GuiApp *app);
+
+static void detach_gui_frontend(GuiApp *app)
+{
+    close_world(app);
+    app->screen = GUI_TITLE;
+    workspace_layout_show_gui(&app->workspace);
+    if (!close_pane(app))
+        snprintf(app->pane_message, sizeof(app->pane_message),
+                 "GUI remains open because no CLI pane could be created");
+}
+
 static void perform_after_save(GuiApp *app, AfterSave action)
 {
     if (action == AFTER_SAVE_TITLE) {
         return_to_title(app);
-    } else if (action == AFTER_SAVE_EXIT) {
+    } else if (action == AFTER_SAVE_GUI_DETACH) {
+        detach_gui_frontend(app);
+    } else if (action == AFTER_SAVE_HOST_EXIT) {
         app->running = false;
     }
 }
 
 static void request_save_action(GuiApp *app, AfterSave action)
 {
-    if (!app->session) {
-        perform_after_save(app, action);
-        return;
+    GameSessionResult result = GAME_SESSION_OK;
+    if (action == AFTER_SAVE_TITLE || action == AFTER_SAVE_GUI_DETACH) {
+        if (app->session) {
+            result = game_session_save(app->session);
+        }
+    } else {
+        result = save_all_worlds(app, NULL);
     }
-    GameSessionResult result = game_session_save(app->session);
     if (result == GAME_SESSION_OK) {
         perform_after_save(app, action);
         return;
     }
     release_mouse(app);
+    workspace_layout_show_gui(&app->workspace);
     app->screen_before_error = app->screen;
     app->screen = GUI_SAVE_ERROR;
     app->after_save = action;
@@ -376,9 +467,20 @@ static void create_world(GuiApp *app)
                  "Use letters, numbers, spaces, '-' or '_'");
         return;
     }
-    if (save_name_exists(app, app->world_name)) {
+    GameSessionResult list_result;
+    bool exists = saved_world_exists(app->world_name, &list_result);
+    if (managed_world_find(app, app->world_name) || exists) {
         snprintf(app->message, sizeof(app->message),
                  "A world with that name already exists");
+        return;
+    }
+    if (list_result != GAME_SESSION_OK) {
+        snprintf(app->message, sizeof(app->message), "Cannot list worlds: %s",
+                 game_session_result_name(list_result));
+        return;
+    }
+    if (managed_world_count(app) >= GAME_SESSION_MAX_SAVES) {
+        snprintf(app->message, sizeof(app->message), "Too many open world sessions");
         return;
     }
     char path[GAME_SESSION_PATH_CAPACITY];
@@ -403,28 +505,33 @@ static void create_world(GuiApp *app)
                  game_session_result_name(result));
         return;
     }
-    if (!open_world(app, session)) game_session_destroy(session);
+    if (!open_world(app, app->world_name, session)) game_session_destroy(session);
 }
 
 static void load_selected_world(GuiApp *app)
 {
     if (app->selected_save < 0 ||
         (size_t)app->selected_save >= app->saves.count) return;
+    const char *name = app->saves.names[app->selected_save];
+    GameSession *session = managed_world_find(app, name);
+    if (session) {
+        (void)open_world(app, name, session);
+        return;
+    }
     char path[GAME_SESSION_PATH_CAPACITY];
-    GameSessionResult result = game_session_make_path(
-        save_directory, app->saves.names[app->selected_save], path);
+    GameSessionResult result = game_session_make_path(save_directory, name, path);
     if (result != GAME_SESSION_OK) {
         snprintf(app->message, sizeof(app->message), "Cannot open path: %s",
                  game_session_result_name(result));
         return;
     }
-    GameSession *session = game_session_load(path, &result);
+    session = game_session_load(path, &result);
     if (!session) {
         snprintf(app->message, sizeof(app->message), "Cannot load world: %s",
                  game_session_result_name(result));
         return;
     }
-    if (!open_world(app, session)) game_session_destroy(session);
+    if (!open_world(app, name, session)) game_session_destroy(session);
 }
 
 static void update_name_input(GuiApp *app)
@@ -444,13 +551,23 @@ static void update_name_input(GuiApp *app)
     }
 }
 
+static int visible_save_rows(void)
+{
+    int available = gui_view_height() - 284 - 105;
+    int rows = (available - 16)/32;
+    if (rows < 1) rows = 1;
+    if (rows > MAX_VISIBLE_SAVE_ROWS) rows = MAX_VISIBLE_SAVE_ROWS;
+    return rows;
+}
+
 static void keep_selection_visible(GuiApp *app)
 {
+    int visible_rows = visible_save_rows();
     if (app->selected_save < app->save_scroll)
         app->save_scroll = app->selected_save;
-    if (app->selected_save >= app->save_scroll + VISIBLE_SAVE_ROWS)
-        app->save_scroll = app->selected_save - VISIBLE_SAVE_ROWS + 1;
-    int maximum = (int)app->saves.count - VISIBLE_SAVE_ROWS;
+    if (app->selected_save >= app->save_scroll + visible_rows)
+        app->save_scroll = app->selected_save - visible_rows + 1;
+    int maximum = (int)app->saves.count - visible_rows;
     if (maximum < 0) maximum = 0;
     if (app->save_scroll > maximum) app->save_scroll = maximum;
     if (app->save_scroll < 0) app->save_scroll = 0;
@@ -480,14 +597,15 @@ static void draw_title(GuiApp *app)
 {
     const Color paper = {226, 218, 196, 255};
     const Color ink = {26, 50, 55, 255};
+    bool active = app->workspace.focus == 0;
     ClearBackground(paper);
     draw_centered("MACHINECRAFT", 48, 42, ink);
     draw_centered("A deterministic redstone workshop", 96, 20,
                   (Color){83, 99, 94, 255});
-    DrawLine(120, 132, GetScreenWidth() - 120, 132,
+    DrawLine(120, 132, gui_view_width() - 120, 132,
              (Color){126, 119, 100, 255});
 
-    int center = GetScreenWidth()/2;
+    int center = gui_view_width()/2;
     Rectangle input = {(float)center - 310, 180, 380, 44};
     DrawText("CREATE WORLD", (int)input.x, 150, 18, ink);
     DrawRectangleRec(input, (Color){247, 243, 230, 255});
@@ -497,46 +615,50 @@ static void draw_title(GuiApp *app)
     else
         DrawText("World name", (int)input.x + 12, (int)input.y + 11, 20,
                  (Color){137, 137, 125, 255});
-    if (((int)(GetTime()*2.0)) % 2 == 0) {
+    if (app->workspace.focus == 0 && ((int)(GetTime()*2.0)) % 2 == 0) {
         int cursor_x = (int)input.x + 12 + MeasureText(app->world_name, 20);
         DrawLine(cursor_x, (int)input.y + 9, cursor_x, (int)input.y + 34, ink);
     }
 
     Rectangle create = {(float)center + 85, 180, 225, 44};
-    bool can_create = game_session_valid_name(app->world_name) &&
+    bool can_create = active && game_session_valid_name(app->world_name) &&
                       !save_name_exists(app, app->world_name);
     if (button(create, "Create", can_create)) create_world(app);
 
     DrawText("LOAD WORLD", center - 310, 257, 18, ink);
-    Rectangle list = {(float)center - 310, 284, 620, 245};
+    int visible_rows = visible_save_rows();
+    Rectangle list = {(float)center - 310, 284, 620,
+                      (float)(visible_rows*32 + 16)};
     DrawRectangleRec(list, (Color){238, 232, 214, 255});
     DrawRectangleLinesEx(list, 2.0f, (Color){126, 119, 100, 255});
     if (!app->saves.count) {
         DrawText("No saved worlds yet", (int)list.x + 18,
                  (int)list.y + 18, 20, (Color){117, 116, 103, 255});
     }
-    for (int row = 0; row < VISIBLE_SAVE_ROWS; ++row) {
+    for (int row = 0; row < visible_rows; ++row) {
         int index = app->save_scroll + row;
         if ((size_t)index >= app->saves.count) break;
         Rectangle item = {list.x + 8, list.y + 8 + row*32,
                           list.width - 16, 29};
         bool selected = index == app->selected_save;
-        bool hovered = point_in(item);
+        bool hovered = active && point_in(item);
         if (selected || hovered)
             DrawRectangleRec(item, selected ? (Color){80, 105, 108, 220}
                                             : (Color){177, 177, 157, 160});
         DrawText(app->saves.names[index], (int)item.x + 9, (int)item.y + 5,
                  18, selected ? RAYWHITE : ink);
-        if (hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+        if (active && hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
             app->selected_save = index;
     }
 
-    Rectangle load = {(float)center - 310, 548, 300, 44};
-    Rectangle exit = {(float)center + 10, 548, 300, 44};
-    if (button(load, "Load selected", app->selected_save >= 0))
+    float actions_y = list.y + list.height + 19;
+    Rectangle load = {(float)center - 310, actions_y, 300, 44};
+    Rectangle exit = {(float)center + 10, actions_y, 300, 44};
+    if (button(load, "Load selected", active && app->selected_save >= 0))
         load_selected_world(app);
-    if (button(exit, "Exit", true)) app->running = false;
-    draw_centered(app->message, GetScreenHeight() - 34, 17,
+    if (button(exit, "Close GUI", active))
+        request_save_action(app, AFTER_SAVE_GUI_DETACH);
+    draw_centered(app->message, gui_view_height() - 34, 17,
                   (Color){112, 65, 52, 255});
 }
 
@@ -661,12 +783,15 @@ static BlockId pickable_block(BlockId id)
     return id > BLOCK_AIR && id < BLOCK_INTERNAL_FIRST ? id : BLOCK_AIR;
 }
 
-static void advance_simulation(GuiApp *app)
+static void advance_world_sessions(GuiApp *app)
 {
-    RsResult result = game_session_advance(app->session, GetFrameTime());
+    GameSession *failed_session = NULL;
+    RsResult result = world_session_manager_advance(app->world_sessions,
+                                                     GetFrameTime(),
+                                                     &failed_session);
     if (result != RS_OK && result != RS_UNCHANGED) {
-        snprintf(app->message, sizeof(app->message), "Simulation: %s",
-                 rs_result_name(result));
+        snprintf(app->message, sizeof(app->message), "%s simulation: %s",
+                 managed_world_name(app, failed_session), rs_result_name(result));
         app->fatal_error = true;
         app->running = false;
     }
@@ -694,7 +819,7 @@ static void update_command(GuiApp *app)
         app->completion.active = false;
     }
     if (IsKeyPressed(KEY_TAB) && !app->plot_command.pending) {
-        command_complete(&app->completion, app->command, sizeof(app->command), true);
+        command_complete(&app->completion, app->command, sizeof(app->command), true, false);
         app->command_length = strlen(app->command);
     }
     if (IsKeyPressed(KEY_ESCAPE)) {
@@ -810,8 +935,9 @@ static VoxelHit update_world(GuiApp *app)
     World *world = game_session_world(app->session);
     constrain_camera(app, world);
 
-    Ray ray = GetScreenToWorldRay(
-        (Vector2){GetScreenWidth()*0.5f, GetScreenHeight()*0.5f}, app->camera);
+    Ray ray = GetScreenToWorldRayEx(
+        (Vector2){gui_view_width()*0.5f, gui_view_height()*0.5f}, app->camera,
+        gui_view_width(), gui_view_height());
     double camera_x = floor((double)app->camera.position.x + 0.5);
     double camera_z = floor((double)app->camera.position.z + 0.5);
     if (!isfinite(camera_x) || !isfinite(camera_z) || camera_x < (double)INT32_MIN+16 ||
@@ -1021,7 +1147,7 @@ static void update_container_slots(GuiApp *app, BlockPos pos,
     bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
     if (!left && !(right && shift)) return;
 
-    int hotbar_slot = hotbar_slot_at(GetMousePosition());
+    int hotbar_slot = hotbar_slot_at(gui_view_mouse());
     int container_slot = -1;
     if (hotbar_slot >= 0) app->hotbar.selected_slot = hotbar_slot;
     else {
@@ -1131,7 +1257,7 @@ static void draw_container(const GuiApp *app, BlockId id)
     World *world = game_session_world(app->session);
     BlockPos pos = barrel ? app->barrel_pos : app->container_pos;
     ContainerLayout layout = container_layout(id);
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+    DrawRectangle(0, 0, gui_view_width(), gui_view_height(),
                   (Color){10, 18, 20, 155});
     DrawRectangleRec(layout.panel, (Color){226, 218, 196, 250});
     DrawRectangleLinesEx(layout.panel, 3.0f, (Color){73, 48, 24, 255});
@@ -1315,13 +1441,13 @@ static void draw_world(GuiApp *app, VoxelHit hit)
             draw_block_outline(world_get(game_session_world(app->session), hit.pos),
                                 center);
         }
-        draw_flexible_placement(app, hit);
+        if (app->workspace.focus == 0) draw_flexible_placement(app, hit);
         draw_selection(app);
     EndMode3D();
 
-    if (app->screen == GUI_WORLD) {
-        int cx = GetScreenWidth()/2;
-        int cy = GetScreenHeight()/2;
+    if (app->screen == GUI_WORLD && app->workspace.focus == 0) {
+        int cx = gui_view_width()/2;
+        int cy = gui_view_height()/2;
         DrawLine(cx - 6, cy, cx + 6, cy, BLACK);
         DrawLine(cx, cy - 6, cx, cy + 6, BLACK);
     }
@@ -1378,9 +1504,9 @@ static int wrap_chat_message(const char *text, int width,
 static void draw_chat(GuiApp *app)
 {
     bool open = app->screen == GUI_COMMAND;
-    int width = GetScreenWidth() - 36;
+    int width = gui_view_width() - 36;
     if (width > 760) width = 760;
-    int bottom = GetScreenHeight() - 100;
+    int bottom = gui_view_height() - 100;
     int visible = (bottom - 100)/CHAT_LINE_HEIGHT;
     int limit = open ? 20 : 6;
     if (visible > limit) visible = limit;
@@ -1419,7 +1545,7 @@ static void draw_chat(GuiApp *app)
 static void draw_command(const GuiApp *app)
 {
     if (app->plot_command.pending) {
-        int panel_width = GetScreenWidth() - 36;
+        int panel_width = gui_view_width() - 36;
         if (panel_width > 660) panel_width = 660;
         if (panel_width >= 48) {
             WorldPlotBounds b = app->plot_command.preview.removed;
@@ -1431,7 +1557,7 @@ static void draw_command(const GuiApp *app)
             size_t starts[CHAT_TEXT_CAPACITY], lengths[CHAT_TEXT_CAPACITY];
             int rows = wrap_chat_message(warning, panel_width - 32, starts, lengths);
             int height = rows*CHAT_LINE_HEIGHT + 32;
-            int x = (GetScreenWidth() - panel_width)/2, top = (GetScreenHeight() - height)/2;
+            int x = (gui_view_width() - panel_width)/2, top = (gui_view_height() - height)/2;
             DrawRectangle(x,top,panel_width,height,(Color){15,27,30,245});
             DrawRectangleLines(x,top,panel_width,height,(Color){244,190,88,255});
             for (int i = 0; i < rows; ++i) {
@@ -1442,8 +1568,8 @@ static void draw_command(const GuiApp *app)
             }
         }
     }
-    int y = GetScreenHeight() - 88;
-    int width = GetScreenWidth() - 36;
+    int y = gui_view_height() - 88;
+    int width = gui_view_width() - 36;
     DrawRectangle(18, y, width, 52,
                   (Color){15, 27, 30, 235});
     DrawRectangleLines(18, y, width, 52,
@@ -1465,28 +1591,30 @@ static void draw_command(const GuiApp *app)
 
 static void draw_pause(GuiApp *app)
 {
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+    bool active = app->workspace.focus == 0;
+    DrawRectangle(0, 0, gui_view_width(), gui_view_height(),
                   (Color){10, 18, 20, 150});
 
-    int center = GetScreenWidth()/2;
+    int center = gui_view_width()/2;
     Rectangle panel = {(float)center - 190, 105, 380, 400};
 
     DrawRectangleRec(panel, (Color){226, 218, 196, 248});
     DrawRectangleLinesEx(panel, 3.0f, (Color){34, 63, 66, 255});
-    draw_centered("WORLD PAUSED", 137, 30, (Color){26, 50, 55, 255});
+    draw_centered("GUI MENU", 137, 30, (Color){26, 50, 55, 255});
 
     Rectangle resume = {(float)center - 140, 205, 280, 44};
     Rectangle save = {(float)center - 140, 265, 280, 44};
     Rectangle title = {(float)center - 140, 325, 280, 44};
     Rectangle exit = {(float)center - 140, 385, 280, 44};
 
-    if (button(resume, "Continue", true)) {
+    if (button(resume, "Continue", active)) {
         app->screen = GUI_WORLD;
-        capture_mouse(app);
+        if (app->workspace.focus == 0) capture_mouse(app);
+        else release_mouse(app);
         return;
     }
 
-    if (button(save, "Save", true)) {
+    if (button(save, "Save", active)) {
         GameSessionResult result = game_session_save(app->session);
 
         snprintf(app->message, sizeof(app->message), "Save: %s",
@@ -1501,30 +1629,39 @@ static void draw_pause(GuiApp *app)
         return;
     }
 
-    if (button(title, "Save and title", true)) {
+    if (button(title, "Save and title", active)) {
         request_save_action(app, AFTER_SAVE_TITLE);
         return;
     }
 
-    if (button(exit, "Save and exit", true)) {
-        request_save_action(app, AFTER_SAVE_EXIT);
+    if (button(exit, "Save and close GUI", active)) {
+        request_save_action(app, AFTER_SAVE_GUI_DETACH);
         return;
     }
 }
 
 static void draw_save_error(GuiApp *app)
 {
+    bool active = app->workspace.focus == 0;
     ClearBackground((Color){39, 48, 49, 255});
-    draw_centered("THE WORLD WAS NOT CLOSED", 130, 30, RAYWHITE);
+    draw_centered("SAVE FAILED", 130, 30, RAYWHITE);
     draw_centered(app->message, 185, 19, (Color){244, 190, 88, 255});
     draw_centered("The last valid .mcw file is still intact.",
                   220, 18, (Color){193, 205, 204, 255});
-    int center = GetScreenWidth()/2;
+    int center = gui_view_width()/2;
     Rectangle retry = {(float)center - 160, 290, 320, 46};
     Rectangle cancel = {(float)center - 160, 352, 320, 46};
-    Rectangle discard = {(float)center - 160, 414, 320, 46};
-    if (button(retry, "Retry save", true)) {
-        GameSessionResult result = game_session_save(app->session);
+    Rectangle leave = {(float)center - 160, 414, 320, 46};
+    if (button(retry, "Retry save", active)) {
+        GameSession *failed_session = NULL;
+        GameSessionResult result;
+        if (app->after_save == AFTER_SAVE_NONE ||
+            app->after_save == AFTER_SAVE_TITLE ||
+            app->after_save == AFTER_SAVE_GUI_DETACH) {
+            result = app->session ? game_session_save(app->session) : GAME_SESSION_OK;
+        } else {
+            result = save_all_worlds(app, &failed_session);
+        }
         if (result == GAME_SESSION_OK) {
             if (app->after_save == AFTER_SAVE_NONE)
                 app->screen = app->screen_before_error;
@@ -1535,20 +1672,41 @@ static void draw_save_error(GuiApp *app)
                      game_session_result_name(result));
         }
     }
-    if (button(cancel, "Return to world", true)) {
-        app->screen = app->screen_before_error == GUI_TITLE ?
-                      GUI_PAUSE : app->screen_before_error;
+    if (button(cancel, "Return to world", active)) {
+        app->screen = app->screen_before_error;
         app->after_save = AFTER_SAVE_NONE;
     }
-    const char *discard_label = app->after_save == AFTER_SAVE_TITLE ?
-                                "Title without saving" : "Exit without saving";
-    if (button(discard, discard_label, app->after_save != AFTER_SAVE_NONE))
-        perform_after_save(app, app->after_save);
+    const char *leave_label = app->after_save == AFTER_SAVE_TITLE ?
+        "Return to title; keep session" :
+        app->after_save == AFTER_SAVE_GUI_DETACH ?
+        "Close GUI; keep session" : "Exit without saving";
+    if (button(leave, leave_label,
+               active && app->after_save != AFTER_SAVE_NONE)) {
+        AfterSave action = app->after_save;
+        if (action == AFTER_SAVE_TITLE) {
+            return_to_title(app);
+        } else if (action == AFTER_SAVE_GUI_DETACH) {
+            detach_gui_frontend(app);
+        } else if (action == AFTER_SAVE_HOST_EXIT) {
+            close_world(app);
+            for (int pane = 0; pane < WORKSPACE_CLI_LIMIT; ++pane) {
+                app->cli_sessions[pane] = NULL;
+                if (app->consoles[pane])
+                    workspace_console_detach_world(app->consoles[pane]);
+            }
+            app->running = false;
+        }
+    }
 }
 
-static bool initialize(GuiApp *app)
+static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
 {
     *app = (GuiApp){0};
+    if (!world_sessions) {
+        fprintf(stderr, "World session manager is unavailable\n");
+        return false;
+    }
+    app->world_sessions = world_sessions;
     app->running = true;
     app->selected_save = -1;
     app->screen = GUI_TITLE;
@@ -1557,6 +1715,7 @@ static bool initialize(GuiApp *app)
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Machinecraft");
+    SetWindowMinSize(1000, 650);
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
     if (!block_renderer_init(&app->blocks)) {
@@ -1571,6 +1730,15 @@ static bool initialize(GuiApp *app)
         fprintf(stderr, "Cannot load hotbar textures; run from the project root\n");
         return false;
     }
+    WorkspaceConsole *console = workspace_console_create();
+    if (!console) {
+        fprintf(stderr, "Cannot create CLI pane\n");
+        return false;
+    }
+    workspace_layout_init(&app->workspace);
+    app->consoles[0] = console;
+    snprintf(app->pane_message, sizeof(app->pane_message),
+             "Ctrl+b then ? for pane keys | Ctrl+b then o to focus CLI");
     refresh_saves(app);
     return true;
 }
@@ -1578,16 +1746,406 @@ static bool initialize(GuiApp *app)
 static void shutdown_gui(GuiApp *app)
 {
     close_world(app);
+    for (int i = 0; i < WORKSPACE_CLI_LIMIT; ++i) {
+        app->cli_sessions[i] = NULL;
+        workspace_console_destroy(app->consoles[i]);
+        app->consoles[i] = NULL;
+    }
+    if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
+    app->gui_target = (RenderTexture2D){0};
     hotbar_unload(&app->hotbar);
     inventory_unload(&app->inventory);
     block_renderer_unload(&app->blocks);
     CloseWindow();
 }
 
-int gui_run(void)
+static Rectangle pane_rectangle(WorkspaceRect box)
+{
+    return (Rectangle){(float)box.x, (float)box.y, (float)box.width, (float)box.height};
+}
+
+static void workspace_geometry(const GuiApp *app, WorkspaceGeometry *geometry)
+{
+    workspace_layout_geometry(&app->workspace, GetScreenWidth(),
+        GetScreenHeight() - WORKSPACE_STATUS_HEIGHT, geometry);
+}
+
+static void pane_notice(GuiApp *app, const char *text)
+{
+    snprintf(app->pane_message, sizeof(app->pane_message), "%s", text);
+}
+
+typedef struct {
+    GuiApp *app;
+} WorldCommandContext;
+
+static void world_command_write(void *context, const char *text, bool error)
+{
+    workspace_console_message(context, text, error);
+}
+
+static void world_command_reset(void *context)
+{
+    workspace_console_detach_world(context);
+}
+
+static bool handle_workspace_world_command(void *context,
+    WorkspaceConsole *console, const char *input, GameSession **target)
+{
+    WorldCommandContext *command_context = context;
+    GuiApp *app = command_context->app;
+    WorkspaceWorldCommandIO io = {
+        .sessions = app->world_sessions,
+        .save_directory = save_directory,
+        .write = world_command_write,
+        .write_context = console,
+        .reset_target_state = world_command_reset,
+        .reset_context = console
+    };
+    bool handled = workspace_world_command_run(&io, input, target);
+    if (io.saves_changed) refresh_saves(app);
+    return handled;
+}
+
+static bool prepare_gui_view(GuiApp *app)
+{
+    gui_view_reset();
+    if (!app->workspace.gui_visible) return true;
+    WorkspaceGeometry geometry;
+    workspace_geometry(app, &geometry);
+    Rectangle box = pane_rectangle(geometry.gui);
+    box.y += WORKSPACE_HEADER_HEIGHT;
+    box.height -= WORKSPACE_HEADER_HEIGHT;
+    int width = (int)box.width, height = (int)box.height;
+    if (width < 640) width = 640;
+    if (height < 560) height = 560;
+    if (!app->gui_target.id || app->gui_target.texture.width != width ||
+        app->gui_target.texture.height != height) {
+        RenderTexture2D target = LoadRenderTexture(width, height);
+        if (!target.id || !target.texture.id) {
+            if (target.id) UnloadRenderTexture(target);
+            fprintf(stderr, "Cannot create GUI pane render target\n");
+            app->fatal_error = true;
+            app->running = false;
+            return false;
+        }
+        SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
+        if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
+        app->gui_target = target;
+    }
+    gui_view_set(box, width, height);
+    return true;
+}
+
+/* A focus transition leaves GUI-only dialogs in a consistent world state. */
+static void apply_pane_focus(GuiApp *app)
+{
+    if (app->workspace.focus != 0) {
+        if (app->session && app->screen == GUI_BARREL)
+            (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
+        if (app->session && app->screen == GUI_COMMAND && app->plot_command.pending) {
+            (void)plot_command_answer(game_session_world(app->session), &app->plot_command,
+                "n", app->message, sizeof(app->message));
+            add_chat_message(app, app->message, false);
+        }
+        if (app->session && app->screen >= GUI_COMMAND && app->screen <= GUI_DROPPER)
+            app->screen = GUI_WORLD;
+        release_mouse(app);
+    } else if (app->session && app->screen == GUI_WORLD) capture_mouse(app);
+    while (GetCharPressed() != 0) {}
+}
+
+static int split_cli_pane(GuiApp *app, bool split_x)
+{
+    int slot = 1;
+    while (slot <= WORKSPACE_CLI_LIMIT &&
+           workspace_layout_has_pane(&app->workspace, slot)) ++slot;
+    if (slot > WORKSPACE_CLI_LIMIT) {
+        pane_notice(app, "Maximum CLI pane count reached");
+        return -1;
+    }
+    /* Reuse a preallocated console when adding its first layout node. */
+    WorkspaceConsole *console = app->consoles[slot - 1];
+    bool allocated = false;
+    if (!console) {
+        console = workspace_console_create();
+        allocated = true;
+    }
+    if (!console) { pane_notice(app, "Cannot allocate a CLI pane"); return -1; }
+    int pane = workspace_layout_split(&app->workspace, split_x,
+        GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+    if (pane < 0) {
+        if (allocated) workspace_console_destroy(console);
+        pane_notice(app, "No room for a new CLI pane (maximum 8); enlarge the window or close a pane");
+        return -1;
+    }
+    app->consoles[pane - 1] = console;
+    pane_notice(app, "CLI pane created; use world attach <name>");
+    return pane;
+}
+
+static bool close_pane(GuiApp *app)
+{
+    int pane = app->workspace.focus;
+    if (!pane && app->workspace.root < 0) {
+        if (split_cli_pane(app, false) < 0) return false;
+        app->workspace.focus = 0;
+    }
+    if (!workspace_layout_close(&app->workspace)) {
+        pane_notice(app, "Keep one pane open; close the host window to end the workspace");
+        return false;
+    }
+    if (pane > 0) {
+        app->cli_sessions[pane - 1] = NULL;
+        workspace_console_destroy(app->consoles[pane - 1]);
+        app->consoles[pane - 1] = NULL;
+    } else if (app->session && app->screen == GUI_BARREL) {
+        (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
+        app->screen = GUI_WORLD;
+    }
+    pane_notice(app, pane ? "CLI pane closed" : "GUI pane closed; Ctrl+b then g restores it");
+    apply_pane_focus(app);
+    return true;
+}
+
+/* Prefix keys are consumed before either frontend receives this frame's input. */
+static bool update_pane_keys(GuiApp *app)
+{
+    bool control = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+    if (control && IsKeyPressed(KEY_B)) {
+        app->pane_help = false;
+        app->pane_prefix = true;
+        release_mouse(app);
+        while (GetCharPressed() != 0) {}
+        return true;
+    }
+    if (app->pane_help) {
+        if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_Q)) {
+            app->pane_help = false;
+            apply_pane_focus(app);
+        }
+        while (GetCharPressed() != 0) {}
+        return true;
+    }
+    if (!app->pane_prefix) return false;
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        app->pane_prefix = false;
+        apply_pane_focus(app);
+        return true;
+    }
+    WorkspaceDirection direction;
+    bool arrow = true;
+    if (IsKeyPressed(KEY_LEFT)) direction = WORKSPACE_LEFT;
+    else if (IsKeyPressed(KEY_RIGHT)) direction = WORKSPACE_RIGHT;
+    else if (IsKeyPressed(KEY_UP)) direction = WORKSPACE_UP;
+    else if (IsKeyPressed(KEY_DOWN)) direction = WORKSPACE_DOWN;
+    else { direction = WORKSPACE_LEFT; arrow = false; }
+    bool acted = arrow;
+    if (arrow) {
+        if (control) {
+            bool resized = workspace_layout_resize(&app->workspace, direction, 24,
+                GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+            pane_notice(app, resized ? "CLI divider moved" : "No movable CLI divider in this direction; GUI size is fixed");
+        } else (void)workspace_layout_focus(&app->workspace, direction,
+            GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+    }
+    int character;
+    while ((character = GetCharPressed()) != 0) {
+        if (acted) continue;
+        acted = true;
+        switch (character) {
+        case '%': (void)split_cli_pane(app, true); break;
+        case '"': (void)split_cli_pane(app, false); break;
+        case 'o': workspace_layout_next(&app->workspace); break;
+        case 'H': case 'J': case 'K': case 'L': {
+            WorkspaceDirection move = character == 'H' ? WORKSPACE_LEFT :
+                character == 'L' ? WORKSPACE_RIGHT : character == 'K' ? WORKSPACE_UP : WORKSPACE_DOWN;
+            bool resized = workspace_layout_resize(&app->workspace, move, 24,
+                GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+            pane_notice(app, resized ? "CLI divider moved" : "No movable CLI divider; GUI size is fixed");
+            break;
+        }
+        case 'z':
+            if (!workspace_layout_zoom(&app->workspace))
+                pane_notice(app, "GUI size is fixed; zoom applies to CLI panes");
+            else pane_notice(app, "CLI zoom toggled inside the CLI area");
+            break;
+        case 'x': (void)close_pane(app); break;
+        case 'g': workspace_layout_show_gui(&app->workspace); pane_notice(app, "GUI restored"); break;
+        case '?': app->pane_help = true; break;
+        default: pane_notice(app, "Unknown pane key; Ctrl+b then ? lists the keys"); break;
+        }
+    }
+    if (acted) {
+        app->pane_prefix = false;
+        if (!app->pane_help) apply_pane_focus(app);
+    }
+    return true;
+}
+
+static void update_cli_pane(GuiApp *app)
+{
+    int pane = app->workspace.focus;
+    if (pane <= 0 || !app->consoles[pane - 1]) return;
+    WorldCommandContext context = {app};
+    ConsoleCommandReply reply = workspace_console_update(app->consoles[pane - 1],
+        &app->cli_sessions[pane - 1], handle_workspace_world_command, &context);
+    if (reply.fatal) {
+        app->fatal_error = true;
+        app->running = false;
+    } else if (reply.action == CONSOLE_TITLE) {
+        app->cli_sessions[pane - 1] = NULL;
+        workspace_console_detach_world(app->consoles[pane - 1]);
+        workspace_console_message(app->consoles[pane - 1],
+                                  "CLI detached from world; GUI unchanged", false);
+    }
+    else if (reply.action == CONSOLE_QUIT) {
+        if (!close_pane(app)) {
+            if (pane > 0 && !app->workspace.gui_visible) {
+                workspace_layout_show_gui(&app->workspace);
+                app->workspace.focus = pane;
+                (void)close_pane(app);
+            } else {
+                pane_notice(app, "Cannot close the last visible pane");
+            }
+        }
+    }
+}
+
+static VoxelHit update_workspace_input(GuiApp *app)
+{
+    VoxelHit hit = {0};
+    if (!prepare_gui_view(app)) return hit;
+    if (!IsWindowFocused() && app->workspace.focus == 0 && app->session &&
+        app->screen != GUI_PAUSE &&
+        app->screen != GUI_SAVE_ERROR) {
+        release_mouse(app);
+        app->screen = GUI_PAUSE;
+        app->pane_prefix = app->pane_help = false;
+    } else if (!update_pane_keys(app)) {
+        /* GUI modal keys are routed only while pane 0 owns focus. */
+        if (app->workspace.focus > 0) update_cli_pane(app);
+        else if (app->screen == GUI_TITLE) update_title(app);
+        else if (app->screen == GUI_PAUSE) {
+            if (IsKeyPressed(KEY_ESCAPE)) {
+                app->screen = GUI_WORLD;
+                apply_pane_focus(app);
+            }
+        }
+        else if (app->screen == GUI_WORLD) {
+            if (!app->mouse_captured) capture_mouse(app);
+            else hit = update_world(app);
+        }
+        else if (app->screen == GUI_COMMAND) update_command(app);
+        else if (app->screen == GUI_INVENTORY) update_inventory(app);
+        else if (app->screen == GUI_BARREL) update_barrel(app);
+        else if (app->screen == GUI_HOPPER || app->screen == GUI_DROPPER) update_container(app);
+    }
+    return hit;
+}
+
+static void draw_pane_help(void)
+{
+    const char *lines[] = {
+        "Workspace keys - press Ctrl+b, release, then:",
+        "%                 Split CLI left / right",
+        "\"                 Split CLI top / bottom",
+        "Arrow             Focus pane in that direction",
+        "o                 Focus next pane",
+        "Ctrl+Arrow/HJKL   Move nearest CLI divider",
+        "z                 Zoom / restore CLI area",
+        "x                 Close focused pane",
+        "g                 Restore and focus mc-gui",
+        "?                 Show this help",
+        "Esc               Cancel prefix / close help",
+        "",
+        "CLI: Enter executes, Tab completes, Up/Down history",
+        "PgUp/PgDn scroll, Ctrl/Cmd+V pastes, Ctrl+U clears",
+        "CLI Esc clears its line or cancels a pending confirmation",
+        "world create <name> creates; world attach <name> selects",
+        "world list shows saves; world detach clears this CLI target",
+        "CLI title saves and detaches; quit saves and closes this pane",
+        "GUI and each CLI pane select worlds independently."
+    };
+    int width = GetScreenWidth() - 80;
+    if (width > 800) width = 800;
+    int height = (int)(sizeof(lines)/sizeof(lines[0]))*26 + 36;
+    int x = (GetScreenWidth() - width)/2, y = (GetScreenHeight() - height)/2;
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), (Color){0, 0, 0, 170});
+    DrawRectangle(x, y, width, height, (Color){22, 27, 36, 255});
+    DrawRectangleLines(x, y, width, height, (Color){172, 143, 255, 255});
+    BeginScissorMode(x, y, width, height);
+    for (size_t i = 0; i < sizeof(lines)/sizeof(lines[0]); ++i)
+        DrawText(lines[i], x + 18, y + 18 + (int)i*26, 18, RAYWHITE);
+    EndScissorMode();
+}
+
+static void draw_workspace(GuiApp *app, VoxelHit hit)
+{
+    WorkspaceGeometry geometry;
+    workspace_geometry(app, &geometry);
+    ClearBackground((Color){9, 12, 18, 255});
+    if (app->workspace.gui_visible) {
+        BeginTextureMode(app->gui_target);
+        if (app->screen == GUI_TITLE) {
+            draw_title(app);
+        } else if (app->screen == GUI_SAVE_ERROR) {
+            draw_save_error(app);
+        } else if (app->session) {
+            draw_world(app, hit);
+            if (app->screen == GUI_INVENTORY) {
+                inventory_draw(&app->inventory, hotbar_selected(&app->hotbar));
+                hotbar_draw(&app->hotbar, &app->inventory);
+            }
+            if (app->screen == GUI_BARREL) draw_container(app, BLOCK_BARREL);
+            if (app->screen == GUI_HOPPER) draw_container(app, BLOCK_HOPPER);
+            if (app->screen == GUI_DROPPER) draw_container(app, BLOCK_DROPPER);
+            if (app->screen == GUI_WORLD || app->screen == GUI_COMMAND) draw_chat(app);
+            if (app->screen == GUI_COMMAND) draw_command(app);
+            if (app->screen == GUI_PAUSE) draw_pause(app);
+        } else {
+            ClearBackground((Color){39, 48, 49, 255});
+        }
+        EndTextureMode();
+        Rectangle box = pane_rectangle(geometry.gui);
+        box.y += WORKSPACE_HEADER_HEIGHT; box.height -= WORKSPACE_HEADER_HEIGHT;
+        DrawTexturePro(app->gui_target.texture,
+            (Rectangle){0, 0, (float)app->gui_target.texture.width, -(float)app->gui_target.texture.height},
+            box, (Vector2){0}, 0, WHITE);
+        DrawRectangle(geometry.gui.x, geometry.gui.y, geometry.gui.width, WORKSPACE_HEADER_HEIGHT,
+            (Color){34, 42, 53, 255});
+        Color accent = app->workspace.focus == 0 ? (Color){172, 143, 255, 255} : (Color){118, 130, 143, 255};
+        DrawText(app->workspace.focus == 0 ? "0: mc-gui *" : "0: mc-gui", 8, 5, 16, accent);
+        DrawRectangleLinesEx(pane_rectangle(geometry.gui), app->workspace.focus == 0 ? 2 : 1, accent);
+    }
+    gui_view_reset();
+    for (int i = 0; i < WORKSPACE_CLI_LIMIT; ++i) {
+        if (geometry.visible[i] && app->consoles[i])
+            workspace_console_draw(app->consoles[i], pane_rectangle(geometry.panes[i]),
+                i + 1, app->workspace.focus == i + 1, app->workspace.zoom > 0 || geometry.compact);
+    }
+    if (app->workspace.root < 0) {
+        DrawText("Ctrl+b then % or \" opens CLI", geometry.cli.x + 12, 40, 16, GRAY);
+    }
+    int y = GetScreenHeight() - WORKSPACE_STATUS_HEIGHT;
+    DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});
+    const char *state = app->screen == GUI_SAVE_ERROR ? "SAVE ERROR" :
+        !app->session ?
+        (managed_world_count(app) ? "NO GUI TARGET" : "NO WORLD") :
+        app->screen == GUI_PAUSE ? "GUI MENU" :
+        sim_is_frozen(game_session_world(app->session)) ? "FROZEN" : "RUNNING";
+    const char *message = app->pane_prefix ? "PREFIX: % split-right | \" split-down | o focus | ? help | Esc cancel" :
+        geometry.compact ? "CLI area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
+    BeginScissorMode(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT);
+    DrawText(TextFormat("%s | %s", state, message), 8, y + 5, 16, RAYWHITE);
+    EndScissorMode();
+    if (app->pane_help) draw_pane_help();
+}
+
+int gui_run(WorldSessionManager *world_sessions)
 {
     GuiApp app;
-    if (!initialize(&app)) {
+    if (!initialize(&app, world_sessions)) {
         shutdown_gui(&app);
         return EXIT_FAILURE;
     }
@@ -1601,28 +2159,20 @@ int gui_run(void)
                 (void)world_close_barrel(game_session_world(app.session), app.barrel_pos);
                 app.screen = GUI_WORLD;
             }
-            if (app.session && game_session_dirty(app.session))
-                request_save_action(&app, AFTER_SAVE_EXIT);
+            if (any_world_dirty(&app))
+                request_save_action(&app, AFTER_SAVE_HOST_EXIT);
             else
                 app.running = false;
         }
         if (!app.running) break;
 
-        GameSession *frame_session = app.session;
+        gui_view_reset();
         VoxelHit hit = {0};
-        if (app.screen == GUI_TITLE) update_title(&app);
-        else if (app.screen == GUI_WORLD) hit = update_world(&app);
-        else if (app.screen == GUI_COMMAND) update_command(&app);
-        else if (app.screen == GUI_INVENTORY) update_inventory(&app);
-        else if (app.screen == GUI_BARREL) update_barrel(&app);
-        else if (app.screen == GUI_HOPPER || app.screen == GUI_DROPPER)
-            update_container(&app);
+        hit = update_workspace_input(&app);
+        if (!app.running) break;
 
-        if (app.session && app.session == frame_session &&
-            app.screen >= GUI_WORLD && app.screen <= GUI_DROPPER) {
-            advance_simulation(&app);
-            if (!app.running) break;
-        }
+        advance_world_sessions(&app);
+        if (!app.running) break;
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
@@ -1631,30 +2181,12 @@ int gui_run(void)
         }
 
         BeginDrawing();
-        if (app.screen == GUI_TITLE) {
-            draw_title(&app);
-        } else if (app.screen == GUI_SAVE_ERROR) {
-            draw_save_error(&app);
-        } else {
-            draw_world(&app, hit);
-            if (app.screen == GUI_INVENTORY) {
-                inventory_draw(&app.inventory,
-                               hotbar_selected(&app.hotbar));
-                hotbar_draw(&app.hotbar, &app.inventory);
-            }
-            if (app.screen == GUI_BARREL) draw_container(&app, BLOCK_BARREL);
-            if (app.screen == GUI_HOPPER) draw_container(&app, BLOCK_HOPPER);
-            if (app.screen == GUI_DROPPER) draw_container(&app, BLOCK_DROPPER);
-            if (app.screen == GUI_WORLD || app.screen == GUI_COMMAND)
-                draw_chat(&app);
-            if (app.screen == GUI_COMMAND) draw_command(&app);
-            if (app.screen == GUI_PAUSE) draw_pause(&app);
-        }
+        if (prepare_gui_view(&app)) draw_workspace(&app, hit);
         EndDrawing();
     }
 
-    if (app.fatal_error && app.session && game_session_dirty(app.session))
-        (void)game_session_save(app.session);
+    if (app.fatal_error && any_world_dirty(&app))
+        (void)save_all_worlds(&app, NULL);
     shutdown_gui(&app);
     return app.fatal_error ? EXIT_FAILURE : EXIT_SUCCESS;
 }
