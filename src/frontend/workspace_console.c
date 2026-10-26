@@ -39,8 +39,6 @@ WorkspaceConsole *workspace_console_create(void)
     if (console) {
         workspace_console_message(console, "mcmux CLI", false);
         workspace_console_message(console, "Type help. Ctrl+b ? for pane keys.", false);
-        workspace_console_message(console,
-            "world create <name> | world attach <name> | world list | world detach", false);
     }
     return console;
 }
@@ -196,9 +194,6 @@ ConsoleCommandReply workspace_console_update(WorkspaceConsole *console,
         reply = console_command_run(*session, &console->commands, console->input,
                                     output_fragment, console);
         if (show_workspace_help) {
-            workspace_console_message(console,
-                "world create <name> | world attach <name> | world list | world detach",
-                false);
             workspace_console_message(console,
                 "Here, title saves and detaches CLI; quit saves and closes this pane",
                 false);

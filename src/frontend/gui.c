@@ -600,9 +600,7 @@ static void draw_title(GuiApp *app)
     bool active = app->workspace.focus == 0;
     ClearBackground(paper);
     draw_centered("MCMUX", 48, 42, ink);
-    draw_centered("A deterministic redstone workshop", 96, 20,
-                  (Color){83, 99, 94, 255});
-    DrawLine(120, 132, gui_view_width() - 120, 132,
+    DrawLine(120, 104, gui_view_width() - 120, 104,
              (Color){126, 119, 100, 255});
 
     int center = gui_view_width()/2;
@@ -658,8 +656,9 @@ static void draw_title(GuiApp *app)
         load_selected_world(app);
     if (button(exit, "Close GUI", active))
         request_save_action(app, AFTER_SAVE_GUI_DETACH);
-    draw_centered(app->message, gui_view_height() - 34, 17,
-                  (Color){112, 65, 52, 255});
+    if (strcmp(app->message, "Create a world or load an existing .mcw file") != 0)
+        draw_centered(app->message, gui_view_height() - 34, 17,
+                      (Color){112, 65, 52, 255});
 }
 
 static Direction camera_horizontal_direction(const Camera3D *camera)
@@ -1971,7 +1970,7 @@ static bool update_pane_keys(GuiApp *app)
             else pane_notice(app, "CLI zoom toggled inside the CLI area");
             break;
         case 'x': (void)close_pane(app); break;
-        case 'g': workspace_layout_show_gui(&app->workspace); pane_notice(app, "GUI restored"); break;
+        case 'g': workspace_layout_show_gui(&app->workspace); break;
         case '?': app->pane_help = true; break;
         default: pane_notice(app, "Unknown pane key; Ctrl+b then ? lists the keys"); break;
         }
@@ -2062,8 +2061,6 @@ static void draw_pane_help(void)
         "CLI: Enter executes, Tab completes, Up/Down history",
         "PgUp/PgDn scroll, Ctrl/Cmd+V pastes, Ctrl+U clears",
         "CLI Esc clears its line or cancels a pending confirmation",
-        "world create <name> creates; world attach <name> selects",
-        "world list shows saves; world detach clears this CLI target",
         "CLI title saves and detaches; quit saves and closes this pane",
         "GUI and each CLI pane select worlds independently."
     };
@@ -2128,17 +2125,21 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
         DrawText("Ctrl+b then % or \" opens CLI", geometry.cli.x + 12, 40, 16, GRAY);
     }
     int y = GetScreenHeight() - WORKSPACE_STATUS_HEIGHT;
-    DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});
     const char *state = app->screen == GUI_SAVE_ERROR ? "SAVE ERROR" :
         !app->session ?
-        (managed_world_count(app) ? "NO GUI TARGET" : "NO WORLD") :
+        "" :
         app->screen == GUI_PAUSE ? "GUI MENU" :
         sim_is_frozen(game_session_world(app->session)) ? "FROZEN" : "RUNNING";
     const char *message = app->pane_prefix ? "PREFIX: % split-right | \" split-down | o focus | ? help | Esc cancel" :
         geometry.compact ? "CLI area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
-    BeginScissorMode(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT);
-    DrawText(TextFormat("%s | %s", state, message), 8, y + 5, 16, RAYWHITE);
-    EndScissorMode();
+    bool show_status = state[0] || app->pane_prefix || geometry.compact || app->pane_message[0];
+    if (show_status) {
+        DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});
+        BeginScissorMode(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT);
+        DrawText(TextFormat("%s%s%s", state,
+            state[0] && message[0] ? " | " : "", message), 8, y + 5, 16, RAYWHITE);
+        EndScissorMode();
+    }
     if (app->pane_help) draw_pane_help();
 }
 
