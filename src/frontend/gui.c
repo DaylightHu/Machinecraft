@@ -1,5 +1,6 @@
 #include "gui_view.h"
 #include "gui.h"
+#include "ui_font.h"
 
 #include "block_renderer.h"
 #include "block_shape.h"
@@ -27,7 +28,7 @@
 #include <string.h>
 
 enum {
-    SCREEN_WIDTH = 1280,
+    SCREEN_WIDTH = 1080,
     SCREEN_HEIGHT = 800,
     WORKSPACE_STATUS_HEIGHT = 26,
     WORKSPACE_HEADER_HEIGHT = 25,
@@ -103,6 +104,8 @@ typedef struct {
     WorldSessionManager *world_sessions;
     RenderTexture2D gui_target;
     bool pane_prefix, pane_help;
+    bool window_gui_visible, window_cli_visible, window_resize_pending;
+    int window_width, window_height, window_cli_width;
     char pane_message[MESSAGE_CAPACITY];
 } GuiApp;
 
@@ -155,8 +158,8 @@ static bool button(Rectangle rectangle, const char *label, bool enabled)
     DrawRectangleRec(rectangle, fill);
     DrawRectangleLinesEx(rectangle, 2.0f, border);
     int font_size = 20;
-    int width = MeasureText(label, font_size);
-    DrawText(label, (int)(rectangle.x + (rectangle.width - width)*0.5f),
+    int width = ui_text_width(label, font_size);
+    ui_text_draw(label, (int)(rectangle.x + (rectangle.width - width)*0.5f),
              (int)(rectangle.y + (rectangle.height - font_size)*0.5f),
              font_size, text);
     return hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
@@ -164,7 +167,7 @@ static bool button(Rectangle rectangle, const char *label, bool enabled)
 
 static void draw_centered(const char *text, int y, int font_size, Color color)
 {
-    DrawText(text, (gui_view_width() - MeasureText(text, font_size))/2,
+    ui_text_draw(text, (gui_view_width() - ui_text_width(text, font_size))/2,
              y, font_size, color);
 }
 
@@ -599,24 +602,22 @@ static void draw_title(GuiApp *app)
     const Color ink = {26, 50, 55, 255};
     bool active = app->workspace.focus == 0;
     ClearBackground(paper);
-    draw_centered("MACHINECRAFT", 48, 42, ink);
-    draw_centered("A deterministic redstone workshop", 96, 20,
-                  (Color){83, 99, 94, 255});
-    DrawLine(120, 132, gui_view_width() - 120, 132,
+    draw_centered("MCMUX", 48, 42, ink);
+    DrawLine(120, 104, gui_view_width() - 120, 104,
              (Color){126, 119, 100, 255});
 
     int center = gui_view_width()/2;
     Rectangle input = {(float)center - 310, 180, 380, 44};
-    DrawText("CREATE WORLD", (int)input.x, 150, 18, ink);
+    ui_text_draw("CREATE WORLD", (int)input.x, 150, 18, ink);
     DrawRectangleRec(input, (Color){247, 243, 230, 255});
     DrawRectangleLinesEx(input, 2.0f, (Color){92, 111, 112, 255});
     if (app->world_name_length)
-        DrawText(app->world_name, (int)input.x + 12, (int)input.y + 11, 20, ink);
+        ui_text_draw(app->world_name, (int)input.x + 12, (int)input.y + 11, 20, ink);
     else
-        DrawText("World name", (int)input.x + 12, (int)input.y + 11, 20,
+        ui_text_draw("World name", (int)input.x + 12, (int)input.y + 11, 20,
                  (Color){137, 137, 125, 255});
     if (app->workspace.focus == 0 && ((int)(GetTime()*2.0)) % 2 == 0) {
-        int cursor_x = (int)input.x + 12 + MeasureText(app->world_name, 20);
+        int cursor_x = (int)input.x + 12 + ui_text_width(app->world_name, 20);
         DrawLine(cursor_x, (int)input.y + 9, cursor_x, (int)input.y + 34, ink);
     }
 
@@ -625,14 +626,14 @@ static void draw_title(GuiApp *app)
                       !save_name_exists(app, app->world_name);
     if (button(create, "Create", can_create)) create_world(app);
 
-    DrawText("LOAD WORLD", center - 310, 257, 18, ink);
+    ui_text_draw("LOAD WORLD", center - 310, 257, 18, ink);
     int visible_rows = visible_save_rows();
     Rectangle list = {(float)center - 310, 284, 620,
                       (float)(visible_rows*32 + 16)};
     DrawRectangleRec(list, (Color){238, 232, 214, 255});
     DrawRectangleLinesEx(list, 2.0f, (Color){126, 119, 100, 255});
     if (!app->saves.count) {
-        DrawText("No saved worlds yet", (int)list.x + 18,
+        ui_text_draw("No saved worlds yet", (int)list.x + 18,
                  (int)list.y + 18, 20, (Color){117, 116, 103, 255});
     }
     for (int row = 0; row < visible_rows; ++row) {
@@ -645,7 +646,7 @@ static void draw_title(GuiApp *app)
         if (selected || hovered)
             DrawRectangleRec(item, selected ? (Color){80, 105, 108, 220}
                                             : (Color){177, 177, 157, 160});
-        DrawText(app->saves.names[index], (int)item.x + 9, (int)item.y + 5,
+        ui_text_draw(app->saves.names[index], (int)item.x + 9, (int)item.y + 5,
                  18, selected ? RAYWHITE : ink);
         if (active && hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
             app->selected_save = index;
@@ -658,8 +659,9 @@ static void draw_title(GuiApp *app)
         load_selected_world(app);
     if (button(exit, "Close GUI", active))
         request_save_action(app, AFTER_SAVE_GUI_DETACH);
-    draw_centered(app->message, gui_view_height() - 34, 17,
-                  (Color){112, 65, 52, 255});
+    if (strcmp(app->message, "Create a world or load an existing .mcw file") != 0)
+        draw_centered(app->message, gui_view_height() - 34, 17,
+                      (Color){112, 65, 52, 255});
 }
 
 static Direction camera_horizontal_direction(const Camera3D *camera)
@@ -1292,8 +1294,8 @@ static void draw_container(const GuiApp *app, BlockId id)
                                  value == level ? (Color){244, 190, 88, 255} :
                                                   (Color){142, 119, 86, 255});
             const char *text = TextFormat("%d", value);
-            DrawText(text,
-                     (int)(shortcut.x + (shortcut.width - MeasureText(text, 16))*0.5f),
+            ui_text_draw(text,
+                     (int)(shortcut.x + (shortcut.width - ui_text_width(text, 16))*0.5f),
                      (int)shortcut.y + 7, 16, RAYWHITE);
         }
     }
@@ -1451,19 +1453,19 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         DrawLine(cx - 6, cy, cx + 6, cy, BLACK);
         DrawLine(cx, cy - 6, cx, cy + 6, BLACK);
     }
-    DrawText(TextFormat("Position: (%.2f, %.2f, %.2f)",
+    ui_text_draw(TextFormat("Position: (%.2f, %.2f, %.2f)",
              app->camera.position.x,
              app->camera.position.y,
              app->camera.position.z),
              15, 15, 18, DARKBLUE);
     if (hit.hit) {
-        DrawText(TextFormat("Target: (%d, %d, %d)",
+        ui_text_draw(TextFormat("Target: (%d, %d, %d)",
                  hit.pos.x, hit.pos.y, hit.pos.z),
                  15, 39, 18, DARKBLUE);
     } else {
-        DrawText("Target: none", 15, 39, 18, DARKBLUE);
+        ui_text_draw("Target: none", 15, 39, 18, DARKBLUE);
     }
-    DrawText(TextFormat("Facing: %s", horizontal_direction_name(
+    ui_text_draw(TextFormat("Facing: %s", horizontal_direction_name(
                  camera_horizontal_direction(&app->camera))),
              15, 63, 18, DARKBLUE);
     hotbar_draw(&app->hotbar, &app->inventory);
@@ -1483,7 +1485,7 @@ static int wrap_chat_message(const char *text, int width,
                length + 1 < sizeof(line)) {
             line[length] = text[offset + length];
             line[length + 1] = '\0';
-            if (length && MeasureText(line, CHAT_FONT_SIZE) > width) break;
+            if (length && ui_text_width(line, CHAT_FONT_SIZE) > width) break;
             ++length;
             if (line[length - 1] == ' ') word_end = length;
         }
@@ -1536,7 +1538,7 @@ static void draw_chat(GuiApp *app)
             int y = bottom - (++drawn)*CHAT_LINE_HEIGHT;
             DrawRectangle(18, y - 2, width, CHAT_LINE_HEIGHT,
                           (Color){15, 27, 30, open ? 230 : 190});
-            DrawText(line, 24, y, CHAT_FONT_SIZE,
+            ui_text_draw(line, 24, y, CHAT_FONT_SIZE,
                      message->error ? (Color){255, 125, 125, 255} : RAYWHITE);
         }
     }
@@ -1563,7 +1565,7 @@ static void draw_command(const GuiApp *app)
             for (int i = 0; i < rows; ++i) {
                 char line[CHAT_TEXT_CAPACITY];
                 memcpy(line,warning + starts[i],lengths[i]); line[lengths[i]] = '\0';
-                DrawText(line,x + 16,top + 16 + i*CHAT_LINE_HEIGHT,CHAT_FONT_SIZE,
+                ui_text_draw(line,x + 16,top + 16 + i*CHAT_LINE_HEIGHT,CHAT_FONT_SIZE,
                          (Color){244,190,88,255});
             }
         }
@@ -1576,14 +1578,14 @@ static void draw_command(const GuiApp *app)
                        (Color){244, 190, 88, 255});
     const char *text = TextFormat("%s%s", app->plot_command.pending ? "y/n > " : "/", app->command);
     int text_x = 32;
-    int cursor_x = text_x + MeasureText(text, 21);
+    int cursor_x = text_x + ui_text_width(text, 21);
     int right = 18 + width - 14;
     if (cursor_x > right) {
         text_x -= cursor_x - right;
         cursor_x = right;
     }
     BeginScissorMode(20, y + 2, width - 4, 48);
-    DrawText(text, text_x, y + 15, 21, RAYWHITE);
+    ui_text_draw(text, text_x, y + 15, 21, RAYWHITE);
     if (((int)(GetTime()*2.0)) % 2 == 0)
         DrawLine(cursor_x, y + 11, cursor_x, y + 40, RAYWHITE);
     EndScissorMode();
@@ -1714,10 +1716,11 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
              "Create a world or load an existing .mcw file");
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Machinecraft");
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "mcmux");
     SetWindowMinSize(1000, 650);
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
+    if (!ui_font_init()) return false;
     if (!block_renderer_init(&app->blocks)) {
         fprintf(stderr, "Cannot load block textures; run from the project root\n");
         return false;
@@ -1730,15 +1733,12 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
         fprintf(stderr, "Cannot load hotbar textures; run from the project root\n");
         return false;
     }
-    WorkspaceConsole *console = workspace_console_create();
-    if (!console) {
-        fprintf(stderr, "Cannot create CLI pane\n");
-        return false;
-    }
     workspace_layout_init(&app->workspace);
-    app->consoles[0] = console;
-    snprintf(app->pane_message, sizeof(app->pane_message),
-             "Ctrl+b then ? for pane keys | Ctrl+b then o to focus CLI");
+    app->workspace.gui_width = GetScreenWidth();
+    app->window_gui_visible = true;
+    app->window_width = GetScreenWidth();
+    app->window_height = GetScreenHeight();
+    app->window_cli_width = WORKSPACE_CLI_WIDTH;
     refresh_saves(app);
     return true;
 }
@@ -1756,6 +1756,7 @@ static void shutdown_gui(GuiApp *app)
     hotbar_unload(&app->hotbar);
     inventory_unload(&app->inventory);
     block_renderer_unload(&app->blocks);
+    ui_font_unload();
     CloseWindow();
 }
 
@@ -1764,10 +1765,85 @@ static Rectangle pane_rectangle(WorkspaceRect box)
     return (Rectangle){(float)box.x, (float)box.y, (float)box.width, (float)box.height};
 }
 
+static int workspace_height(const GuiApp *app)
+{
+    int height = GetScreenHeight();
+    WorkspaceGeometry geometry;
+    workspace_layout_geometry(&app->workspace, GetScreenWidth(), height, &geometry);
+    if (app->session || app->screen == GUI_SAVE_ERROR || app->pane_message[0] || geometry.compact)
+        height -= WORKSPACE_STATUS_HEIGHT;
+    return height > 0 ? height : 1;
+}
+
 static void workspace_geometry(const GuiApp *app, WorkspaceGeometry *geometry)
 {
-    workspace_layout_geometry(&app->workspace, GetScreenWidth(),
-        GetScreenHeight() - WORKSPACE_STATUS_HEIGHT, geometry);
+    workspace_layout_geometry(&app->workspace, GetScreenWidth(), workspace_height(app), geometry);
+}
+
+/* Remember the split CLI width separately from its standalone window size.
+ * Either frontend alone gets at least the preferred GUI width. */
+static void sync_workspace_window(GuiApp *app)
+{
+    bool gui = app->workspace.gui_visible, cli = app->workspace.root >= 0;
+    if (gui != app->window_gui_visible || cli != app->window_cli_visible) {
+        /* A second action can arrive before Windows acknowledges the first
+         * resize. Use its requested dimensions, never the stale native size. */
+        bool use_requested_size = app->window_resize_pending || IsWindowMaximized();
+        int width = use_requested_size ? app->window_width : GetScreenWidth();
+        int cli_width = WORKSPACE_CLI_WIDTH;
+        if (app->window_cli_visible) {
+            cli_width = app->window_cli_width;
+            if (app->window_gui_visible) {
+                int gui_width = app->workspace.gui_width;
+                int available = width - WORKSPACE_DIVIDER - WORKSPACE_MIN_WIDTH;
+                if (gui_width > available) gui_width = available;
+                cli_width = width - gui_width - WORKSPACE_DIVIDER;
+            }
+            if (cli_width < WORKSPACE_MIN_WIDTH) cli_width = WORKSPACE_MIN_WIDTH;
+        }
+        int target = app->workspace.gui_width;
+        if (gui && cli) target += cli_width + WORKSPACE_DIVIDER;
+        else if (cli && cli_width > target) target = cli_width;
+        int minimum_width = gui ? 1000 : WORKSPACE_MIN_WIDTH;
+        if (gui && cli)
+            minimum_width = app->workspace.gui_width + WORKSPACE_DIVIDER + WORKSPACE_MIN_WIDTH;
+        int minimum_height = gui ? 650 : WORKSPACE_MIN_HEIGHT + WORKSPACE_STATUS_HEIGHT;
+        int height = use_requested_size ? app->window_height : GetScreenHeight();
+        if (height < minimum_height) height = minimum_height;
+
+        /* Keep the preferred GUI size separate from platform resize callbacks.
+         * SetWindowMinSize() also resizes a GLFW window on Windows. */
+        app->window_gui_visible = gui;
+        app->window_cli_visible = cli;
+        app->window_width = target;
+        app->window_height = height;
+        app->window_cli_width = cli_width;
+        app->window_resize_pending = true;
+        if (IsWindowMaximized()) RestoreWindow();
+        SetWindowMinSize(minimum_width, minimum_height);
+        SetWindowSize(target, height);
+        int monitor = GetCurrentMonitor();
+        Vector2 origin = GetMonitorPosition(monitor), position = GetWindowPosition();
+        int right = (int)origin.x + GetMonitorWidth(monitor) - 16;
+        int x = (int)position.x;
+        if (x + target > right) x = right - target;
+        if (x < (int)origin.x) x = (int)origin.x;
+        if (x != (int)position.x) SetWindowPosition(x, (int)position.y);
+        return;
+    }
+
+    if (app->window_resize_pending) {
+        if (GetScreenWidth() != app->window_width || GetScreenHeight() != app->window_height)
+            SetWindowSize(app->window_width, app->window_height);
+        else if (!IsWindowResized()) app->window_resize_pending = false;
+        return;
+    }
+    /* Only a settled GUI-only window can supply a new user-selected width. */
+    if (!IsWindowMaximized()) {
+        if (gui && !cli) app->workspace.gui_width = GetScreenWidth();
+        app->window_width = GetScreenWidth();
+        app->window_height = GetScreenHeight();
+    }
 }
 
 static void pane_notice(GuiApp *app, const char *text)
@@ -1864,23 +1940,17 @@ static int split_cli_pane(GuiApp *app, bool split_x)
         pane_notice(app, "Maximum CLI pane count reached");
         return -1;
     }
-    /* Reuse a preallocated console when adding its first layout node. */
-    WorkspaceConsole *console = app->consoles[slot - 1];
-    bool allocated = false;
-    if (!console) {
-        console = workspace_console_create();
-        allocated = true;
-    }
+    WorkspaceConsole *console = workspace_console_create();
     if (!console) { pane_notice(app, "Cannot allocate a CLI pane"); return -1; }
     int pane = workspace_layout_split(&app->workspace, split_x,
-        GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+        GetScreenWidth(), workspace_height(app));
     if (pane < 0) {
-        if (allocated) workspace_console_destroy(console);
+        workspace_console_destroy(console);
         pane_notice(app, "No room for a new CLI pane (maximum 8); enlarge the window or close a pane");
         return -1;
     }
     app->consoles[pane - 1] = console;
-    pane_notice(app, "CLI pane created; use world attach <name>");
+    app->pane_message[0] = '\0';
     return pane;
 }
 
@@ -1903,7 +1973,7 @@ static bool close_pane(GuiApp *app)
         (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
         app->screen = GUI_WORLD;
     }
-    pane_notice(app, pane ? "CLI pane closed" : "GUI pane closed; Ctrl+b then g restores it");
+    app->pane_message[0] = '\0';
     apply_pane_focus(app);
     return true;
 }
@@ -1915,6 +1985,7 @@ static bool update_pane_keys(GuiApp *app)
     if (control && IsKeyPressed(KEY_B)) {
         app->pane_help = false;
         app->pane_prefix = true;
+        app->pane_message[0] = '\0';
         release_mouse(app);
         while (GetCharPressed() != 0) {}
         return true;
@@ -1944,10 +2015,10 @@ static bool update_pane_keys(GuiApp *app)
     if (arrow) {
         if (control) {
             bool resized = workspace_layout_resize(&app->workspace, direction, 24,
-                GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+                GetScreenWidth(), workspace_height(app));
             pane_notice(app, resized ? "CLI divider moved" : "No movable CLI divider in this direction; GUI size is fixed");
         } else (void)workspace_layout_focus(&app->workspace, direction,
-            GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+            GetScreenWidth(), workspace_height(app));
     }
     int character;
     while ((character = GetCharPressed()) != 0) {
@@ -1961,7 +2032,7 @@ static bool update_pane_keys(GuiApp *app)
             WorkspaceDirection move = character == 'H' ? WORKSPACE_LEFT :
                 character == 'L' ? WORKSPACE_RIGHT : character == 'K' ? WORKSPACE_UP : WORKSPACE_DOWN;
             bool resized = workspace_layout_resize(&app->workspace, move, 24,
-                GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+                GetScreenWidth(), workspace_height(app));
             pane_notice(app, resized ? "CLI divider moved" : "No movable CLI divider; GUI size is fixed");
             break;
         }
@@ -1971,9 +2042,9 @@ static bool update_pane_keys(GuiApp *app)
             else pane_notice(app, "CLI zoom toggled inside the CLI area");
             break;
         case 'x': (void)close_pane(app); break;
-        case 'g': workspace_layout_show_gui(&app->workspace); pane_notice(app, "GUI restored"); break;
+        case 'g': workspace_layout_show_gui(&app->workspace); break;
         case '?': app->pane_help = true; break;
-        default: pane_notice(app, "Unknown pane key; Ctrl+b then ? lists the keys"); break;
+        default: pane_notice(app, "Unknown pane key"); break;
         }
     }
     if (acted) {
@@ -2015,6 +2086,7 @@ static void update_cli_pane(GuiApp *app)
 static VoxelHit update_workspace_input(GuiApp *app)
 {
     VoxelHit hit = {0};
+    sync_workspace_window(app);
     if (!prepare_gui_view(app)) return hit;
     if (!IsWindowFocused() && app->workspace.focus == 0 && app->session &&
         app->screen != GUI_PAUSE &&
@@ -2041,6 +2113,7 @@ static VoxelHit update_workspace_input(GuiApp *app)
         else if (app->screen == GUI_BARREL) update_barrel(app);
         else if (app->screen == GUI_HOPPER || app->screen == GUI_DROPPER) update_container(app);
     }
+    sync_workspace_window(app);
     return hit;
 }
 
@@ -2062,8 +2135,6 @@ static void draw_pane_help(void)
         "CLI: Enter executes, Tab completes, Up/Down history",
         "PgUp/PgDn scroll, Ctrl/Cmd+V pastes, Ctrl+U clears",
         "CLI Esc clears its line or cancels a pending confirmation",
-        "world create <name> creates; world attach <name> selects",
-        "world list shows saves; world detach clears this CLI target",
         "CLI title saves and detaches; quit saves and closes this pane",
         "GUI and each CLI pane select worlds independently."
     };
@@ -2076,7 +2147,7 @@ static void draw_pane_help(void)
     DrawRectangleLines(x, y, width, height, (Color){172, 143, 255, 255});
     BeginScissorMode(x, y, width, height);
     for (size_t i = 0; i < sizeof(lines)/sizeof(lines[0]); ++i)
-        DrawText(lines[i], x + 18, y + 18 + (int)i*26, 18, RAYWHITE);
+        ui_text_draw(lines[i], x + 18, y + 18 + (int)i*26, 18, RAYWHITE);
     EndScissorMode();
 }
 
@@ -2115,7 +2186,7 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
         DrawRectangle(geometry.gui.x, geometry.gui.y, geometry.gui.width, WORKSPACE_HEADER_HEIGHT,
             (Color){34, 42, 53, 255});
         Color accent = app->workspace.focus == 0 ? (Color){172, 143, 255, 255} : (Color){118, 130, 143, 255};
-        DrawText(app->workspace.focus == 0 ? "0: mc-gui *" : "0: mc-gui", 8, 5, 16, accent);
+        ui_text_draw(app->workspace.focus == 0 ? "0: mc-gui *" : "0: mc-gui", 8, 5, 16, accent);
         DrawRectangleLinesEx(pane_rectangle(geometry.gui), app->workspace.focus == 0 ? 2 : 1, accent);
     }
     gui_view_reset();
@@ -2124,21 +2195,21 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
             workspace_console_draw(app->consoles[i], pane_rectangle(geometry.panes[i]),
                 i + 1, app->workspace.focus == i + 1, app->workspace.zoom > 0 || geometry.compact);
     }
-    if (app->workspace.root < 0) {
-        DrawText("Ctrl+b then % or \" opens CLI", geometry.cli.x + 12, 40, 16, GRAY);
-    }
     int y = GetScreenHeight() - WORKSPACE_STATUS_HEIGHT;
-    DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});
     const char *state = app->screen == GUI_SAVE_ERROR ? "SAVE ERROR" :
         !app->session ?
-        (managed_world_count(app) ? "NO GUI TARGET" : "NO WORLD") :
+        "" :
         app->screen == GUI_PAUSE ? "GUI MENU" :
         sim_is_frozen(game_session_world(app->session)) ? "FROZEN" : "RUNNING";
-    const char *message = app->pane_prefix ? "PREFIX: % split-right | \" split-down | o focus | ? help | Esc cancel" :
-        geometry.compact ? "CLI area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
-    BeginScissorMode(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT);
-    DrawText(TextFormat("%s | %s", state, message), 8, y + 5, 16, RAYWHITE);
-    EndScissorMode();
+    const char *message = geometry.compact ? "CLI area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
+    bool show_status = state[0] || geometry.compact || app->pane_message[0];
+    if (show_status) {
+        DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});
+        BeginScissorMode(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT);
+        ui_text_draw(TextFormat("%s%s%s", state,
+            state[0] && message[0] ? " | " : "", message), 8, y + 5, 16, RAYWHITE);
+        EndScissorMode();
+    }
     if (app->pane_help) draw_pane_help();
 }
 

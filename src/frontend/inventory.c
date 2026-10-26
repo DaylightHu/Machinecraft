@@ -1,5 +1,6 @@
 #include "gui_view.h"
 #include "inventory.h"
+#include "ui_font.h"
 
 #include <stddef.h>
 
@@ -195,13 +196,13 @@ void inventory_draw_stack(const Inventory *inventory, ItemStack stack,
     Texture2D texture = stack.item < ITEM_COUNT ?
                         inventory->item_textures[stack.item] : (Texture2D){0};
     if (texture.id) draw_icon(texture, slot);
-    else DrawText("?", (int)slot.x + 18, (int)slot.y + 10, 26, RAYWHITE);
+    else ui_text_draw("?", (int)slot.x + 18, (int)slot.y + 10, 26, RAYWHITE);
     if (stack.count > 1) {
         const char *count = TextFormat("%u", (unsigned)stack.count);
-        int x = (int)(slot.x + slot.width) - MeasureText(count, 18) - 4;
+        int x = (int)(slot.x + slot.width) - ui_text_width(count, 18) - 4;
         int y = (int)(slot.y + slot.height) - 22;
-        DrawText(count, x + 1, y + 1, 18, BLACK);
-        DrawText(count, x, y, 18, RAYWHITE);
+        ui_text_draw(count, x + 1, y + 1, 18, BLACK);
+        ui_text_draw(count, x, y, 18, RAYWHITE);
     }
 }
 
@@ -266,9 +267,9 @@ void inventory_draw(const Inventory *inventory, InventorySlot selected)
 
     const char *title = "INVENTORY";
     int title_size = 25;
-    DrawText(title,
+    ui_text_draw(title,
              (int)(layout.panel.x +
-                   (layout.panel.width - MeasureText(title, title_size))*0.5f),
+                   (layout.panel.width - ui_text_width(title, title_size))*0.5f),
              (int)layout.panel.y + 17, title_size, (Color){26, 50, 55, 255});
 
     for (int index = 0; index < INVENTORY_SLOT_COUNT; ++index) {
@@ -300,9 +301,9 @@ void inventory_draw(const Inventory *inventory, InventorySlot selected)
         int label_y = (int)(layout.grid_y +
             INVENTORY_ROWS*INVENTORY_SLOT_SIZE +
             (INVENTORY_ROWS - 1)*INVENTORY_SLOT_GAP + 8);
-        DrawText(label,
+        ui_text_draw(label,
                  (int)(layout.panel.x +
-                       (layout.panel.width - MeasureText(label, label_size))*0.5f),
+                       (layout.panel.width - ui_text_width(label, label_size))*0.5f),
                  label_y, label_size, (Color){26, 50, 55, 255});
     }
 }

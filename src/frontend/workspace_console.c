@@ -1,12 +1,13 @@
 #include "workspace_console.h"
 #include "command_completion.h"
+#include "ui_font.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 enum { HISTORY_LINES = 192, LINE_LENGTH = 768, INPUT_HISTORY = 32,
-       CELL_WIDTH = 12, FONT_SIZE = 16, ROW_HEIGHT = 20, HEADER_HEIGHT = 25 };
+       FONT_SIZE = 20, ROW_HEIGHT = 24, HEADER_HEIGHT = 25, HEADER_FONT_SIZE = 16 };
 typedef struct { char text[LINE_LENGTH]; bool error; } ConsoleLine;
 struct WorkspaceConsole {
     ConsoleCommandState commands;
@@ -36,12 +37,6 @@ void workspace_console_message(WorkspaceConsole *console, const char *text, bool
 WorkspaceConsole *workspace_console_create(void)
 {
     WorkspaceConsole *console = calloc(1, sizeof(*console));
-    if (console) {
-        workspace_console_message(console, "Machinecraft CLI", false);
-        workspace_console_message(console, "Type help. Ctrl+b ? for pane keys.", false);
-        workspace_console_message(console,
-            "world create <name> | world attach <name> | world list | world detach", false);
-    }
     return console;
 }
 void workspace_console_destroy(WorkspaceConsole *console) { free(console); }
@@ -197,9 +192,6 @@ ConsoleCommandReply workspace_console_update(WorkspaceConsole *console,
                                     output_fragment, console);
         if (show_workspace_help) {
             workspace_console_message(console,
-                "world create <name> | world attach <name> | world list | world detach",
-                false);
-            workspace_console_message(console,
                 "Here, title saves and detaches CLI; quit saves and closes this pane",
                 false);
         }
@@ -219,24 +211,26 @@ ConsoleCommandReply workspace_console_update(WorkspaceConsole *console,
     changed(console);
     return reply;
 }
-static void draw_cells(const char *text, size_t length, int x, int y, Color color)
+static void draw_cells(const char *text, size_t length, int x, int y, int cell_width, Color color)
 {
     for (size_t i = 0; i < length; ++i) {
         char character[2] = {text[i], '\0'};
-        DrawText(character, x + (int)i*CELL_WIDTH, y, FONT_SIZE, color);
+        ui_text_draw(character, x + (int)i*cell_width, y, FONT_SIZE, color);
     }
 }
 void workspace_console_draw(WorkspaceConsole *console, Rectangle box, int pane,
                               bool focused, bool zoomed)
 {
     if (box.width < 2 || box.height < 2) return;
+    int cell_width = ui_text_width("M", FONT_SIZE);
+    if (cell_width < 1) cell_width = 1;
     Color accent = focused ? (Color){172, 143, 255, 255} : (Color){79, 89, 99, 255};
-    DrawRectangleRec(box, (Color){17, 22, 29, 255});
+    DrawRectangleRec(box, (Color){30, 30, 30, 255});
     BeginScissorMode((int)box.x, (int)box.y, (int)box.width, (int)box.height);
     DrawRectangle((int)box.x, (int)box.y, (int)box.width, HEADER_HEIGHT, (Color){34, 42, 53, 255});
-    DrawText(TextFormat("%d: mc-cli%s%s", pane, zoomed ? " [zoom]" : "", focused ? " *" : ""),
-        (int)box.x + 8, (int)box.y + 5, FONT_SIZE, accent);
-    int columns = ((int)box.width - 16)/CELL_WIDTH;
+    ui_text_draw(TextFormat("%d: mc-cli%s%s", pane, zoomed ? " [zoom]" : "", focused ? " *" : ""),
+        (int)box.x + 8, (int)box.y + 5, HEADER_FONT_SIZE, accent);
+    int columns = ((int)box.width - 16)/cell_width;
     if (columns < 1) columns = 1;
     int prompt_y = (int)(box.y + box.height) - ROW_HEIGHT - 6;
     int rows = (prompt_y - (int)box.y - HEADER_HEIGHT - 5)/ROW_HEIGHT;
@@ -259,7 +253,7 @@ void workspace_console_draw(WorkspaceConsole *console, Rectangle box, int pane,
             size_t count = length - start;
             if (count > (size_t)columns) count = (size_t)columns;
             int y = prompt_y - (++drawn)*ROW_HEIGHT - 4;
-            draw_cells(line->text + start, count, (int)box.x + 8, y,
+            draw_cells(line->text + start, count, (int)box.x + 8, y, cell_width,
                 line->error ? (Color){255, 128, 128, 255} : (Color){211, 222, 231, 255});
         }
     }
@@ -272,11 +266,11 @@ void workspace_console_draw(WorkspaceConsole *console, Rectangle box, int pane,
         size_t count = console->length - start;
         if (count > (size_t)available) count = (size_t)available;
         DrawLine((int)box.x + 4, prompt_y - 5, (int)(box.x + box.width) - 4, prompt_y - 5, accent);
-        draw_cells(prompt, prefix, (int)box.x + 8, prompt_y, accent);
-        draw_cells(console->input + start, count, (int)box.x + 8 + (int)prefix*CELL_WIDTH, prompt_y, RAYWHITE);
+        draw_cells(prompt, prefix, (int)box.x + 8, prompt_y, cell_width, accent);
+        draw_cells(console->input + start, count, (int)box.x + 8 + (int)prefix*cell_width, prompt_y, cell_width, RAYWHITE);
         if (focused && ((int)(GetTime()*2)) % 2 == 0) {
-            int x = (int)box.x + 8 + ((int)prefix + (int)(console->cursor - start))*CELL_WIDTH;
-            DrawRectangle(x, prompt_y + FONT_SIZE, CELL_WIDTH - 2, 2, accent);
+            int x = (int)box.x + 8 + ((int)prefix + (int)(console->cursor - start))*cell_width;
+            DrawRectangle(x, prompt_y + FONT_SIZE, cell_width > 2 ? cell_width - 2 : 1, 2, accent);
         }
     }
     EndScissorMode();
