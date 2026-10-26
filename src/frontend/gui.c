@@ -15,6 +15,7 @@
 #include "workspace_layout.h"
 #include "workspace_console.h"
 #include "world_command.h"
+#include "world_session_manager.h"
 #include "raylib.h"
 #include "rs/session.h"
 
@@ -56,7 +57,8 @@ typedef enum {
 typedef enum {
     AFTER_SAVE_NONE,
     AFTER_SAVE_TITLE,
-    AFTER_SAVE_EXIT
+    AFTER_SAVE_GUI_DETACH,
+    AFTER_SAVE_HOST_EXIT
 } AfterSave;
 
 typedef struct {
@@ -64,11 +66,6 @@ typedef struct {
     double time;
     bool error;
 } ChatMessage;
-
-typedef struct {
-    char name[GAME_SESSION_NAME_CAPACITY];
-    GameSession *session;
-} ManagedWorld;
 
 typedef struct {
     BlockRenderer blocks;
@@ -102,9 +99,8 @@ typedef struct {
     WorkspaceLayout workspace;
     WorkspaceConsole *consoles[WORKSPACE_CLI_LIMIT];
     GameSession *cli_sessions[WORKSPACE_CLI_LIMIT];
-    ManagedWorld worlds[GAME_SESSION_MAX_SAVES];
-    size_t world_count;
-    GameSession *save_error_session;
+    /* Borrowed from the host; frontends may select sessions but do not own them. */
+    WorldSessionManager *world_sessions;
     RenderTexture2D gui_target;
     bool pane_prefix, pane_help;
     char pane_message[MESSAGE_CAPACITY];
@@ -190,92 +186,36 @@ static bool save_name_exists(const GuiApp *app, const char *name)
     return false;
 }
 
-static int managed_world_index(const GuiApp *app, const char *name)
-{
-    for (size_t index = 0; index < app->world_count; ++index)
-        if (names_equal(app->worlds[index].name, name)) return (int)index;
-    return -1;
-}
-
 static GameSession *managed_world_find(const GuiApp *app, const char *name)
 {
-    int index = managed_world_index(app, name);
-    return index < 0 ? NULL : app->worlds[index].session;
+    return world_session_manager_find(app->world_sessions, name);
+}
+
+static size_t managed_world_count(const GuiApp *app)
+{
+    return world_session_manager_count(app->world_sessions);
+}
+
+static const char *managed_world_name(const GuiApp *app,
+                                      const GameSession *session)
+{
+    const char *name = world_session_manager_name(app->world_sessions, session);
+    return name ? name : "world";
 }
 
 static bool managed_world_add(GuiApp *app, const char *name, GameSession *session)
 {
-    if (!game_session_valid_name(name) || !session) return false;
-    for (size_t index = 0; index < app->world_count; ++index)
-        if (app->worlds[index].session == session)
-            return names_equal(app->worlds[index].name, name);
-    int existing = managed_world_index(app, name);
-    if (existing >= 0) return app->worlds[existing].session == session;
-    if (app->world_count >= GAME_SESSION_MAX_SAVES) return false;
-    ManagedWorld *world = &app->worlds[app->world_count++];
-    snprintf(world->name, sizeof(world->name), "%s", name);
-    world->session = session;
-    return true;
-}
-
-static bool managed_world_is_cli_active(const GuiApp *app,
-                                        const GameSession *session)
-{
-    for (int index = 0; index < WORKSPACE_CLI_LIMIT; ++index)
-        if (app->cli_sessions[index] == session) return true;
-    return false;
+    return world_session_manager_add(app->world_sessions, name, session);
 }
 
 static bool any_world_dirty(const GuiApp *app)
 {
-    for (size_t index = 0; index < app->world_count; ++index)
-        if (game_session_dirty(app->worlds[index].session)) return true;
-    return false;
+    return world_session_manager_any_dirty(app->world_sessions);
 }
 
 static GameSessionResult save_all_worlds(GuiApp *app, GameSession **failed_session)
 {
-    if (failed_session) *failed_session = NULL;
-    for (size_t index = 0; index < app->world_count; ++index) {
-        GameSession *session = app->worlds[index].session;
-        if (!game_session_dirty(session)) continue;
-        GameSessionResult result = game_session_save(session);
-        if (result != GAME_SESSION_OK) {
-            if (failed_session) *failed_session = session;
-            return result;
-        }
-    }
-    return GAME_SESSION_OK;
-}
-
-static void destroy_managed_worlds(GuiApp *app)
-{
-    for (size_t index = 0; index < app->world_count; ++index) {
-        game_session_destroy(app->worlds[index].session);
-        app->worlds[index] = (ManagedWorld){0};
-    }
-    app->world_count = 0;
-}
-
-static void managed_world_remove_destroy(GuiApp *app, GameSession *session)
-{
-    for (int pane = 0; pane < WORKSPACE_CLI_LIMIT; ++pane) {
-        if (app->cli_sessions[pane] != session) continue;
-        app->cli_sessions[pane] = NULL;
-        if (app->consoles[pane]) {
-            workspace_console_detach_world(app->consoles[pane]);
-            workspace_console_message(app->consoles[pane],
-                                      "Attached world was discarded", true);
-        }
-    }
-    for (size_t index = 0; index < app->world_count; ++index) {
-        if (app->worlds[index].session != session) continue;
-        game_session_destroy(session);
-        for (size_t next = index + 1; next < app->world_count; ++next)
-            app->worlds[next - 1] = app->worlds[next];
-        app->worlds[--app->world_count] = (ManagedWorld){0};
-        return;
-    }
+    return world_session_manager_save_dirty(app->world_sessions, failed_session);
 }
 
 static GameSessionResult list_saved_worlds(GameSaveList *saves)
@@ -474,26 +414,38 @@ static void return_to_title(GuiApp *app)
     refresh_saves(app);
 }
 
+static bool close_pane(GuiApp *app);
+
+static void detach_gui_frontend(GuiApp *app)
+{
+    close_world(app);
+    app->screen = GUI_TITLE;
+    workspace_layout_show_gui(&app->workspace);
+    if (!close_pane(app))
+        snprintf(app->pane_message, sizeof(app->pane_message),
+                 "GUI remains open because no CLI pane could be created");
+}
+
 static void perform_after_save(GuiApp *app, AfterSave action)
 {
     if (action == AFTER_SAVE_TITLE) {
         return_to_title(app);
-    } else if (action == AFTER_SAVE_EXIT) {
+    } else if (action == AFTER_SAVE_GUI_DETACH) {
+        detach_gui_frontend(app);
+    } else if (action == AFTER_SAVE_HOST_EXIT) {
         app->running = false;
     }
 }
 
 static void request_save_action(GuiApp *app, AfterSave action)
 {
-    GameSession *failed_session = NULL;
     GameSessionResult result = GAME_SESSION_OK;
-    if (action == AFTER_SAVE_TITLE) {
+    if (action == AFTER_SAVE_TITLE || action == AFTER_SAVE_GUI_DETACH) {
         if (app->session) {
-            failed_session = app->session;
             result = game_session_save(app->session);
         }
     } else {
-        result = save_all_worlds(app, &failed_session);
+        result = save_all_worlds(app, NULL);
     }
     if (result == GAME_SESSION_OK) {
         perform_after_save(app, action);
@@ -504,7 +456,6 @@ static void request_save_action(GuiApp *app, AfterSave action)
     app->screen_before_error = app->screen;
     app->screen = GUI_SAVE_ERROR;
     app->after_save = action;
-    app->save_error_session = failed_session;
     snprintf(app->message, sizeof(app->message), "Save failed: %s",
              game_session_result_name(result));
 }
@@ -528,7 +479,7 @@ static void create_world(GuiApp *app)
                  game_session_result_name(list_result));
         return;
     }
-    if (app->world_count >= GAME_SESSION_MAX_SAVES) {
+    if (managed_world_count(app) >= GAME_SESSION_MAX_SAVES) {
         snprintf(app->message, sizeof(app->message), "Too many open world sessions");
         return;
     }
@@ -705,7 +656,8 @@ static void draw_title(GuiApp *app)
     Rectangle exit = {(float)center + 10, actions_y, 300, 44};
     if (button(load, "Load selected", active && app->selected_save >= 0))
         load_selected_world(app);
-    if (button(exit, "Exit", active)) request_save_action(app, AFTER_SAVE_EXIT);
+    if (button(exit, "Close GUI", active))
+        request_save_action(app, AFTER_SAVE_GUI_DETACH);
     draw_centered(app->message, gui_view_height() - 34, 17,
                   (Color){112, 65, 52, 255});
 }
@@ -831,23 +783,17 @@ static BlockId pickable_block(BlockId id)
     return id > BLOCK_AIR && id < BLOCK_INTERNAL_FIRST ? id : BLOCK_AIR;
 }
 
-static void advance_active_sessions(GuiApp *app)
+static void advance_world_sessions(GuiApp *app)
 {
-    for (size_t index = 0; index < app->world_count; ++index) {
-        GameSession *session = app->worlds[index].session;
-        bool gui_active = session == app->session &&
-            app->screen >= GUI_WORLD && app->screen <= GUI_DROPPER;
-        bool cli_active = managed_world_is_cli_active(app, session);
-        if (!gui_active && !cli_active) continue;
-        if (session == app->session && app->screen == GUI_PAUSE) continue;
-        RsResult result = game_session_advance(session, GetFrameTime());
-        if (result != RS_OK && result != RS_UNCHANGED) {
-            snprintf(app->message, sizeof(app->message), "%s simulation: %s",
-                     app->worlds[index].name, rs_result_name(result));
-            app->fatal_error = true;
-            app->running = false;
-            return;
-        }
+    GameSession *failed_session = NULL;
+    RsResult result = world_session_manager_advance(app->world_sessions,
+                                                     GetFrameTime(),
+                                                     &failed_session);
+    if (result != RS_OK && result != RS_UNCHANGED) {
+        snprintf(app->message, sizeof(app->message), "%s simulation: %s",
+                 managed_world_name(app, failed_session), rs_result_name(result));
+        app->fatal_error = true;
+        app->running = false;
     }
 }
 
@@ -1654,7 +1600,7 @@ static void draw_pause(GuiApp *app)
 
     DrawRectangleRec(panel, (Color){226, 218, 196, 248});
     DrawRectangleLinesEx(panel, 3.0f, (Color){34, 63, 66, 255});
-    draw_centered("WORLD PAUSED", 137, 30, (Color){26, 50, 55, 255});
+    draw_centered("GUI MENU", 137, 30, (Color){26, 50, 55, 255});
 
     Rectangle resume = {(float)center - 140, 205, 280, 44};
     Rectangle save = {(float)center - 140, 265, 280, 44};
@@ -1678,7 +1624,6 @@ static void draw_pause(GuiApp *app)
             app->screen_before_error = GUI_PAUSE;
             app->screen = GUI_SAVE_ERROR;
             app->after_save = AFTER_SAVE_NONE;
-            app->save_error_session = app->session;
         }
 
         return;
@@ -1689,8 +1634,8 @@ static void draw_pause(GuiApp *app)
         return;
     }
 
-    if (button(exit, "Save and exit", active)) {
-        request_save_action(app, AFTER_SAVE_EXIT);
+    if (button(exit, "Save and close GUI", active)) {
+        request_save_action(app, AFTER_SAVE_GUI_DETACH);
         return;
     }
 }
@@ -1699,32 +1644,30 @@ static void draw_save_error(GuiApp *app)
 {
     bool active = app->workspace.focus == 0;
     ClearBackground((Color){39, 48, 49, 255});
-    draw_centered("THE WORLD WAS NOT CLOSED", 130, 30, RAYWHITE);
+    draw_centered("SAVE FAILED", 130, 30, RAYWHITE);
     draw_centered(app->message, 185, 19, (Color){244, 190, 88, 255});
     draw_centered("The last valid .mcw file is still intact.",
                   220, 18, (Color){193, 205, 204, 255});
     int center = gui_view_width()/2;
     Rectangle retry = {(float)center - 160, 290, 320, 46};
     Rectangle cancel = {(float)center - 160, 352, 320, 46};
-    Rectangle discard = {(float)center - 160, 414, 320, 46};
+    Rectangle leave = {(float)center - 160, 414, 320, 46};
     if (button(retry, "Retry save", active)) {
         GameSession *failed_session = NULL;
         GameSessionResult result;
         if (app->after_save == AFTER_SAVE_NONE ||
-            app->after_save == AFTER_SAVE_TITLE) {
-            failed_session = app->session;
+            app->after_save == AFTER_SAVE_TITLE ||
+            app->after_save == AFTER_SAVE_GUI_DETACH) {
             result = app->session ? game_session_save(app->session) : GAME_SESSION_OK;
         } else {
             result = save_all_worlds(app, &failed_session);
         }
         if (result == GAME_SESSION_OK) {
-            app->save_error_session = NULL;
             if (app->after_save == AFTER_SAVE_NONE)
                 app->screen = app->screen_before_error;
             else
                 perform_after_save(app, app->after_save);
         } else {
-            app->save_error_session = failed_session;
             snprintf(app->message, sizeof(app->message), "Save failed: %s",
                      game_session_result_name(result));
         }
@@ -1732,35 +1675,38 @@ static void draw_save_error(GuiApp *app)
     if (button(cancel, "Return to world", active)) {
         app->screen = app->screen_before_error;
         app->after_save = AFTER_SAVE_NONE;
-        app->save_error_session = NULL;
     }
-    const char *discard_label = app->after_save == AFTER_SAVE_TITLE ?
-                                "Title without saving" : "Exit without saving";
-    if (button(discard, discard_label,
+    const char *leave_label = app->after_save == AFTER_SAVE_TITLE ?
+        "Return to title; keep session" :
+        app->after_save == AFTER_SAVE_GUI_DETACH ?
+        "Close GUI; keep session" : "Exit without saving";
+    if (button(leave, leave_label,
                active && app->after_save != AFTER_SAVE_NONE)) {
         AfterSave action = app->after_save;
         if (action == AFTER_SAVE_TITLE) {
-            GameSession *session = app->save_error_session ?
-                                   app->save_error_session : app->session;
-            if (app->session == session) close_world(app);
-            if (session) managed_world_remove_destroy(app, session);
             return_to_title(app);
-        } else if (action == AFTER_SAVE_EXIT) {
+        } else if (action == AFTER_SAVE_GUI_DETACH) {
+            detach_gui_frontend(app);
+        } else if (action == AFTER_SAVE_HOST_EXIT) {
             close_world(app);
             for (int pane = 0; pane < WORKSPACE_CLI_LIMIT; ++pane) {
                 app->cli_sessions[pane] = NULL;
                 if (app->consoles[pane])
                     workspace_console_detach_world(app->consoles[pane]);
             }
-            destroy_managed_worlds(app);
             app->running = false;
         }
     }
 }
 
-static bool initialize(GuiApp *app)
+static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
 {
     *app = (GuiApp){0};
+    if (!world_sessions) {
+        fprintf(stderr, "World session manager is unavailable\n");
+        return false;
+    }
+    app->world_sessions = world_sessions;
     app->running = true;
     app->selected_save = -1;
     app->screen = GUI_TITLE;
@@ -1805,7 +1751,6 @@ static void shutdown_gui(GuiApp *app)
         workspace_console_destroy(app->consoles[i]);
         app->consoles[i] = NULL;
     }
-    destroy_managed_worlds(app);
     if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
     app->gui_target = (RenderTexture2D){0};
     hotbar_unload(&app->hotbar);
@@ -1834,200 +1779,32 @@ typedef struct {
     GuiApp *app;
 } WorldCommandContext;
 
-static void world_command_error(WorkspaceConsole *console, const char *message)
+static void world_command_write(void *context, const char *text, bool error)
 {
-    workspace_console_message(console, message, true);
+    workspace_console_message(context, text, error);
 }
 
-static bool bind_cli_world(WorkspaceConsole *console, GameSession **target,
-                           GameSession *session, const char *name, bool created)
+static void world_command_reset(void *context)
 {
-    if (*target == session) {
-        char message[GAME_SESSION_NAME_CAPACITY + 48];
-        snprintf(message, sizeof(message), "CLI already attached to '%s'", name);
-        workspace_console_message(console, message, false);
-        return true;
-    }
-    workspace_console_detach_world(console);
-    *target = session;
-    char message[GAME_SESSION_NAME_CAPACITY + 48];
-    snprintf(message, sizeof(message), created ? "Created and attached CLI to '%s'" :
-             "CLI attached to '%s'", name);
-    workspace_console_message(console, message, false);
-    return true;
+    workspace_console_detach_world(context);
 }
 
-/* World commands belong to the CLI pane: they only change that pane's target. */
 static bool handle_workspace_world_command(void *context,
     WorkspaceConsole *console, const char *input, GameSession **target)
 {
     WorldCommandContext *command_context = context;
     GuiApp *app = command_context->app;
-    WorkspaceWorldCommand command = workspace_world_command_parse(input);
-    if (command.kind == WORKSPACE_WORLD_NOT_COMMAND) return false;
-    if (command.kind == WORKSPACE_WORLD_INVALID) {
-        world_command_error(console,
-            "usage: world create <name> | attach <name> | list | detach");
-        return true;
-    }
-    if (command.kind == WORKSPACE_WORLD_LIST) {
-        GameSaveList saves;
-        GameSessionResult result = list_saved_worlds(&saves);
-        if (result != GAME_SESSION_OK && result != GAME_SESSION_TOO_MANY_SAVES) {
-            char message[128];
-            snprintf(message, sizeof(message), "Cannot list worlds: %s",
-                     game_session_result_name(result));
-            world_command_error(console, message);
-            return true;
-        }
-        if (!saves.count) {
-            workspace_console_message(console, "No saved worlds", false);
-            return true;
-        }
-        for (size_t index = 0; index < saves.count; ++index) {
-            GameSession *session = managed_world_find(app, saves.names[index]);
-            const char *marker = session && session == *target ? "> " :
-                                 session ? "+ " : "  ";
-            char message[GAME_SESSION_NAME_CAPACITY + 24];
-            snprintf(message, sizeof(message), "%s%s", marker, saves.names[index]);
-            workspace_console_message(console, message, false);
-        }
-        return true;
-    }
-    if (command.kind == WORKSPACE_WORLD_DETACH) {
-        if (!*target) {
-            world_command_error(console, "CLI is not attached to a world");
-            return true;
-        }
-        *target = NULL;
-        workspace_console_detach_world(console);
-        workspace_console_message(console, "CLI detached from world", false);
-        return true;
-    }
-    const char *argument = command.name;
-    if (!game_session_valid_name(argument)) {
-        world_command_error(console,
-            "invalid world name; use letters, numbers, spaces, '-' or '_'");
-        return true;
-    }
-
-    if (command.kind == WORKSPACE_WORLD_CREATE) {
-        if (managed_world_find(app, argument)) {
-            world_command_error(console, "world is already loaded; use world attach <name>");
-            return true;
-        }
-        GameSessionResult list_result;
-        bool exists = saved_world_exists(argument, &list_result);
-        if (exists) {
-            world_command_error(console, "world already exists; use world attach <name>");
-            return true;
-        }
-        if (list_result != GAME_SESSION_OK) {
-            char message[128];
-            snprintf(message, sizeof(message), "Cannot create world: %s",
-                     game_session_result_name(list_result));
-            world_command_error(console, message);
-            return true;
-        }
-        if (app->world_count >= GAME_SESSION_MAX_SAVES) {
-            world_command_error(console, "too many loaded worlds");
-            return true;
-        }
-        GameSaveList saves;
-        list_result = list_saved_worlds(&saves);
-        if (list_result != GAME_SESSION_OK ||
-            saves.count >= GAME_SESSION_MAX_SAVES) {
-            world_command_error(console, "maximum number of saved worlds reached");
-            return true;
-        }
-        char path[GAME_SESSION_PATH_CAPACITY];
-        GameSessionResult result = game_session_make_path(save_directory,
-                                                           argument, path);
-        if (result != GAME_SESSION_OK) {
-            char message[128];
-            snprintf(message, sizeof(message), "Cannot create world: %s",
-                     game_session_result_name(result));
-            world_command_error(console, message);
-            return true;
-        }
-        GameSession *session = game_session_create(path, world_config_default(),
-                                                   &result);
-        if (!session) {
-            char message[128];
-            snprintf(message, sizeof(message), "Cannot create world: %s",
-                     game_session_result_name(result));
-            world_command_error(console, message);
-            return true;
-        }
-        result = game_session_save(session);
-        if (result != GAME_SESSION_OK) {
-            game_session_destroy(session);
-            char message[128];
-            snprintf(message, sizeof(message), "Cannot save world: %s",
-                     game_session_result_name(result));
-            world_command_error(console, message);
-            return true;
-        }
-        if (!managed_world_add(app, argument, session)) {
-            game_session_destroy(session);
-            world_command_error(console,
-                "world was saved, but its session could not be registered");
-            return true;
-        }
-        (void)bind_cli_world(console, target, session, argument, true);
-        refresh_saves(app);
-        return true;
-    }
-
-    GameSession *session = managed_world_find(app, argument);
-    const char *world_name = argument;
-    if (!session) {
-        GameSaveList saves;
-        GameSessionResult result = list_saved_worlds(&saves);
-        if (result != GAME_SESSION_OK && result != GAME_SESSION_TOO_MANY_SAVES) {
-            char message[128];
-            snprintf(message, sizeof(message), "Cannot list worlds: %s",
-                     game_session_result_name(result));
-            world_command_error(console, message);
-            return true;
-        }
-        const char *saved_name = NULL;
-        for (size_t index = 0; index < saves.count; ++index) {
-            if (names_equal(saves.names[index], argument)) {
-                saved_name = saves.names[index];
-                break;
-            }
-        }
-        if (!saved_name) {
-            char message[GAME_SESSION_NAME_CAPACITY + 48];
-            snprintf(message, sizeof(message), "No saved world named '%s'", argument);
-            world_command_error(console, message);
-            return true;
-        }
-        if (app->world_count >= GAME_SESSION_MAX_SAVES) {
-            world_command_error(console, "too many loaded worlds");
-            return true;
-        }
-        char path[GAME_SESSION_PATH_CAPACITY];
-        result = game_session_make_path(save_directory, saved_name, path);
-        if (result == GAME_SESSION_OK) session = game_session_load(path, &result);
-        if (!session) {
-            char message[128];
-            snprintf(message, sizeof(message), "Cannot attach to world: %s",
-                     game_session_result_name(result));
-            world_command_error(console, message);
-            return true;
-        }
-        if (!managed_world_add(app, saved_name, session)) {
-            game_session_destroy(session);
-            world_command_error(console, "cannot register world session");
-            return true;
-        }
-        world_name = saved_name;
-    }
-    (void)bind_cli_world(console, target, session, world_name, false);
-    refresh_saves(app);
-    return true;
+    WorkspaceWorldCommandIO io = {
+        .sessions = app->world_sessions,
+        .save_directory = save_directory,
+        .write = world_command_write,
+        .write_context = console,
+        .reset_target_state = world_command_reset,
+        .reset_context = console
+    };
+    bool handled = workspace_world_command_run(&io, input, target);
+    if (io.saves_changed) refresh_saves(app);
+    return handled;
 }
 
 static bool prepare_gui_view(GuiApp *app)
@@ -2080,13 +1857,25 @@ static void apply_pane_focus(GuiApp *app)
 
 static int split_cli_pane(GuiApp *app, bool split_x)
 {
-    /* Allocate before mutating layout, so failure preserves the old panes. */
-    WorkspaceConsole *console = workspace_console_create();
+    int slot = 1;
+    while (slot <= WORKSPACE_CLI_LIMIT &&
+           workspace_layout_has_pane(&app->workspace, slot)) ++slot;
+    if (slot > WORKSPACE_CLI_LIMIT) {
+        pane_notice(app, "Maximum CLI pane count reached");
+        return -1;
+    }
+    /* Reuse a preallocated console when adding its first layout node. */
+    WorkspaceConsole *console = app->consoles[slot - 1];
+    bool allocated = false;
+    if (!console) {
+        console = workspace_console_create();
+        allocated = true;
+    }
     if (!console) { pane_notice(app, "Cannot allocate a CLI pane"); return -1; }
     int pane = workspace_layout_split(&app->workspace, split_x,
         GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
     if (pane < 0) {
-        workspace_console_destroy(console);
+        if (allocated) workspace_console_destroy(console);
         pane_notice(app, "No room for a new CLI pane (maximum 8); enlarge the window or close a pane");
         return -1;
     }
@@ -2103,7 +1892,7 @@ static bool close_pane(GuiApp *app)
         app->workspace.focus = 0;
     }
     if (!workspace_layout_close(&app->workspace)) {
-        pane_notice(app, "Keep the last pane open; use title or quit to save and leave the world");
+        pane_notice(app, "Keep one pane open; close the host window to end the workspace");
         return false;
     }
     if (pane > 0) {
@@ -2233,7 +2022,6 @@ static VoxelHit update_workspace_input(GuiApp *app)
         release_mouse(app);
         app->screen = GUI_PAUSE;
         app->pane_prefix = app->pane_help = false;
-        game_session_reset_clock(app->session);
     } else if (!update_pane_keys(app)) {
         /* GUI modal keys are routed only while pane 0 owns focus. */
         if (app->workspace.focus > 0) update_cli_pane(app);
@@ -2341,9 +2129,10 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
     }
     int y = GetScreenHeight() - WORKSPACE_STATUS_HEIGHT;
     DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});
-    const char *state = !app->session ? "NO WORLD" :
-        app->screen == GUI_SAVE_ERROR ? "SAVE ERROR" :
-        app->screen == GUI_PAUSE ? "PAUSED" :
+    const char *state = app->screen == GUI_SAVE_ERROR ? "SAVE ERROR" :
+        !app->session ?
+        (managed_world_count(app) ? "NO GUI TARGET" : "NO WORLD") :
+        app->screen == GUI_PAUSE ? "GUI MENU" :
         sim_is_frozen(game_session_world(app->session)) ? "FROZEN" : "RUNNING";
     const char *message = app->pane_prefix ? "PREFIX: % split-right | \" split-down | o focus | ? help | Esc cancel" :
         geometry.compact ? "CLI area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
@@ -2353,10 +2142,10 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
     if (app->pane_help) draw_pane_help();
 }
 
-int gui_run(void)
+int gui_run(WorldSessionManager *world_sessions)
 {
     GuiApp app;
-    if (!initialize(&app)) {
+    if (!initialize(&app, world_sessions)) {
         shutdown_gui(&app);
         return EXIT_FAILURE;
     }
@@ -2371,7 +2160,7 @@ int gui_run(void)
                 app.screen = GUI_WORLD;
             }
             if (any_world_dirty(&app))
-                request_save_action(&app, AFTER_SAVE_EXIT);
+                request_save_action(&app, AFTER_SAVE_HOST_EXIT);
             else
                 app.running = false;
         }
@@ -2382,7 +2171,7 @@ int gui_run(void)
         hit = update_workspace_input(&app);
         if (!app.running) break;
 
-        advance_active_sessions(&app);
+        advance_world_sessions(&app);
         if (!app.running) break;
 
         if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
