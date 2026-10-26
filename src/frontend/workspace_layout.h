@@ -5,7 +5,7 @@
 
 enum { WORKSPACE_CLI_LIMIT = 8, WORKSPACE_NODE_LIMIT = 15,
        WORKSPACE_DIVIDER = 3, WORKSPACE_MIN_WIDTH = 180,
-       WORKSPACE_MIN_HEIGHT = 112 };
+       WORKSPACE_MIN_HEIGHT = 112, WORKSPACE_CLI_WIDTH = 560 };
 typedef struct { int x, y, width, height; } WorkspaceRect;
 typedef enum { WORKSPACE_LEFT, WORKSPACE_RIGHT, WORKSPACE_UP, WORKSPACE_DOWN } WorkspaceDirection;
 typedef struct {
@@ -15,6 +15,7 @@ typedef struct {
 typedef struct {
     WorkspaceNode nodes[WORKSPACE_NODE_LIMIT];
     int root, focus, zoom; /* pane 0 is GUI; CLI panes are 1..8; zoom -1 is off */
+    int gui_width; /* Remember the GUI width while CLI panes occupy the right side. */
     bool gui_visible;
 } WorkspaceLayout;
 typedef struct {
@@ -22,6 +23,7 @@ typedef struct {
     bool visible[WORKSPACE_CLI_LIMIT], compact;
 } WorkspaceGeometry;
 
+/* Start with one GUI pane; CLI nodes are allocated by the first split. */
 void workspace_layout_init(WorkspaceLayout *layout);
 void workspace_layout_geometry(const WorkspaceLayout *layout, int width, int height,
                                 WorkspaceGeometry *geometry);

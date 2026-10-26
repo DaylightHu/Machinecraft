@@ -27,7 +27,7 @@
 #include <string.h>
 
 enum {
-    SCREEN_WIDTH = 1280,
+    SCREEN_WIDTH = 1080,
     SCREEN_HEIGHT = 800,
     WORKSPACE_STATUS_HEIGHT = 26,
     WORKSPACE_HEADER_HEIGHT = 25,
@@ -103,6 +103,8 @@ typedef struct {
     WorldSessionManager *world_sessions;
     RenderTexture2D gui_target;
     bool pane_prefix, pane_help;
+    bool window_gui_visible, window_cli_visible, window_resize_pending;
+    int window_width, window_height;
     char pane_message[MESSAGE_CAPACITY];
 } GuiApp;
 
@@ -1729,13 +1731,11 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
         fprintf(stderr, "Cannot load hotbar textures; run from the project root\n");
         return false;
     }
-    WorkspaceConsole *console = workspace_console_create();
-    if (!console) {
-        fprintf(stderr, "Cannot create CLI pane\n");
-        return false;
-    }
     workspace_layout_init(&app->workspace);
-    app->consoles[0] = console;
+    app->workspace.gui_width = GetScreenWidth();
+    app->window_gui_visible = true;
+    app->window_width = GetScreenWidth();
+    app->window_height = GetScreenHeight();
     refresh_saves(app);
     return true;
 }
@@ -1761,10 +1761,83 @@ static Rectangle pane_rectangle(WorkspaceRect box)
     return (Rectangle){(float)box.x, (float)box.y, (float)box.width, (float)box.height};
 }
 
+static int workspace_height(const GuiApp *app)
+{
+    int height = GetScreenHeight();
+    WorkspaceGeometry geometry;
+    workspace_layout_geometry(&app->workspace, GetScreenWidth(), height, &geometry);
+    if (app->session || app->screen == GUI_SAVE_ERROR || app->pane_message[0] || geometry.compact)
+        height -= WORKSPACE_STATUS_HEIGHT;
+    return height > 0 ? height : 1;
+}
+
 static void workspace_geometry(const GuiApp *app, WorkspaceGeometry *geometry)
 {
-    workspace_layout_geometry(&app->workspace, GetScreenWidth(),
-        GetScreenHeight() - WORKSPACE_STATUS_HEIGHT, geometry);
+    workspace_layout_geometry(&app->workspace, GetScreenWidth(), workspace_height(app), geometry);
+}
+
+/* Add/remove the native window space belonging to a frontend. The GUI keeps
+ * its width; resizing a split window changes the CLI area on its right. */
+static void sync_workspace_window(GuiApp *app)
+{
+    bool gui = app->workspace.gui_visible, cli = app->workspace.root >= 0;
+    if (gui != app->window_gui_visible || cli != app->window_cli_visible) {
+        /* A second action can arrive before Windows acknowledges the first
+         * resize. Use its requested dimensions, never the stale native size. */
+        bool use_requested_size = app->window_resize_pending || IsWindowMaximized();
+        int width = use_requested_size ? app->window_width : GetScreenWidth();
+        int cli_width = WORKSPACE_CLI_WIDTH;
+        if (app->window_cli_visible) {
+            cli_width = width;
+            if (app->window_gui_visible) {
+                int gui_width = app->workspace.gui_width;
+                int available = width - WORKSPACE_DIVIDER - WORKSPACE_MIN_WIDTH;
+                if (gui_width > available) gui_width = available;
+                cli_width -= gui_width + WORKSPACE_DIVIDER;
+            }
+            if (cli_width < WORKSPACE_MIN_WIDTH) cli_width = WORKSPACE_MIN_WIDTH;
+        }
+        int target = gui ? app->workspace.gui_width : 0;
+        if (cli) target += cli_width + (gui ? WORKSPACE_DIVIDER : 0);
+        int minimum_width = gui ? 1000 : WORKSPACE_MIN_WIDTH;
+        if (gui && cli)
+            minimum_width = app->workspace.gui_width + WORKSPACE_DIVIDER + WORKSPACE_MIN_WIDTH;
+        int minimum_height = gui ? 650 : WORKSPACE_MIN_HEIGHT + WORKSPACE_STATUS_HEIGHT;
+        int height = use_requested_size ? app->window_height : GetScreenHeight();
+        if (height < minimum_height) height = minimum_height;
+
+        /* Keep the preferred GUI size separate from platform resize callbacks.
+         * SetWindowMinSize() also resizes a GLFW window on Windows. */
+        app->window_gui_visible = gui;
+        app->window_cli_visible = cli;
+        app->window_width = target;
+        app->window_height = height;
+        app->window_resize_pending = true;
+        if (IsWindowMaximized()) RestoreWindow();
+        SetWindowMinSize(minimum_width, minimum_height);
+        SetWindowSize(target, height);
+        int monitor = GetCurrentMonitor();
+        Vector2 origin = GetMonitorPosition(monitor), position = GetWindowPosition();
+        int right = (int)origin.x + GetMonitorWidth(monitor) - 16;
+        int x = (int)position.x;
+        if (x + target > right) x = right - target;
+        if (x < (int)origin.x) x = (int)origin.x;
+        if (x != (int)position.x) SetWindowPosition(x, (int)position.y);
+        return;
+    }
+
+    if (app->window_resize_pending) {
+        if (GetScreenWidth() != app->window_width || GetScreenHeight() != app->window_height)
+            SetWindowSize(app->window_width, app->window_height);
+        else if (!IsWindowResized()) app->window_resize_pending = false;
+        return;
+    }
+    /* Only a settled GUI-only window can supply a new user-selected width. */
+    if (!IsWindowMaximized()) {
+        if (gui && !cli) app->workspace.gui_width = GetScreenWidth();
+        app->window_width = GetScreenWidth();
+        app->window_height = GetScreenHeight();
+    }
 }
 
 static void pane_notice(GuiApp *app, const char *text)
@@ -1861,23 +1934,17 @@ static int split_cli_pane(GuiApp *app, bool split_x)
         pane_notice(app, "Maximum CLI pane count reached");
         return -1;
     }
-    /* Reuse a preallocated console when adding its first layout node. */
-    WorkspaceConsole *console = app->consoles[slot - 1];
-    bool allocated = false;
-    if (!console) {
-        console = workspace_console_create();
-        allocated = true;
-    }
+    WorkspaceConsole *console = workspace_console_create();
     if (!console) { pane_notice(app, "Cannot allocate a CLI pane"); return -1; }
     int pane = workspace_layout_split(&app->workspace, split_x,
-        GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+        GetScreenWidth(), workspace_height(app));
     if (pane < 0) {
-        if (allocated) workspace_console_destroy(console);
+        workspace_console_destroy(console);
         pane_notice(app, "No room for a new CLI pane (maximum 8); enlarge the window or close a pane");
         return -1;
     }
     app->consoles[pane - 1] = console;
-    pane_notice(app, "CLI pane created; use world attach <name>");
+    app->pane_message[0] = '\0';
     return pane;
 }
 
@@ -1900,7 +1967,7 @@ static bool close_pane(GuiApp *app)
         (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
         app->screen = GUI_WORLD;
     }
-    pane_notice(app, pane ? "CLI pane closed" : "GUI pane closed");
+    app->pane_message[0] = '\0';
     apply_pane_focus(app);
     return true;
 }
@@ -1942,10 +2009,10 @@ static bool update_pane_keys(GuiApp *app)
     if (arrow) {
         if (control) {
             bool resized = workspace_layout_resize(&app->workspace, direction, 24,
-                GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+                GetScreenWidth(), workspace_height(app));
             pane_notice(app, resized ? "CLI divider moved" : "No movable CLI divider in this direction; GUI size is fixed");
         } else (void)workspace_layout_focus(&app->workspace, direction,
-            GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+            GetScreenWidth(), workspace_height(app));
     }
     int character;
     while ((character = GetCharPressed()) != 0) {
@@ -1959,7 +2026,7 @@ static bool update_pane_keys(GuiApp *app)
             WorkspaceDirection move = character == 'H' ? WORKSPACE_LEFT :
                 character == 'L' ? WORKSPACE_RIGHT : character == 'K' ? WORKSPACE_UP : WORKSPACE_DOWN;
             bool resized = workspace_layout_resize(&app->workspace, move, 24,
-                GetScreenWidth(), GetScreenHeight() - WORKSPACE_STATUS_HEIGHT);
+                GetScreenWidth(), workspace_height(app));
             pane_notice(app, resized ? "CLI divider moved" : "No movable CLI divider; GUI size is fixed");
             break;
         }
@@ -2013,6 +2080,7 @@ static void update_cli_pane(GuiApp *app)
 static VoxelHit update_workspace_input(GuiApp *app)
 {
     VoxelHit hit = {0};
+    sync_workspace_window(app);
     if (!prepare_gui_view(app)) return hit;
     if (!IsWindowFocused() && app->workspace.focus == 0 && app->session &&
         app->screen != GUI_PAUSE &&
@@ -2039,6 +2107,7 @@ static VoxelHit update_workspace_input(GuiApp *app)
         else if (app->screen == GUI_BARREL) update_barrel(app);
         else if (app->screen == GUI_HOPPER || app->screen == GUI_DROPPER) update_container(app);
     }
+    sync_workspace_window(app);
     return hit;
 }
 

@@ -39,8 +39,7 @@ void workspace_layout_init(WorkspaceLayout *layout)
     memset(layout, 0, sizeof(*layout));
     layout->gui_visible = true;
     layout->zoom = -1;
-    layout->root = 0;
-    leaf(layout, 0, 1, -1);
+    layout->root = -1;
 }
 static int minimum(const WorkspaceLayout *layout, int node, bool x)
 {
@@ -85,11 +84,15 @@ void workspace_layout_geometry(const WorkspaceLayout *layout, int width, int hei
 {
     memset(geometry, 0, sizeof(*geometry));
     width = larger(1, width); height = larger(1, height);
-    int gui_width = layout->gui_visible ? (int)((int64_t)width*7/10) : 0;
+    if (layout->root < 0) {
+        if (layout->gui_visible) geometry->gui = (WorkspaceRect){0, 0, width, height};
+        return;
+    }
+    int available = larger(1, width - WORKSPACE_DIVIDER - WORKSPACE_MIN_WIDTH);
+    int gui_width = layout->gui_visible ? smaller(larger(1, layout->gui_width), available) : 0;
     geometry->gui = (WorkspaceRect){0, 0, gui_width, height};
     int start = layout->gui_visible ? smaller(width, gui_width + WORKSPACE_DIVIDER) : 0;
     geometry->cli = (WorkspaceRect){start, 0, width - start, height};
-    if (layout->root < 0) return;
     geometry->compact = minimum(layout, layout->root, true) > geometry->cli.width ||
                         minimum(layout, layout->root, false) > geometry->cli.height;
     int zoom = layout->zoom;
@@ -107,6 +110,7 @@ int workspace_layout_split(WorkspaceLayout *layout, bool split_x, int width, int
         if (!workspace_layout_has_pane(layout, pane)) break;
     if (pane > WORKSPACE_CLI_LIMIT) return -1;
     if (layout->root < 0) {
+        if (layout->gui_visible && layout->gui_width <= 0) layout->gui_width = width;
         layout->root = free_node(layout);
         leaf(layout, layout->root, pane, -1);
         layout->focus = pane;
