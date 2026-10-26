@@ -1,8 +1,8 @@
-# Machinecraft
+# mcmux
 
 A redstone sandbox written in C, based on Minecraft 1.16.2.
 
-Machinecraft is a small, independent environment for building, observing, and testing redstone machines. It deliberately removes survival mechanics,
+MCMUX(Minecraft Multiplexer) is a small, independent environment for building, observing, and testing redstone machines. It deliberately removes survival mechanics,
 entities, random terrain, and lighting simulation so the project can focus on
 redstone behavior, predictable timing, and performance.
 
