@@ -64,7 +64,9 @@ Press Tab in either interface to complete the current word (for example,
 
 ## Reference
 ```
+https://github.com/raysan5/raylib
 https://github.com/tsoding/nob.h
+https://github.com/jdah/minecraft-weekend
 https://github.com/MCHPR/MCHPRS
 https://github.com/gnembon/fabric-carpet
 https://github.com/maruohon/tweakeroo
