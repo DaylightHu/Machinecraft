@@ -103,6 +103,7 @@ typedef struct {
     /* Borrowed from the host; frontends may select sessions but do not own them. */
     WorldSessionManager *world_sessions;
     RenderTexture2D gui_target;
+    Texture2D title_background;
     bool pane_prefix, pane_help;
     bool window_gui_visible, window_cli_visible, window_resize_pending;
     int window_width, window_height, window_cli_width;
@@ -145,7 +146,8 @@ static bool point_in(Rectangle rectangle)
     return CheckCollisionPointRec(gui_view_mouse(), rectangle);
 }
 
-static bool button(Rectangle rectangle, const char *label, bool enabled)
+static bool button_with_font(Rectangle rectangle, const char *label, bool enabled,
+                             int font_size)
 {
     bool hovered = enabled && point_in(rectangle);
     Color fill = enabled ? (hovered ? (Color){78, 101, 116, 255}
@@ -157,7 +159,6 @@ static bool button(Rectangle rectangle, const char *label, bool enabled)
     Color text = enabled ? RAYWHITE : (Color){125, 125, 125, 255};
     DrawRectangleRec(rectangle, fill);
     DrawRectangleLinesEx(rectangle, 2.0f, border);
-    int font_size = 20;
     int width = ui_text_width(label, font_size);
     ui_text_draw(label, (int)(rectangle.x + (rectangle.width - width)*0.5f),
              (int)(rectangle.y + (rectangle.height - font_size)*0.5f),
@@ -165,10 +166,31 @@ static bool button(Rectangle rectangle, const char *label, bool enabled)
     return hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
 }
 
+static bool button(Rectangle rectangle, const char *label, bool enabled)
+{
+    return button_with_font(rectangle, label, enabled, 20);
+}
+
 static void draw_centered(const char *text, int y, int font_size, Color color)
 {
     ui_text_draw(text, (gui_view_width() - ui_text_width(text, font_size))/2,
              y, font_size, color);
+}
+
+static void draw_texture_cover(Texture2D texture)
+{
+    float view_width = (float)gui_view_width();
+    float view_height = (float)gui_view_height();
+    Rectangle source = {0, 0, (float)texture.width, (float)texture.height};
+    if ((float)texture.width*view_height > (float)texture.height*view_width) {
+        source.width = (float)texture.height*view_width/view_height;
+        source.x = ((float)texture.width - source.width)*0.5f;
+    } else {
+        source.height = (float)texture.width*view_height/view_width;
+        source.y = ((float)texture.height - source.height)*0.5f;
+    }
+    DrawTexturePro(texture, source, (Rectangle){0, 0, view_width, view_height},
+                   (Vector2){0}, 0.0f, WHITE);
 }
 
 static bool names_equal(const char *left, const char *right)
@@ -554,13 +576,51 @@ static void update_name_input(GuiApp *app)
     }
 }
 
+enum {
+    TITLE_WIDTH = 840, TITLE_MARGIN = 40, TITLE_CONTROL_HEIGHT = 60,
+    TITLE_TEXT_SIZE = 26, TITLE_LABEL_SIZE = 24, TITLE_ROW_HEIGHT = 44,
+    TITLE_LIST_TOP = 180, TITLE_LIST_PADDING = 10, TITLE_GAP = 24,
+    TITLE_FIXED_HEIGHT = TITLE_LIST_TOP + 2*TITLE_LIST_PADDING +
+                         TITLE_GAP + TITLE_CONTROL_HEIGHT
+};
+
+typedef struct {
+    Rectangle input, create, list, load, close;
+    int top, rows;
+} TitleLayout;
+
 static int visible_save_rows(void)
 {
-    int available = gui_view_height() - 284 - 105;
-    int rows = (available - 16)/32;
+    int available = gui_view_height() - 2*TITLE_MARGIN - TITLE_FIXED_HEIGHT;
+    int rows = available/TITLE_ROW_HEIGHT;
     if (rows < 1) rows = 1;
     if (rows > MAX_VISIBLE_SAVE_ROWS) rows = MAX_VISIBLE_SAVE_ROWS;
     return rows;
+}
+
+static TitleLayout title_layout(void)
+{
+    int width = gui_view_width() - 2*TITLE_MARGIN;
+    if (width > TITLE_WIDTH) width = TITLE_WIDTH;
+    int left = (gui_view_width() - width)/2;
+    int rows = visible_save_rows();
+    int top = (gui_view_height() - TITLE_FIXED_HEIGHT - rows*TITLE_ROW_HEIGHT)/2;
+    int create_width = (width - 20)*3/8;
+    int input_width = width - 20 - create_width;
+    int action_width = (width - TITLE_GAP)/2;
+    TitleLayout layout = {.top=top, .rows=rows};
+    layout.input = (Rectangle){(float)left, (float)(top + 40),
+                              (float)input_width, TITLE_CONTROL_HEIGHT};
+    layout.create = (Rectangle){(float)(left + input_width + 20), layout.input.y,
+                               (float)create_width, TITLE_CONTROL_HEIGHT};
+    layout.list = (Rectangle){(float)left, (float)(top + TITLE_LIST_TOP),
+        (float)width, (float)(rows*TITLE_ROW_HEIGHT + 2*TITLE_LIST_PADDING)};
+    float actions_y = layout.list.y + layout.list.height + TITLE_GAP;
+    layout.load = (Rectangle){(float)left, actions_y,
+                             (float)action_width, TITLE_CONTROL_HEIGHT};
+    layout.close = (Rectangle){(float)(left + action_width + TITLE_GAP), actions_y,
+        (float)(width - action_width - TITLE_GAP), TITLE_CONTROL_HEIGHT};
+    return layout;
 }
 
 static void keep_selection_visible(GuiApp *app)
@@ -598,70 +658,77 @@ static void update_title(GuiApp *app)
 
 static void draw_title(GuiApp *app)
 {
-    const Color paper = {226, 218, 196, 255};
-    const Color ink = {26, 50, 55, 255};
+    const Color ink = {248, 226, 111, 255};
+    const Color field_ink = {26, 50, 55, 255};
+    const Color list_ink = {255, 244, 195, 255};
     bool active = app->workspace.focus == 0;
-    ClearBackground(paper);
-    draw_centered("MCMUX", 48, 42, ink);
-    DrawLine(120, 104, gui_view_width() - 120, 104,
-             (Color){126, 119, 100, 255});
-
-    int center = gui_view_width()/2;
-    Rectangle input = {(float)center - 310, 180, 380, 44};
-    ui_text_draw("CREATE WORLD", (int)input.x, 150, 18, ink);
+    draw_texture_cover(app->title_background);
+    DrawRectangle(0, 0, gui_view_width(), gui_view_height(),
+                  (Color){0, 27, 22, 72});
+    TitleLayout layout = title_layout();
+    Rectangle input = layout.input;
+    ui_text_draw("CREATE WORLD", (int)input.x + 2, layout.top + 2,
+                 TITLE_LABEL_SIZE, (Color){0, 35, 29, 230});
+    ui_text_draw("CREATE WORLD", (int)input.x, layout.top, TITLE_LABEL_SIZE, ink);
     DrawRectangleRec(input, (Color){247, 243, 230, 255});
     DrawRectangleLinesEx(input, 2.0f, (Color){92, 111, 112, 255});
+    const char *input_text = app->world_name;
+    while (*input_text && ui_text_width(input_text, TITLE_TEXT_SIZE) > (int)input.width - 33)
+        ++input_text;
     if (app->world_name_length)
-        ui_text_draw(app->world_name, (int)input.x + 12, (int)input.y + 11, 20, ink);
+        ui_text_draw(input_text, (int)input.x + 16, (int)input.y + 17,
+                     TITLE_TEXT_SIZE, field_ink);
     else
-        ui_text_draw("World name", (int)input.x + 12, (int)input.y + 11, 20,
+        ui_text_draw("World name", (int)input.x + 16, (int)input.y + 17, TITLE_TEXT_SIZE,
                  (Color){137, 137, 125, 255});
     if (app->workspace.focus == 0 && ((int)(GetTime()*2.0)) % 2 == 0) {
-        int cursor_x = (int)input.x + 12 + ui_text_width(app->world_name, 20);
-        DrawLine(cursor_x, (int)input.y + 9, cursor_x, (int)input.y + 34, ink);
+        int cursor_x = (int)input.x + 16 + ui_text_width(input_text, TITLE_TEXT_SIZE);
+        DrawLine(cursor_x, (int)input.y + 14, cursor_x, (int)input.y + 46, field_ink);
     }
 
-    Rectangle create = {(float)center + 85, 180, 225, 44};
     bool can_create = active && game_session_valid_name(app->world_name) &&
                       !save_name_exists(app, app->world_name);
-    if (button(create, "Create", can_create)) create_world(app);
+    if (button_with_font(layout.create, "Create", can_create, TITLE_TEXT_SIZE))
+        create_world(app);
 
-    ui_text_draw("LOAD WORLD", center - 310, 257, 18, ink);
-    int visible_rows = visible_save_rows();
-    Rectangle list = {(float)center - 310, 284, 620,
-                      (float)(visible_rows*32 + 16)};
-    DrawRectangleRec(list, (Color){238, 232, 214, 255});
-    DrawRectangleLinesEx(list, 2.0f, (Color){126, 119, 100, 255});
+    ui_text_draw("LOAD WORLD", (int)layout.list.x + 2, layout.top + 146,
+                 TITLE_LABEL_SIZE, (Color){0, 35, 29, 230});
+    ui_text_draw("LOAD WORLD", (int)layout.list.x, layout.top + 144,
+                 TITLE_LABEL_SIZE, ink);
+    Rectangle list = layout.list;
+    DrawRectangleLinesEx(list, 2.0f, (Color){226, 207, 96, 255});
+    BeginScissorMode((int)list.x + 2, (int)list.y + 2,
+                     (int)list.width - 4, (int)list.height - 4);
     if (!app->saves.count) {
-        ui_text_draw("No saved worlds yet", (int)list.x + 18,
-                 (int)list.y + 18, 20, (Color){117, 116, 103, 255});
+        ui_text_draw("No saved worlds yet", (int)list.x + 22,
+                 (int)list.y + 22, TITLE_LABEL_SIZE, (Color){232, 220, 155, 255});
     }
-    for (int row = 0; row < visible_rows; ++row) {
+    for (int row = 0; row < layout.rows; ++row) {
         int index = app->save_scroll + row;
         if ((size_t)index >= app->saves.count) break;
-        Rectangle item = {list.x + 8, list.y + 8 + row*32,
-                          list.width - 16, 29};
+        Rectangle item = {list.x + TITLE_LIST_PADDING,
+            list.y + TITLE_LIST_PADDING + row*TITLE_ROW_HEIGHT,
+            list.width - 2*TITLE_LIST_PADDING, TITLE_ROW_HEIGHT - 4};
         bool selected = index == app->selected_save;
         bool hovered = active && point_in(item);
         if (selected || hovered)
             DrawRectangleRec(item, selected ? (Color){80, 105, 108, 220}
                                             : (Color){177, 177, 157, 160});
-        ui_text_draw(app->saves.names[index], (int)item.x + 9, (int)item.y + 5,
-                 18, selected ? RAYWHITE : ink);
+        ui_text_draw(app->saves.names[index], (int)item.x + 12, (int)item.y + 8,
+                 TITLE_LABEL_SIZE, selected ? RAYWHITE : list_ink);
         if (active && hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
             app->selected_save = index;
     }
+    EndScissorMode();
 
-    float actions_y = list.y + list.height + 19;
-    Rectangle load = {(float)center - 310, actions_y, 300, 44};
-    Rectangle exit = {(float)center + 10, actions_y, 300, 44};
-    if (button(load, "Load selected", active && app->selected_save >= 0))
+    if (button_with_font(layout.load, "Load selected",
+                         active && app->selected_save >= 0, TITLE_TEXT_SIZE))
         load_selected_world(app);
-    if (button(exit, "Close GUI", active))
+    if (button_with_font(layout.close, "Close GUI", active, TITLE_TEXT_SIZE))
         request_save_action(app, AFTER_SAVE_GUI_DETACH);
     if (strcmp(app->message, "Create a world or load an existing .mcw file") != 0)
         draw_centered(app->message, gui_view_height() - 34, 17,
-                      (Color){112, 65, 52, 255});
+                      (Color){255, 190, 150, 255});
 }
 
 static Direction camera_horizontal_direction(const Camera3D *camera)
@@ -1721,6 +1788,12 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
     if (!ui_font_init()) return false;
+    app->title_background = LoadTexture("res/gui/title_background.png");
+    if (!app->title_background.id) {
+        fprintf(stderr, "Cannot load title background; run from the project root\n");
+        return false;
+    }
+    SetTextureFilter(app->title_background, TEXTURE_FILTER_BILINEAR);
     if (!block_renderer_init(&app->blocks)) {
         fprintf(stderr, "Cannot load block textures; run from the project root\n");
         return false;
@@ -1753,6 +1826,8 @@ static void shutdown_gui(GuiApp *app)
     }
     if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
     app->gui_target = (RenderTexture2D){0};
+    if (app->title_background.id) UnloadTexture(app->title_background);
+    app->title_background = (Texture2D){0};
     hotbar_unload(&app->hotbar);
     inventory_unload(&app->inventory);
     block_renderer_unload(&app->blocks);
