@@ -5,7 +5,7 @@
 #include "rs/region_edit.h"
 
 typedef enum { EDIT_INVALID, EDIT_POS1, EDIT_POS2, EDIT_COPY, EDIT_PASTE,
-               EDIT_STACK, EDIT_MOVE } EditCommandKind;
+               EDIT_STACK, EDIT_MOVE, EDIT_UNDO, EDIT_REDO } EditCommandKind;
 typedef struct {
     EditCommandKind kind;
     BlockPos position;

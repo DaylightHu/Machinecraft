@@ -249,6 +249,7 @@ static void print_help(FILE *output)
           "copy [X Y Z] (default anchor: selection minimum)\n"
           "paste [-a] X Y Z (paste at anchor; -a skips air)\n"
           "stack [COUNT] DIRECTION / move [DISTANCE] DIRECTION\n"
+          "undo / redo (one paste, stack or move edit)\n"
           "stats\nsave\n"
           "title (save and return to world selection)\n"
           "help\nquit (save and exit)\nBlocks:", output);

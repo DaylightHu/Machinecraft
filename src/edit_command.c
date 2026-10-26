@@ -58,7 +58,7 @@ bool edit_command_parse(const char *line, EditCommand *command)
     while (*line=='/' && slashes<3) { ++slashes; ++line; }
     if (slashes>2) return false;
     size_t name_length=strcspn(line," \t\r\n");
-    static const char *const names[]={"","pos1","pos2","copy","paste","stack","move"};
+    static const char *const names[]={"","pos1","pos2","copy","paste","stack","move","undo","redo"};
     EditCommandKind kind=EDIT_INVALID;
     for (unsigned i=1;i<sizeof(names)/sizeof(names[0]);++i)
         if (strlen(names[i])==name_length && !strncmp(line,names[i],name_length)) kind=(EditCommandKind)i;
@@ -86,7 +86,9 @@ bool edit_command_parse(const char *line, EditCommand *command)
         }
         count=output;
     }
-    if (kind==EDIT_POS1 || kind==EDIT_POS2 || kind==EDIT_COPY || kind==EDIT_PASTE) {
+    if (kind==EDIT_UNDO || kind==EDIT_REDO) {
+        if (count) return true;
+    } else if (kind==EDIT_POS1 || kind==EDIT_POS2 || kind==EDIT_COPY || kind==EDIT_PASTE) {
         if (count) {
             if (!coordinates(args,count,&command->position)) return true;
             command->has_position=true;
@@ -155,8 +157,13 @@ RsResult edit_command_run(GameSession *session, const EditCommand *c,
             c->kind==EDIT_STACK ? "Stacked" : "Moved",changed);
         break;
     }
+    case EDIT_UNDO: case EDIT_REDO:
+        result=c->kind==EDIT_UNDO ? region_editor_undo(e,&changed) : region_editor_redo(e,&changed);
+        if (result==RS_OK) snprintf(message,capacity,"%s: %zu blocks changed",
+            c->kind==EDIT_UNDO ? "Undid" : "Redid",changed);
+        break;
     default:
-        snprintf(message,capacity,"Use pos1|pos2 [X Y Z], copy [X Y Z], paste [-a] [X Y Z], stack|move [COUNT] [DIRECTION]");
+        snprintf(message,capacity,"Use pos1|pos2 [X Y Z], copy [X Y Z], paste [-a] [X Y Z], stack|move [COUNT] [DIRECTION], undo, or redo");
         return RS_INVALID_ARGUMENT;
     }
     if (result!=RS_OK) snprintf(message,capacity,"%s",region_editor_error(e)[0] ? region_editor_error(e) : rs_result_name(result));

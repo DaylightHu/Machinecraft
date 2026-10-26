@@ -6,7 +6,7 @@
 #include <string.h>
 
 /* Bound synchronous edit memory/work, including air and repeated copies. */
-enum { EDIT_BLOCK_LIMIT = 4*1024*1024 };
+enum { EDIT_BLOCK_LIMIT = 4*1024*1024, EDIT_HISTORY_LIMIT = 15 };
 typedef struct { size_t cell; ContainerStack slots[27]; } StoredContainer;
 typedef struct {
     RegionBounds bounds;
@@ -21,11 +21,23 @@ typedef struct {
     const StoredContainer *container;
 } EditCell;
 typedef struct { EditCell *cells; size_t count, capacity; PosMap positions; } EditPlan;
+typedef struct {
+    BlockPos pos;
+    BlockState before, after;
+    uint32_t before_slots, after_slots; /* UINT32_MAX means no inventory. */
+} HistoryCell;
+typedef struct {
+    HistoryCell *cells;
+    StoredContainer *containers;
+    size_t count, allocated_cells;
+} HistoryEntry;
 struct RegionEditor {
     World *world;
     BlockPos first, second;
     unsigned selected;
     Snapshot clipboard;
+    HistoryEntry history[EDIT_HISTORY_LIMIT];
+    size_t history_count, history_cursor, history_cells;
     const char *error;
 };
 
@@ -49,6 +61,11 @@ static void snapshot_destroy(Snapshot *s)
     free(s->cells); free(s->containers); *s = (Snapshot){0};
 }
 
+static void history_destroy(HistoryEntry *entry)
+{
+    free(entry->cells); free(entry->containers); *entry = (HistoryEntry){0};
+}
+
 RegionEditor *region_editor_create(World *world)
 {
     if (!world) return NULL;
@@ -59,7 +76,11 @@ RegionEditor *region_editor_create(World *world)
 
 void region_editor_destroy(RegionEditor *e)
 {
-    if (e) { snapshot_destroy(&e->clipboard); free(e); }
+    if (e) {
+        snapshot_destroy(&e->clipboard);
+        for (size_t i=0; i<e->history_count; ++i) history_destroy(&e->history[i]);
+        free(e);
+    }
 }
 
 const char *region_editor_error(const RegionEditor *e)
@@ -272,6 +293,150 @@ static RsResult apply_plan(RegionEditor *e, EditPlan *plan, size_t *changed)
     return sim_flush(w);
 }
 
+static bool store_inventory(World *w, BlockPos pos, BlockState state, StoredContainer *copy)
+{
+    ContainerRuntime *runtime=container_runtime(w,pos);
+    if (!runtime || runtime->id!=state.id) return false;
+    memcpy(copy->slots,runtime->slots,container_slot_count((BlockId)state.id)*sizeof(*runtime->slots));
+    return true;
+}
+
+/* Reserve both sides before editing, so recording needs no allocation after
+ * the first world write. Entries own all inventory bytes, independent of the
+ * clipboard and source snapshot that supplied this edit. */
+static RsResult history_prepare(RegionEditor *e, const EditPlan *plan, HistoryEntry *entry)
+{
+    *entry=(HistoryEntry){0};
+    if (!plan->count) return RS_OK;
+    size_t inventories=0;
+    for (size_t i=0; i<plan->count; ++i) {
+        inventories+=container_is_block((BlockId)plan->cells[i].before.id);
+        inventories+=container_is_block((BlockId)plan->cells[i].after.id);
+    }
+    entry->cells=malloc(plan->count*sizeof(*entry->cells));
+    if (inventories) entry->containers=calloc(inventories,sizeof(*entry->containers));
+    if (!entry->cells || (inventories && !entry->containers)) return RS_OUT_OF_MEMORY;
+    entry->count=entry->allocated_cells=plan->count;
+    uint32_t next=0;
+    for (size_t i=0; i<plan->count; ++i) {
+        EditCell c=plan->cells[i];
+        HistoryCell *saved=&entry->cells[i];
+        *saved=(HistoryCell){.pos=c.pos,.before=c.before,.after=c.after,
+            .before_slots=UINT32_MAX,.after_slots=UINT32_MAX};
+        if (container_is_block((BlockId)c.before.id)) {
+            saved->before_slots=next++;
+            if (!store_inventory(e->world,c.pos,c.before,&entry->containers[saved->before_slots]))
+                return RS_INTERNAL_ERROR;
+        }
+        if (container_is_block((BlockId)c.after.id)) saved->after_slots=next++;
+    }
+    return RS_OK;
+}
+
+static bool history_inventory_equal(const HistoryEntry *entry, const HistoryCell *cell)
+{
+    if (cell->before_slots==UINT32_MAX || cell->after_slots==UINT32_MAX)
+        return cell->before_slots==cell->after_slots;
+    if (cell->before.id!=cell->after.id) return false;
+    const StoredContainer *a=&entry->containers[cell->before_slots];
+    const StoredContainer *b=&entry->containers[cell->after_slots];
+    for (size_t i=0; i<container_slot_count((BlockId)cell->before.id); ++i) {
+        if (a->slots[i].item!=b->slots[i].item || a->slots[i].count!=b->slots[i].count ||
+            a->slots[i].limit!=b->slots[i].limit) return false;
+    }
+    return true;
+}
+
+static RsResult history_finish(RegionEditor *e, HistoryEntry *entry)
+{
+    size_t output=0;
+    for (size_t i=0; i<entry->count; ++i) {
+        HistoryCell cell=entry->cells[i];
+        cell.after=world_get(e->world,cell.pos);
+        if (e->world->sim->error!=RS_OK) return e->world->sim->error;
+        if (container_is_block((BlockId)cell.after.id)) {
+            if (cell.after_slots==UINT32_MAX ||
+                !store_inventory(e->world,cell.pos,cell.after,&entry->containers[cell.after_slots]))
+                return e->world->sim->error=RS_INTERNAL_ERROR;
+        } else cell.after_slots=UINT32_MAX;
+        StateId before,after;
+        if (!state_encode(cell.before,&before) || !state_encode(cell.after,&after))
+            return e->world->sim->error=RS_INTERNAL_ERROR;
+        if (before!=after || !history_inventory_equal(entry,&cell)) entry->cells[output++]=cell;
+    }
+    entry->count=output;
+    return RS_OK;
+}
+
+static void history_push(RegionEditor *e, HistoryEntry *entry)
+{
+    /* Drop redo only once an edit has successfully changed the world. */
+    while (e->history_count>e->history_cursor) {
+        HistoryEntry *old=&e->history[--e->history_count];
+        e->history_cells-=old->allocated_cells;
+        history_destroy(old);
+    }
+    while (e->history_count==EDIT_HISTORY_LIMIT ||
+           e->history_cells+entry->allocated_cells>EDIT_BLOCK_LIMIT) {
+        e->history_cells-=e->history[0].allocated_cells;
+        history_destroy(&e->history[0]);
+        --e->history_count;
+        memmove(e->history,e->history+1,e->history_count*sizeof(*e->history));
+        if (e->history_cursor) --e->history_cursor;
+    }
+    e->history[e->history_count++]=*entry;
+    e->history_cursor=e->history_count;
+    e->history_cells+=entry->allocated_cells;
+    *entry=(HistoryEntry){0};
+}
+
+static RsResult apply_recorded_plan(RegionEditor *e, EditPlan *plan, size_t *changed)
+{
+    HistoryEntry entry;
+    RsResult result=history_prepare(e,plan,&entry);
+    if (result==RS_OK) result=apply_plan(e,plan,changed);
+    if (result==RS_OK) result=history_finish(e,&entry);
+    if (result==RS_OK && entry.count) history_push(e,&entry);
+    history_destroy(&entry);
+    return result;
+}
+
+static RsResult replay_history(RegionEditor *e, bool redo, size_t *changed)
+{
+    if (changed) *changed=0;
+    RsResult result=ready(e);
+    if (result!=RS_OK) return result;
+    if (redo ? e->history_cursor==e->history_count : e->history_cursor==0)
+        return fail(e,RS_INVALID_ARGUMENT,redo ? "No region edit to redo" : "No region edit to undo");
+    const HistoryEntry *entry=&e->history[redo ? e->history_cursor : e->history_cursor-1];
+    for (size_t i=0; i<entry->count; ++i)
+        if (!world_in_bounds(e->world,entry->cells[i].pos))
+            return fail(e,RS_OUT_OF_BOUNDS,"History extends outside the current world");
+    EditPlan plan={0};
+    for (size_t i=0; i<entry->count && result==RS_OK; ++i) {
+        const HistoryCell *cell=&entry->cells[i];
+        uint32_t slots=redo ? cell->after_slots : cell->before_slots;
+        const StoredContainer *contents=slots==UINT32_MAX ? NULL : &entry->containers[slots];
+        result=plan_cell(e,&plan,cell->pos,redo ? cell->after : cell->before,contents);
+    }
+    if (result==RS_OK) result=apply_plan(e,&plan,changed);
+    if (result==RS_OK) {
+        if (redo) ++e->history_cursor; else --e->history_cursor;
+    }
+    plan_destroy(&plan);
+    return result;
+}
+
+RsResult region_editor_undo(RegionEditor *e, size_t *changed)
+{
+    return replay_history(e,false,changed);
+}
+
+RsResult region_editor_redo(RegionEditor *e, size_t *changed)
+{
+    return replay_history(e,true,changed);
+}
+
 RsResult region_editor_paste(RegionEditor *e, BlockPos anchor, bool skip_air, size_t *changed)
 {
     if (changed) *changed=0;
@@ -285,7 +450,7 @@ RsResult region_editor_paste(RegionEditor *e, BlockPos anchor, bool skip_air, si
         return fail(e,RS_OUT_OF_BOUNDS,"Paste would extend outside the world");
     EditPlan plan={0};
     result=plan_snapshot(e,&plan,s,target,skip_air);
-    if (result==RS_OK) result=apply_plan(e,&plan,changed);
+    if (result==RS_OK) result=apply_recorded_plan(e,&plan,changed);
     plan_destroy(&plan); return result;
 }
 
@@ -324,7 +489,7 @@ static RsResult repeat_or_move(RegionEditor *e, uint32_t amount, Direction direc
         }
         result=plan_snapshot(e,&plan,&s,target,false);
     }
-    if (result==RS_OK) result=apply_plan(e,&plan,changed);
+    if (result==RS_OK) result=apply_recorded_plan(e,&plan,changed);
     plan_destroy(&plan); snapshot_destroy(&s); return result;
 }
 

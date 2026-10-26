@@ -4,7 +4,7 @@
 #include <string.h>
 
 static const char *const shared_commands[] = {"tick", "plot"};
-static const char *const edit_commands[] = {"pos1", "pos2", "copy", "paste", "stack", "move"};
+static const char *const edit_commands[] = {"pos1", "pos2", "copy", "paste", "stack", "move", "undo", "redo"};
 static const char *const paste_flags[] = {"-a"};
 static const char *const cli_commands[] = {
     "help", "place", "remove", "get", "dot", "delay", "mode", "tune",

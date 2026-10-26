@@ -54,8 +54,14 @@ Press Tab in either interface to complete the current word (for example,
 | `//paste [-a] [X Y Z]` | Paste relative to the clipboard anchor. `-a` skips air. |
 | `//stack [COUNT] [DIRECTION]` | Add `COUNT` copies along a direction, spaced by the selection size. Default count: 1. |
 | `//move [DISTANCE] [DIRECTION]` | Move the selection's blocks, leaving air in uncovered source cells. Default distance: 1. |
+| `//undo` | Undo the last paste, stack or move, including block settings and inventories. |
+| `//redo` | Redo the last undone edit. A new nonempty edit clears redo. |
 | `/plot expand DIRECTION [COUNT]` | Expand toward `east`, `west`, `south` or `north` in 512-block units. Optional `COUNT` expands multiple units at once; for example, `/plot expand east 2`. |
 | `/plot shrink DIRECTION [COUNT]` | Remove outer 512-block strips from the specified side, keeping at least 512 blocks on both axes. If edits may be deleted, enter `y` to confirm or `n` to cancel. |
 | `/tick freeze` | Toggle automatic game ticks. Toggling also cancels any remaining manual steps. |
 | `/tick step NUMBER` | While frozen, queue this many game ticks, then remain frozen. `NUMBER` is required and accepts positive decimal integers through 4294967295. |
 | `/tick noupdate` | Toggle block callbacks, neighbor notifications and shape updates. Enabling does not replay skipped updates. |
+
+History keeps up to 15 edits and 4,194,304 recorded cells in memory, and resets
+when leaving the world. Undo/redo follow the current freeze/update controls;
+game time and indirect redstone effects are not rolled back.
