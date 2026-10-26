@@ -103,6 +103,7 @@ typedef struct {
     /* Borrowed from the host; frontends may select sessions but do not own them. */
     WorldSessionManager *world_sessions;
     RenderTexture2D gui_target;
+    Texture2D title_background;
     bool pane_prefix, pane_help;
     bool window_gui_visible, window_cli_visible, window_resize_pending;
     int window_width, window_height, window_cli_width;
@@ -174,6 +175,22 @@ static void draw_centered(const char *text, int y, int font_size, Color color)
 {
     ui_text_draw(text, (gui_view_width() - ui_text_width(text, font_size))/2,
              y, font_size, color);
+}
+
+static void draw_texture_cover(Texture2D texture)
+{
+    float view_width = (float)gui_view_width();
+    float view_height = (float)gui_view_height();
+    Rectangle source = {0, 0, (float)texture.width, (float)texture.height};
+    if ((float)texture.width*view_height > (float)texture.height*view_width) {
+        source.width = (float)texture.height*view_width/view_height;
+        source.x = ((float)texture.width - source.width)*0.5f;
+    } else {
+        source.height = (float)texture.width*view_height/view_width;
+        source.y = ((float)texture.height - source.height)*0.5f;
+    }
+    DrawTexturePro(texture, source, (Rectangle){0, 0, view_width, view_height},
+                   (Vector2){0}, 0.0f, WHITE);
 }
 
 static bool names_equal(const char *left, const char *right)
@@ -641,12 +658,17 @@ static void update_title(GuiApp *app)
 
 static void draw_title(GuiApp *app)
 {
-    const Color paper = {226, 218, 196, 255};
-    const Color ink = {26, 50, 55, 255};
+    const Color ink = {248, 226, 111, 255};
+    const Color field_ink = {26, 50, 55, 255};
+    const Color list_ink = {255, 244, 195, 255};
     bool active = app->workspace.focus == 0;
-    ClearBackground(paper);
+    draw_texture_cover(app->title_background);
+    DrawRectangle(0, 0, gui_view_width(), gui_view_height(),
+                  (Color){0, 27, 22, 72});
     TitleLayout layout = title_layout();
     Rectangle input = layout.input;
+    ui_text_draw("CREATE WORLD", (int)input.x + 2, layout.top + 2,
+                 TITLE_LABEL_SIZE, (Color){0, 35, 29, 230});
     ui_text_draw("CREATE WORLD", (int)input.x, layout.top, TITLE_LABEL_SIZE, ink);
     DrawRectangleRec(input, (Color){247, 243, 230, 255});
     DrawRectangleLinesEx(input, 2.0f, (Color){92, 111, 112, 255});
@@ -655,13 +677,13 @@ static void draw_title(GuiApp *app)
         ++input_text;
     if (app->world_name_length)
         ui_text_draw(input_text, (int)input.x + 16, (int)input.y + 17,
-                     TITLE_TEXT_SIZE, ink);
+                     TITLE_TEXT_SIZE, field_ink);
     else
         ui_text_draw("World name", (int)input.x + 16, (int)input.y + 17, TITLE_TEXT_SIZE,
                  (Color){137, 137, 125, 255});
     if (app->workspace.focus == 0 && ((int)(GetTime()*2.0)) % 2 == 0) {
         int cursor_x = (int)input.x + 16 + ui_text_width(input_text, TITLE_TEXT_SIZE);
-        DrawLine(cursor_x, (int)input.y + 14, cursor_x, (int)input.y + 46, ink);
+        DrawLine(cursor_x, (int)input.y + 14, cursor_x, (int)input.y + 46, field_ink);
     }
 
     bool can_create = active && game_session_valid_name(app->world_name) &&
@@ -669,15 +691,17 @@ static void draw_title(GuiApp *app)
     if (button_with_font(layout.create, "Create", can_create, TITLE_TEXT_SIZE))
         create_world(app);
 
-    ui_text_draw("LOAD WORLD", (int)layout.list.x, layout.top + 144, TITLE_LABEL_SIZE, ink);
+    ui_text_draw("LOAD WORLD", (int)layout.list.x + 2, layout.top + 146,
+                 TITLE_LABEL_SIZE, (Color){0, 35, 29, 230});
+    ui_text_draw("LOAD WORLD", (int)layout.list.x, layout.top + 144,
+                 TITLE_LABEL_SIZE, ink);
     Rectangle list = layout.list;
-    DrawRectangleRec(list, (Color){238, 232, 214, 255});
-    DrawRectangleLinesEx(list, 2.0f, (Color){126, 119, 100, 255});
+    DrawRectangleLinesEx(list, 2.0f, (Color){226, 207, 96, 255});
     BeginScissorMode((int)list.x + 2, (int)list.y + 2,
                      (int)list.width - 4, (int)list.height - 4);
     if (!app->saves.count) {
         ui_text_draw("No saved worlds yet", (int)list.x + 22,
-                 (int)list.y + 22, TITLE_LABEL_SIZE, (Color){117, 116, 103, 255});
+                 (int)list.y + 22, TITLE_LABEL_SIZE, (Color){232, 220, 155, 255});
     }
     for (int row = 0; row < layout.rows; ++row) {
         int index = app->save_scroll + row;
@@ -691,7 +715,7 @@ static void draw_title(GuiApp *app)
             DrawRectangleRec(item, selected ? (Color){80, 105, 108, 220}
                                             : (Color){177, 177, 157, 160});
         ui_text_draw(app->saves.names[index], (int)item.x + 12, (int)item.y + 8,
-                 TITLE_LABEL_SIZE, selected ? RAYWHITE : ink);
+                 TITLE_LABEL_SIZE, selected ? RAYWHITE : list_ink);
         if (active && hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
             app->selected_save = index;
     }
@@ -704,7 +728,7 @@ static void draw_title(GuiApp *app)
         request_save_action(app, AFTER_SAVE_GUI_DETACH);
     if (strcmp(app->message, "Create a world or load an existing .mcw file") != 0)
         draw_centered(app->message, gui_view_height() - 34, 17,
-                      (Color){112, 65, 52, 255});
+                      (Color){255, 190, 150, 255});
 }
 
 static Direction camera_horizontal_direction(const Camera3D *camera)
@@ -1764,6 +1788,12 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
     if (!ui_font_init()) return false;
+    app->title_background = LoadTexture("res/gui/title_background.png");
+    if (!app->title_background.id) {
+        fprintf(stderr, "Cannot load title background; run from the project root\n");
+        return false;
+    }
+    SetTextureFilter(app->title_background, TEXTURE_FILTER_BILINEAR);
     if (!block_renderer_init(&app->blocks)) {
         fprintf(stderr, "Cannot load block textures; run from the project root\n");
         return false;
@@ -1796,6 +1826,8 @@ static void shutdown_gui(GuiApp *app)
     }
     if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
     app->gui_target = (RenderTexture2D){0};
+    if (app->title_background.id) UnloadTexture(app->title_background);
+    app->title_background = (Texture2D){0};
     hotbar_unload(&app->hotbar);
     inventory_unload(&app->inventory);
     block_renderer_unload(&app->blocks);
