@@ -1736,8 +1736,6 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
     }
     workspace_layout_init(&app->workspace);
     app->consoles[0] = console;
-    snprintf(app->pane_message, sizeof(app->pane_message),
-             "Ctrl+b then ? for pane keys | Ctrl+b then o to focus CLI");
     refresh_saves(app);
     return true;
 }
@@ -1902,7 +1900,7 @@ static bool close_pane(GuiApp *app)
         (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
         app->screen = GUI_WORLD;
     }
-    pane_notice(app, pane ? "CLI pane closed" : "GUI pane closed; Ctrl+b then g restores it");
+    pane_notice(app, pane ? "CLI pane closed" : "GUI pane closed");
     apply_pane_focus(app);
     return true;
 }
@@ -1914,6 +1912,7 @@ static bool update_pane_keys(GuiApp *app)
     if (control && IsKeyPressed(KEY_B)) {
         app->pane_help = false;
         app->pane_prefix = true;
+        app->pane_message[0] = '\0';
         release_mouse(app);
         while (GetCharPressed() != 0) {}
         return true;
@@ -1972,7 +1971,7 @@ static bool update_pane_keys(GuiApp *app)
         case 'x': (void)close_pane(app); break;
         case 'g': workspace_layout_show_gui(&app->workspace); break;
         case '?': app->pane_help = true; break;
-        default: pane_notice(app, "Unknown pane key; Ctrl+b then ? lists the keys"); break;
+        default: pane_notice(app, "Unknown pane key"); break;
         }
     }
     if (acted) {
@@ -2121,18 +2120,14 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
             workspace_console_draw(app->consoles[i], pane_rectangle(geometry.panes[i]),
                 i + 1, app->workspace.focus == i + 1, app->workspace.zoom > 0 || geometry.compact);
     }
-    if (app->workspace.root < 0) {
-        DrawText("Ctrl+b then % or \" opens CLI", geometry.cli.x + 12, 40, 16, GRAY);
-    }
     int y = GetScreenHeight() - WORKSPACE_STATUS_HEIGHT;
     const char *state = app->screen == GUI_SAVE_ERROR ? "SAVE ERROR" :
         !app->session ?
         "" :
         app->screen == GUI_PAUSE ? "GUI MENU" :
         sim_is_frozen(game_session_world(app->session)) ? "FROZEN" : "RUNNING";
-    const char *message = app->pane_prefix ? "PREFIX: % split-right | \" split-down | o focus | ? help | Esc cancel" :
-        geometry.compact ? "CLI area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
-    bool show_status = state[0] || app->pane_prefix || geometry.compact || app->pane_message[0];
+    const char *message = geometry.compact ? "CLI area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
+    bool show_status = state[0] || geometry.compact || app->pane_message[0];
     if (show_status) {
         DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});
         BeginScissorMode(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT);

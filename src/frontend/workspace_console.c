@@ -36,10 +36,6 @@ void workspace_console_message(WorkspaceConsole *console, const char *text, bool
 WorkspaceConsole *workspace_console_create(void)
 {
     WorkspaceConsole *console = calloc(1, sizeof(*console));
-    if (console) {
-        workspace_console_message(console, "mcmux CLI", false);
-        workspace_console_message(console, "Type help. Ctrl+b ? for pane keys.", false);
-    }
     return console;
 }
 void workspace_console_destroy(WorkspaceConsole *console) { free(console); }
