@@ -36,45 +36,6 @@ Run `./nob COMMAND` on macOS or `.\nob.exe COMMAND` on Windows.
 | `clean` | Remove the build directory. |
 | `help` | Show the command list. |
 
-## Workspace
-
-Opening a world in `machinecraft-gui` shows a fixed `mc-gui` pane on the left
-(70% of the window) and a built-in `mc-cli` pane on the right. Both operate on
-the same world, selection, clipboard and undo history. The built-in CLI runs
-the existing commands directly, without a shell or a separate terminal app.
-The standalone `machinecraft-cli` remains available.
-
-Press **Ctrl+b**, release it, then press one of these keys:
-
-| Key | Action |
-| --- | --- |
-| `%` | Split the current CLI pane left/right. From GUI focus, split the first CLI or create one. |
-| `"` | Split the current CLI pane top/bottom. From GUI focus, split the first CLI or create one. |
-| Arrow | Focus a pane in that direction. |
-| `o` | Cycle focus through panes. |
-| Ctrl+Arrow or `H/J/K/L` | Move the nearest CLI divider left/down/up/right. The GUI boundary stays fixed. |
-| `z` | Zoom/restore the focused CLI within the CLI area. |
-| `x` | Close the focused pane. The last remaining pane stays open. |
-| `g` | Restore and focus the GUI. |
-| `?` | Show keyboard help. Escape closes help or cancels an unfinished prefix. |
-
-Only the focused pane receives input. Switching to CLI releases the mouse;
-switching back to GUI resumes camera control. GUI cannot be split or resized.
-Closing GUI gives its space to CLI; `Ctrl+b`, then `g` restores the 70/30 layout.
-Closing the last CLI leaves its area empty while GUI remains open. Up to eight
-CLI panes are supported. Splits that do not fit are refused; shrinking the
-window too far temporarily shows one CLI and restores the layout when enlarged.
-
-In CLI, Enter executes; Tab completes; Up/Down recall the last 32 commands;
-Left/Right, Home/End and Backspace/Delete edit input; Page Up/Down scroll the last
-192 output lines. Ctrl+U clears input, Ctrl+C cancels input or a pending plot
-confirmation, and Ctrl+V (Cmd+V on macOS) pastes text without executing it.
-`quit` saves and closes that CLI pane (the last pane returns to world selection);
-`title` saves and returns the whole workspace to world selection. Escape opens
-the existing pause menu; Escape again resumes. Frozen `tick step` commands are
-queued and advanced by the shared host in bounded batches so input stays usable.
-Pane layouts and command history are cleared when leaving the world.
-
 ## Commands
 
 In the GUI, press `/` to open command input, type a command, and press Enter.

@@ -37,12 +37,20 @@ WorkspaceConsole *workspace_console_create(void)
 {
     WorkspaceConsole *console = calloc(1, sizeof(*console));
     if (console) {
-        workspace_console_message(console, "Machinecraft CLI - shared world", false);
+        workspace_console_message(console, "Machinecraft CLI", false);
         workspace_console_message(console, "Type help. Ctrl+b ? for pane keys.", false);
     }
     return console;
 }
 void workspace_console_destroy(WorkspaceConsole *console) { free(console); }
+void workspace_console_detach_world(WorkspaceConsole *console)
+{
+    if (!console) return;
+    if (console->commands.plot.pending)
+        workspace_console_message(console, "World closed; pending shrink cancelled", false);
+    console->commands.plot = (PlotCommandState){0};
+    console->completion = (CommandCompletion){0};
+}
 static void output_fragment(void *context, const char *text, bool error)
 {
     WorkspaceConsole *console = context;

@@ -351,14 +351,13 @@ static RsResult print_block(const World *world, BlockPos position, ConsoleSink *
         if (world_get_piston_motion(world, position, &motion))
             console_printf(output,
                     " payload=%s facing=%s extending=%s source=%s "
-                    "progress=%u/2 previous=%u/2 last_tick=%" PRIu64,
+                    "progress=%u/2 previous=%u/2",
                     block_name((BlockId)motion.moved_state.id),
                     direction_names[motion.direction],
                     motion.extending ? "yes" : "no",
                     motion.source ? "yes" : "no",
                     (unsigned)motion.progress,
-                    (unsigned)motion.previous_progress,
-                    motion.last_ticked);
+                    (unsigned)motion.previous_progress);
         break;
     }
     case BLOCK_BARREL:
@@ -405,11 +404,11 @@ static RsResult print_block(const World *world, BlockPos position, ConsoleSink *
 static void print_stats(const World *world, ConsoleSink *output)
 {
     SimStats stats = sim_stats(world);
-    console_printf(output, "tick=%" PRIu64 " revision=%" PRIu64 " pending=%zu "
+    console_printf(output, "revision=%" PRIu64 " pending=%zu "
             "loaded_chunks=%zu stored_chunks=%zu components=%" PRIu64
             " wires=%" PRIu64 " rail_components=%" PRIu64
             " rails=%" PRIu64 " events=%" PRIu64 "\n",
-            world_tick(world), world_revision(world), stats.pending_events,
+            world_revision(world), stats.pending_events,
             world_loaded_chunks(world), world_stored_chunks(world),
             stats.components_solved, stats.wires_visited,
             stats.rail_components_solved, stats.rails_visited,
@@ -500,13 +499,10 @@ ConsoleCommandReply console_command_run(GameSession *session,
     ConsoleSink output_sink = {write, context, false};
     ConsoleSink error_sink = {write, context, true};
     ConsoleSink *output = &output_sink, *errors = &error_sink;
-    if (!session || !state || !input) {
+    if (!state || !input) {
         reply.failed = true;
         return reply;
     }
-    World *world = game_session_world(session);
-    RsResult result = RS_OK;
-    char message[192] = {0};
     if (strlen(input) >= CONSOLE_COMMAND_CAPACITY) {
         console_puts("error: command too long\n", errors);
         reply.failed = true;
@@ -517,6 +513,38 @@ ConsoleCommandReply console_command_run(GameSession *session,
     EditCommand edit;
     TickCommand tick;
     PlotCommand plot;
+
+    if (!session) {
+        state->plot = (PlotCommandState){0};
+        if (edit_command_parse(line, &edit) || tick_command_parse(line, &tick) ||
+            plot_command_parse(line, &plot)) {
+            console_puts("error: no world loaded\n", errors);
+            reply.failed = true;
+            return reply;
+        }
+        char *tokens[TOKEN_CAPACITY];
+        int count = tokenize(line, tokens);
+        if (!count) return reply;
+        Command command;
+        if (count < 0 || !parse_command(tokens, count, &command)) {
+            console_puts("error: invalid command; use help\n", errors);
+            reply.failed = true;
+            return reply;
+        }
+        if (command.kind == COMMAND_HELP) {
+            print_help(output);
+        } else if (command.kind == COMMAND_QUIT) {
+            reply.action = CONSOLE_QUIT;
+        } else {
+            console_puts("error: no world loaded\n", errors);
+            reply.failed = true;
+        }
+        return reply;
+    }
+
+    World *world = game_session_world(session);
+    RsResult result = RS_OK;
+    char message[192] = {0};
     if (state->plot.pending) {
         result = plot_command_answer(world, &state->plot, line, message, sizeof(message));
     } else if (edit_command_parse(line, &edit)) {
