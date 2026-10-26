@@ -1716,7 +1716,7 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
              "Create a world or load an existing .mcw file");
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Machinecraft");
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "mcmux");
     SetWindowMinSize(1000, 650);
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
