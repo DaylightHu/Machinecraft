@@ -5,7 +5,7 @@
 
 enum { WORKSPACE_CLI_LIMIT = 8, WORKSPACE_NODE_LIMIT = 15,
        WORKSPACE_DIVIDER = 3, WORKSPACE_MIN_WIDTH = 180,
-       WORKSPACE_MIN_HEIGHT = 112, WORKSPACE_CLI_WIDTH = 560 };
+       WORKSPACE_MIN_HEIGHT = 112, WORKSPACE_CLI_WIDTH = 620};
 typedef struct { int x, y, width, height; } WorkspaceRect;
 typedef enum { WORKSPACE_LEFT, WORKSPACE_RIGHT, WORKSPACE_UP, WORKSPACE_DOWN } WorkspaceDirection;
 typedef struct {
