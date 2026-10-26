@@ -1,4 +1,4 @@
-# Machinecraft
+# mcmux
 
 A redstone sandbox written in C, based on Minecraft 1.16.2.
 
