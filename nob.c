@@ -76,6 +76,7 @@ static const char *gui_sources[] = {
     "src/gui_main.c",
     "src/frontend/gui.c",
     "src/frontend/gui_view.c",
+    "src/frontend/ui_font.c",
     "src/frontend/workspace_layout.c",
     "src/frontend/workspace_console.c",
     "src/frontend/world_command.c",
@@ -623,6 +624,7 @@ static bool build_machinecraft(bool build_gui, bool build_cli)
 
     if (build_gui) {
         if (!collect_vendor_files(&vendor_files)) goto cleanup;
+        files_add(&vendor_files, RAYLIB_CONFIG);
         if (!compile_sources(gui_sources, NOB_ARRAY_LEN(gui_sources),
                              &headers, &gui_objects)) goto cleanup;
         for (size_t index = 0; index < NOB_ARRAY_LEN(raylib_sources); ++index) {

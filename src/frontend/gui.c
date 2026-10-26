@@ -1,5 +1,6 @@
 #include "gui_view.h"
 #include "gui.h"
+#include "ui_font.h"
 
 #include "block_renderer.h"
 #include "block_shape.h"
@@ -157,8 +158,8 @@ static bool button(Rectangle rectangle, const char *label, bool enabled)
     DrawRectangleRec(rectangle, fill);
     DrawRectangleLinesEx(rectangle, 2.0f, border);
     int font_size = 20;
-    int width = MeasureText(label, font_size);
-    DrawText(label, (int)(rectangle.x + (rectangle.width - width)*0.5f),
+    int width = ui_text_width(label, font_size);
+    ui_text_draw(label, (int)(rectangle.x + (rectangle.width - width)*0.5f),
              (int)(rectangle.y + (rectangle.height - font_size)*0.5f),
              font_size, text);
     return hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
@@ -166,7 +167,7 @@ static bool button(Rectangle rectangle, const char *label, bool enabled)
 
 static void draw_centered(const char *text, int y, int font_size, Color color)
 {
-    DrawText(text, (gui_view_width() - MeasureText(text, font_size))/2,
+    ui_text_draw(text, (gui_view_width() - ui_text_width(text, font_size))/2,
              y, font_size, color);
 }
 
@@ -607,16 +608,16 @@ static void draw_title(GuiApp *app)
 
     int center = gui_view_width()/2;
     Rectangle input = {(float)center - 310, 180, 380, 44};
-    DrawText("CREATE WORLD", (int)input.x, 150, 18, ink);
+    ui_text_draw("CREATE WORLD", (int)input.x, 150, 18, ink);
     DrawRectangleRec(input, (Color){247, 243, 230, 255});
     DrawRectangleLinesEx(input, 2.0f, (Color){92, 111, 112, 255});
     if (app->world_name_length)
-        DrawText(app->world_name, (int)input.x + 12, (int)input.y + 11, 20, ink);
+        ui_text_draw(app->world_name, (int)input.x + 12, (int)input.y + 11, 20, ink);
     else
-        DrawText("World name", (int)input.x + 12, (int)input.y + 11, 20,
+        ui_text_draw("World name", (int)input.x + 12, (int)input.y + 11, 20,
                  (Color){137, 137, 125, 255});
     if (app->workspace.focus == 0 && ((int)(GetTime()*2.0)) % 2 == 0) {
-        int cursor_x = (int)input.x + 12 + MeasureText(app->world_name, 20);
+        int cursor_x = (int)input.x + 12 + ui_text_width(app->world_name, 20);
         DrawLine(cursor_x, (int)input.y + 9, cursor_x, (int)input.y + 34, ink);
     }
 
@@ -625,14 +626,14 @@ static void draw_title(GuiApp *app)
                       !save_name_exists(app, app->world_name);
     if (button(create, "Create", can_create)) create_world(app);
 
-    DrawText("LOAD WORLD", center - 310, 257, 18, ink);
+    ui_text_draw("LOAD WORLD", center - 310, 257, 18, ink);
     int visible_rows = visible_save_rows();
     Rectangle list = {(float)center - 310, 284, 620,
                       (float)(visible_rows*32 + 16)};
     DrawRectangleRec(list, (Color){238, 232, 214, 255});
     DrawRectangleLinesEx(list, 2.0f, (Color){126, 119, 100, 255});
     if (!app->saves.count) {
-        DrawText("No saved worlds yet", (int)list.x + 18,
+        ui_text_draw("No saved worlds yet", (int)list.x + 18,
                  (int)list.y + 18, 20, (Color){117, 116, 103, 255});
     }
     for (int row = 0; row < visible_rows; ++row) {
@@ -645,7 +646,7 @@ static void draw_title(GuiApp *app)
         if (selected || hovered)
             DrawRectangleRec(item, selected ? (Color){80, 105, 108, 220}
                                             : (Color){177, 177, 157, 160});
-        DrawText(app->saves.names[index], (int)item.x + 9, (int)item.y + 5,
+        ui_text_draw(app->saves.names[index], (int)item.x + 9, (int)item.y + 5,
                  18, selected ? RAYWHITE : ink);
         if (active && hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
             app->selected_save = index;
@@ -1293,8 +1294,8 @@ static void draw_container(const GuiApp *app, BlockId id)
                                  value == level ? (Color){244, 190, 88, 255} :
                                                   (Color){142, 119, 86, 255});
             const char *text = TextFormat("%d", value);
-            DrawText(text,
-                     (int)(shortcut.x + (shortcut.width - MeasureText(text, 16))*0.5f),
+            ui_text_draw(text,
+                     (int)(shortcut.x + (shortcut.width - ui_text_width(text, 16))*0.5f),
                      (int)shortcut.y + 7, 16, RAYWHITE);
         }
     }
@@ -1452,19 +1453,19 @@ static void draw_world(GuiApp *app, VoxelHit hit)
         DrawLine(cx - 6, cy, cx + 6, cy, BLACK);
         DrawLine(cx, cy - 6, cx, cy + 6, BLACK);
     }
-    DrawText(TextFormat("Position: (%.2f, %.2f, %.2f)",
+    ui_text_draw(TextFormat("Position: (%.2f, %.2f, %.2f)",
              app->camera.position.x,
              app->camera.position.y,
              app->camera.position.z),
              15, 15, 18, DARKBLUE);
     if (hit.hit) {
-        DrawText(TextFormat("Target: (%d, %d, %d)",
+        ui_text_draw(TextFormat("Target: (%d, %d, %d)",
                  hit.pos.x, hit.pos.y, hit.pos.z),
                  15, 39, 18, DARKBLUE);
     } else {
-        DrawText("Target: none", 15, 39, 18, DARKBLUE);
+        ui_text_draw("Target: none", 15, 39, 18, DARKBLUE);
     }
-    DrawText(TextFormat("Facing: %s", horizontal_direction_name(
+    ui_text_draw(TextFormat("Facing: %s", horizontal_direction_name(
                  camera_horizontal_direction(&app->camera))),
              15, 63, 18, DARKBLUE);
     hotbar_draw(&app->hotbar, &app->inventory);
@@ -1484,7 +1485,7 @@ static int wrap_chat_message(const char *text, int width,
                length + 1 < sizeof(line)) {
             line[length] = text[offset + length];
             line[length + 1] = '\0';
-            if (length && MeasureText(line, CHAT_FONT_SIZE) > width) break;
+            if (length && ui_text_width(line, CHAT_FONT_SIZE) > width) break;
             ++length;
             if (line[length - 1] == ' ') word_end = length;
         }
@@ -1537,7 +1538,7 @@ static void draw_chat(GuiApp *app)
             int y = bottom - (++drawn)*CHAT_LINE_HEIGHT;
             DrawRectangle(18, y - 2, width, CHAT_LINE_HEIGHT,
                           (Color){15, 27, 30, open ? 230 : 190});
-            DrawText(line, 24, y, CHAT_FONT_SIZE,
+            ui_text_draw(line, 24, y, CHAT_FONT_SIZE,
                      message->error ? (Color){255, 125, 125, 255} : RAYWHITE);
         }
     }
@@ -1564,7 +1565,7 @@ static void draw_command(const GuiApp *app)
             for (int i = 0; i < rows; ++i) {
                 char line[CHAT_TEXT_CAPACITY];
                 memcpy(line,warning + starts[i],lengths[i]); line[lengths[i]] = '\0';
-                DrawText(line,x + 16,top + 16 + i*CHAT_LINE_HEIGHT,CHAT_FONT_SIZE,
+                ui_text_draw(line,x + 16,top + 16 + i*CHAT_LINE_HEIGHT,CHAT_FONT_SIZE,
                          (Color){244,190,88,255});
             }
         }
@@ -1577,14 +1578,14 @@ static void draw_command(const GuiApp *app)
                        (Color){244, 190, 88, 255});
     const char *text = TextFormat("%s%s", app->plot_command.pending ? "y/n > " : "/", app->command);
     int text_x = 32;
-    int cursor_x = text_x + MeasureText(text, 21);
+    int cursor_x = text_x + ui_text_width(text, 21);
     int right = 18 + width - 14;
     if (cursor_x > right) {
         text_x -= cursor_x - right;
         cursor_x = right;
     }
     BeginScissorMode(20, y + 2, width - 4, 48);
-    DrawText(text, text_x, y + 15, 21, RAYWHITE);
+    ui_text_draw(text, text_x, y + 15, 21, RAYWHITE);
     if (((int)(GetTime()*2.0)) % 2 == 0)
         DrawLine(cursor_x, y + 11, cursor_x, y + 40, RAYWHITE);
     EndScissorMode();
@@ -1719,6 +1720,7 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
     SetWindowMinSize(1000, 650);
     SetExitKey(KEY_NULL);
     SetTargetFPS(60);
+    if (!ui_font_init()) return false;
     if (!block_renderer_init(&app->blocks)) {
         fprintf(stderr, "Cannot load block textures; run from the project root\n");
         return false;
@@ -1753,6 +1755,7 @@ static void shutdown_gui(GuiApp *app)
     hotbar_unload(&app->hotbar);
     inventory_unload(&app->inventory);
     block_renderer_unload(&app->blocks);
+    ui_font_unload();
     CloseWindow();
 }
 
@@ -2141,7 +2144,7 @@ static void draw_pane_help(void)
     DrawRectangleLines(x, y, width, height, (Color){172, 143, 255, 255});
     BeginScissorMode(x, y, width, height);
     for (size_t i = 0; i < sizeof(lines)/sizeof(lines[0]); ++i)
-        DrawText(lines[i], x + 18, y + 18 + (int)i*26, 18, RAYWHITE);
+        ui_text_draw(lines[i], x + 18, y + 18 + (int)i*26, 18, RAYWHITE);
     EndScissorMode();
 }
 
@@ -2180,7 +2183,7 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
         DrawRectangle(geometry.gui.x, geometry.gui.y, geometry.gui.width, WORKSPACE_HEADER_HEIGHT,
             (Color){34, 42, 53, 255});
         Color accent = app->workspace.focus == 0 ? (Color){172, 143, 255, 255} : (Color){118, 130, 143, 255};
-        DrawText(app->workspace.focus == 0 ? "0: mc-gui *" : "0: mc-gui", 8, 5, 16, accent);
+        ui_text_draw(app->workspace.focus == 0 ? "0: mc-gui *" : "0: mc-gui", 8, 5, 16, accent);
         DrawRectangleLinesEx(pane_rectangle(geometry.gui), app->workspace.focus == 0 ? 2 : 1, accent);
     }
     gui_view_reset();
@@ -2200,7 +2203,7 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
     if (show_status) {
         DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});
         BeginScissorMode(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT);
-        DrawText(TextFormat("%s%s%s", state,
+        ui_text_draw(TextFormat("%s%s%s", state,
             state[0] && message[0] ? " | " : "", message), 8, y + 5, 16, RAYWHITE);
         EndScissorMode();
     }
