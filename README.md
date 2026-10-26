@@ -62,6 +62,11 @@ Press Tab in either interface to complete the current word (for example,
 | `/tick step NUMBER` | While frozen, queue this many game ticks, then remain frozen. `NUMBER` is required and accepts positive decimal integers through 4294967295. |
 | `/tick noupdate` | Toggle block callbacks, neighbor notifications and shape updates. Enabling does not replay skipped updates. |
 
-History keeps up to 15 edits and 4,194,304 recorded cells in memory, and resets
-when leaving the world. Undo/redo follow the current freeze/update controls;
-game time and indirect redstone effects are not rolled back.
+## Reference
+```
+https://github.com/tsoding/nob.h
+https://github.com/MCHPR/MCHPRS
+https://github.com/gnembon/fabric-carpet
+https://github.com/maruohon/tweakeroo
+https://github.com/EngineHub/WorldEdit
+```
