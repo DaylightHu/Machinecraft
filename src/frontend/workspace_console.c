@@ -39,6 +39,8 @@ WorkspaceConsole *workspace_console_create(void)
     if (console) {
         workspace_console_message(console, "Machinecraft CLI", false);
         workspace_console_message(console, "Type help. Ctrl+b ? for pane keys.", false);
+        workspace_console_message(console,
+            "world create <name> | world attach <name> | world list | world detach", false);
     }
     return console;
 }
@@ -47,7 +49,7 @@ void workspace_console_detach_world(WorkspaceConsole *console)
 {
     if (!console) return;
     if (console->commands.plot.pending)
-        workspace_console_message(console, "World closed; pending shrink cancelled", false);
+        workspace_console_message(console, "World detached; pending shrink cancelled", false);
     console->commands.plot = (PlotCommandState){0};
     console->completion = (CommandCompletion){0};
 }
@@ -100,18 +102,48 @@ static void recall(WorkspaceConsole *console, int delta)
     console->length = console->cursor = strlen(console->input);
     console->completion.active = false;
 }
-ConsoleCommandReply workspace_console_update(WorkspaceConsole *console, GameSession *session)
+
+static bool workspace_help_requested(const char *input)
+{
+    while (*input == ' ' || *input == '\t') ++input;
+    if (strncmp(input, "help", 4) != 0) return false;
+    input += 4;
+    while (*input == ' ' || *input == '\t') ++input;
+    return !*input;
+}
+
+ConsoleCommandReply workspace_console_update(WorkspaceConsole *console,
+    GameSession **session, WorkspaceConsoleWorldCommand world_command,
+    void *context)
 {
     ConsoleCommandReply reply = {0};
+    if (!console || !session) return reply;
     bool control = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
     bool super = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER);
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        if (console->commands.plot.pending)
+            reply = console_command_run(*session, &console->commands, "n",
+                                        output_fragment, console);
+        console->input[0] = '\0';
+        console->length = console->cursor = 0;
+        changed(console);
+        if (console->partial_length) {
+            console->partial[console->partial_length] = '\0';
+            workspace_console_message(console, console->partial,
+                                      console->partial_error);
+            console->partial_length = 0;
+            console->partial_error = false;
+        }
+        return reply;
+    }
     if (IsKeyPressed(KEY_PAGE_UP)) console->scroll += 8;
     if (IsKeyPressed(KEY_PAGE_DOWN)) console->scroll -= 8;
     if (console->scroll < 0) console->scroll = 0;
     if (console->scroll > HISTORY_LINES*LINE_LENGTH) console->scroll = HISTORY_LINES*LINE_LENGTH;
     if (control && IsKeyPressed(KEY_C)) {
         if (console->commands.plot.pending)
-            reply = console_command_run(session, &console->commands, "n", output_fragment, console);
+            reply = console_command_run(*session, &console->commands, "n",
+                                        output_fragment, console);
         console->input[0] = '\0';
         console->length = console->cursor = 0;
         changed(console);
@@ -141,7 +173,8 @@ ConsoleCommandReply workspace_console_update(WorkspaceConsole *console, GameSess
     if (key(KEY_UP)) recall(console, -1);
     if (key(KEY_DOWN)) recall(console, 1);
     if (IsKeyPressed(KEY_TAB) && !console->commands.plot.pending && console->cursor == console->length) {
-        command_complete(&console->completion, console->input, sizeof(console->input), false);
+        command_complete(&console->completion, console->input,
+                         sizeof(console->input), false, true);
         console->length = console->cursor = strlen(console->input);
     }
     if (!IsKeyPressed(KEY_ENTER)) return reply;
@@ -156,7 +189,21 @@ ConsoleCommandReply workspace_console_update(WorkspaceConsole *console, GameSess
         }
         strcpy(console->history[console->history_count++], console->input);
     }
-    reply = console_command_run(session, &console->commands, console->input, output_fragment, console);
+    bool show_workspace_help = workspace_help_requested(console->input);
+    bool handled = world_command &&
+        world_command(context, console, console->input, session);
+    if (!handled) {
+        reply = console_command_run(*session, &console->commands, console->input,
+                                    output_fragment, console);
+        if (show_workspace_help) {
+            workspace_console_message(console,
+                "world create <name> | world attach <name> | world list | world detach",
+                false);
+            workspace_console_message(console,
+                "Here, title saves and detaches CLI; quit saves and closes this pane",
+                false);
+        }
+    }
     if (console->partial_length) {
         console->partial[console->partial_length] = '\0';
         workspace_console_message(console, console->partial, console->partial_error);

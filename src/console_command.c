@@ -533,6 +533,8 @@ ConsoleCommandReply console_command_run(GameSession *session,
         }
         if (command.kind == COMMAND_HELP) {
             print_help(output);
+        } else if (command.kind == COMMAND_TITLE) {
+            reply.action = CONSOLE_TITLE;
         } else if (command.kind == COMMAND_QUIT) {
             reply.action = CONSOLE_QUIT;
         } else {
