@@ -69,7 +69,7 @@ int app_run(FILE *input, FILE *output, FILE *errors)
             fprintf(output, "No saved worlds found in %s/.\n", save_directory);
             return EXIT_SUCCESS;
         }
-        fputs("Machinecraft CLI\nSaved worlds:\n", output);
+        fputs("mcmux CLI\nSaved worlds:\n", output);
         for (size_t i = 0; i < saves.count; ++i)
             fprintf(output, "  %zu) %s\n", i + 1, saves.names[i]);
         size_t selection;

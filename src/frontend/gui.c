@@ -599,7 +599,7 @@ static void draw_title(GuiApp *app)
     const Color ink = {26, 50, 55, 255};
     bool active = app->workspace.focus == 0;
     ClearBackground(paper);
-    draw_centered("MACHINECRAFT", 48, 42, ink);
+    draw_centered("MCMUX", 48, 42, ink);
     draw_centered("A deterministic redstone workshop", 96, 20,
                   (Color){83, 99, 94, 255});
     DrawLine(120, 132, gui_view_width() - 120, 132,

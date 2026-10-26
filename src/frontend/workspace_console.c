@@ -37,7 +37,7 @@ WorkspaceConsole *workspace_console_create(void)
 {
     WorkspaceConsole *console = calloc(1, sizeof(*console));
     if (console) {
-        workspace_console_message(console, "Machinecraft CLI", false);
+        workspace_console_message(console, "mcmux CLI", false);
         workspace_console_message(console, "Type help. Ctrl+b ? for pane keys.", false);
         workspace_console_message(console,
             "world create <name> | world attach <name> | world list | world detach", false);
