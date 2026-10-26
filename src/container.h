@@ -25,7 +25,6 @@ ContainerRuntime *container_runtime(const World *world, BlockPos pos);
 bool container_attach(World *world, BlockPos pos, BlockState state);
 void container_forget(World *world, BlockPos pos);
 void container_forget_outside_plot(World *world);
-void container_forget_edit_cells(World *world, const PosMap *positions);
 void container_destroy(World *world);
 void container_tick_hopper(World *world, BlockPos pos);
 void container_dispense(World *world, BlockPos pos);

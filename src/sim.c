@@ -226,22 +226,6 @@ void sim_forget_outside_plot(World *w)
             discard_torch(s, i);
 }
 
-void sim_forget_edit_cells(World *w, const PosMap *positions)
-{
-    Simulator *s = w->sim;
-    scheduler_cancel_positions(&s->scheduler, positions);
-    PistonEvents *q = &s->piston_events;
-    size_t output = 0;
-    for (size_t i = q->head; i < q->count; ++i) {
-        PistonEvent event = q->items[i];
-        if (posmap_get(positions, event.pos, NULL))
-            posmap_remove(&q->pending, piston_event_key(event));
-        else q->items[output++] = event;
-    }
-    q->head = 0; q->count = output;
-    container_forget_edit_cells(w, positions);
-}
-
 static size_t *block_entity_slot(const World *w, BlockEntityTick entity)
 {
     if (entity.block == BLOCK_HOPPER) {

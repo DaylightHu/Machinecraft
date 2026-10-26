@@ -1,7 +1,6 @@
 #include "rs/session.h"
 
 #include "rs/sim.h"
-#include "rs/region_edit.h"
 #include "save_file.h"
 #include "runtime_clock.h"
 
@@ -23,7 +22,6 @@
 
 struct GameSession {
     World *world;
-    RegionEditor *editor;
     char save_path[GAME_SESSION_PATH_CAPACITY];
     uint64_t saved_revision;
     uint64_t saved_tick;
@@ -54,12 +52,6 @@ static GameSession *allocate_session(World *world, const char *save_path,
         return NULL;
     }
     session->world = world;
-    session->editor = region_editor_create(world);
-    if (!session->editor) {
-        world_destroy(world); free(session);
-        set_result(result, GAME_SESSION_OUT_OF_MEMORY);
-        return NULL;
-    }
     memcpy(session->save_path, save_path, length + 1);
     session->saved_revision = world_revision(world);
     session->saved_tick = world_tick(world);
@@ -103,7 +95,6 @@ GameSession *game_session_load(const char *save_path,
 void game_session_destroy(GameSession *session)
 {
     if (!session) return;
-    region_editor_destroy(session->editor);
     world_destroy(session->world);
     free(session);
 }
@@ -111,11 +102,6 @@ void game_session_destroy(GameSession *session)
 World *game_session_world(GameSession *session)
 {
     return session ? session->world : NULL;
-}
-
-RegionEditor *game_session_editor(GameSession *session)
-{
-    return session ? session->editor : NULL;
 }
 
 const World *game_session_world_const(const GameSession *session)

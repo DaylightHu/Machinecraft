@@ -160,23 +160,6 @@ void scheduler_cancel(Scheduler *s, BlockPos pos, uint8_t block)
     else sift_down(s, slot);
 }
 
-void scheduler_cancel_positions(Scheduler *s, const PosMap *positions)
-{
-    size_t output = 0;
-    for (size_t i = 0; i < s->count; ++i) {
-        ScheduledEvent event = s->heap[i];
-        BlockPos key = event_key(event.pos, event.block);
-        if (posmap_get(positions, event.pos, NULL)) {
-            posmap_remove(&s->slots, key);
-        } else {
-            s->heap[output] = event;
-            (void)posmap_set(&s->slots, key, output++);
-        }
-    }
-    s->count = output;
-    for (size_t i = output/2; i > 0; --i) sift_down(s, i - 1);
-}
-
 bool scheduler_pop_due(Scheduler *scheduler, uint64_t now, ScheduledEvent *event)
 {
     if (!scheduler->count || scheduler->heap[0].due > now) {

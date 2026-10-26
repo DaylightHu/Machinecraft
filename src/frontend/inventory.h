@@ -12,25 +12,20 @@ enum {INVENTORY_SLOT_COUNT = 32};
 typedef enum {
     INVENTORY_EMPTY,
     INVENTORY_BLOCK,
-    INVENTORY_ITEM,
-    INVENTORY_TOOL
+    INVENTORY_ITEM
 } InventorySlotKind;
-
-typedef enum { TOOL_NONE, TOOL_WOODEN_AXE, TOOL_COUNT } InventoryTool;
 
 typedef struct {
     InventorySlotKind kind;
     union {
         BlockId block;
         ItemStack stack;
-        InventoryTool tool;
     };
 } InventorySlot;
 
 typedef struct {
     Texture2D block_textures[BLOCK_COUNT];
     Texture2D item_textures[ITEM_COUNT];
-    Texture2D tool_textures[TOOL_COUNT];
     InventorySlot slots[INVENTORY_SLOT_COUNT];
     int count;
 } Inventory;

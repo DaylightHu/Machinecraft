@@ -95,9 +95,9 @@ bool inventory_init(Inventory *inventory)
     *inventory = (Inventory){0};
 
     size_t count = sizeof(block_textures)/sizeof(block_textures[0]);
-    if (count + 2 > INVENTORY_SLOT_COUNT) {
+    if (count + 1 > INVENTORY_SLOT_COUNT) {
         TraceLog(LOG_ERROR, "INVENTORY: Too many item textures (%d > %d)",
-                 (int)count + 2, INVENTORY_SLOT_COUNT);
+                 (int)count + 1, INVENTORY_SLOT_COUNT);
         return false;
     }
 
@@ -134,18 +134,7 @@ bool inventory_init(Inventory *inventory)
         .stack = {ITEM_POISONOUS_POTATO, 1,
                   item_stack_limit(ITEM_POISONOUS_POTATO)}
     };
-    Image axe = LoadImage("res/textures/item/wooden_axe.png");
-    if (!axe.data) { inventory_unload(inventory); return false; }
-    ImageAlphaCrop(&axe, 0.0f);
-    texture = LoadTextureFromImage(axe);
-    UnloadImage(axe);
-    if (!texture.id) { inventory_unload(inventory); return false; }
-    SetTextureFilter(texture, TEXTURE_FILTER_POINT);
-    inventory->tool_textures[TOOL_WOODEN_AXE] = texture;
-    inventory->slots[count + 1] = (InventorySlot){
-        .kind = INVENTORY_TOOL, .tool = TOOL_WOODEN_AXE
-    };
-    inventory->count = (int)count + 2;
+    inventory->count = (int)count + 1;
     return true;
 }
 
@@ -159,10 +148,6 @@ void inventory_unload(Inventory *inventory)
     for (int id = 0; id < ITEM_COUNT; ++id) {
         if (inventory->item_textures[id].id)
             UnloadTexture(inventory->item_textures[id]);
-    }
-    for (int id = 0; id < TOOL_COUNT; ++id) {
-        if (inventory->tool_textures[id].id)
-            UnloadTexture(inventory->tool_textures[id]);
     }
     *inventory = (Inventory){0};
 }
@@ -213,16 +198,12 @@ void inventory_draw_slot(const Inventory *inventory, InventorySlot contents,
         draw_icon(inventory->block_textures[contents.block], slot);
     else if (contents.kind == INVENTORY_ITEM)
         inventory_draw_stack(inventory, contents.stack, slot);
-    else if (contents.kind == INVENTORY_TOOL && contents.tool > TOOL_NONE && contents.tool < TOOL_COUNT)
-        draw_icon(inventory->tool_textures[contents.tool], slot);
 }
 
 const char *inventory_slot_name(InventorySlot slot)
 {
     if (slot.kind == INVENTORY_BLOCK) return block_name(slot.block);
     if (slot.kind == INVENTORY_ITEM) return item_name(slot.stack.item);
-    if (slot.kind == INVENTORY_TOOL && slot.tool == TOOL_WOODEN_AXE)
-        return "Wooden axe (selection)";
     return "Empty";
 }
 
@@ -285,9 +266,7 @@ void inventory_draw(const Inventory *inventory, InventorySlot selected)
                     ((contents.kind == INVENTORY_BLOCK &&
                       contents.block == selected.block) ||
                      (contents.kind == INVENTORY_ITEM &&
-                      contents.stack.item == selected.stack.item) ||
-                     (contents.kind == INVENTORY_TOOL &&
-                      contents.tool == selected.tool));
+                      contents.stack.item == selected.stack.item));
         if (same)
             DrawRectangleLinesEx(slot, 3.0f, (Color){244, 190, 88, 255});
         if (under_mouse && occupied) hovered = contents;

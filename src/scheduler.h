@@ -42,8 +42,6 @@ bool scheduler_add(Scheduler *s, BlockPos pos, uint8_t block, uint64_t due);
 bool scheduler_add_priority(Scheduler *s, BlockPos pos, uint8_t block, uint64_t due,
                             TickPriority priority);
 void scheduler_cancel(Scheduler *s, BlockPos pos, uint8_t block);
-/* Cancel every queued block type at the given positions, retaining event order. */
-void scheduler_cancel_positions(Scheduler *s, const PosMap *positions);
 bool scheduler_pop_due(Scheduler *s, uint64_t now, ScheduledEvent *event);
 /* Freeze the due batch before callbacks; newly scheduled ticks stay queued. */
 bool scheduler_begin_tick(Scheduler *s, uint64_t now);

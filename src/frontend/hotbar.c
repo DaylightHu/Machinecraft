@@ -103,8 +103,6 @@ bool hotbar_set_selected(Hotbar *hotbar, InventorySlot slot)
             return false;
     } else if (slot.kind == INVENTORY_ITEM) {
         if (!slot.stack.count || !item_stack_valid(slot.stack)) return false;
-    } else if (slot.kind == INVENTORY_TOOL) {
-        if (slot.tool <= TOOL_NONE || slot.tool >= TOOL_COUNT) return false;
     } else if (slot.kind != INVENTORY_EMPTY) return false;
     hotbar->slots[hotbar->selected_slot] = slot;
     return true;

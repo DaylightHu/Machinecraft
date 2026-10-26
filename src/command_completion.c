@@ -4,8 +4,6 @@
 #include <string.h>
 
 static const char *const shared_commands[] = {"tick", "plot"};
-static const char *const edit_commands[] = {"pos1", "pos2", "copy", "paste", "stack", "move"};
-static const char *const paste_flags[] = {"-a"};
 static const char *const cli_commands[] = {
     "help", "place", "remove", "get", "dot", "delay", "mode", "tune",
     "capacity", "hit", "slot", "slots", "stats", "dropper-seed",
@@ -45,34 +43,20 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
         *cursor++ = '\0';
     }
     char *word = tokens[count - 1];
-    size_t slashes = strspn(tokens[0], "/");
-    if (slashes > 2) return false;
-    bool slash = slashes != 0;
-    const char *name = tokens[0] + slashes;
-    if (slashes == 2 && count > 1) {
-        bool editing = false;
-        for (size_t i = 0; i < COUNT(edit_commands); ++i)
-            if (!strcmp(name, edit_commands[i])) editing = true;
-        if (!editing) return false;
-    }
-    if (count == 1) word += slashes;
+    bool slash = tokens[0][0] == '/';
+    const char *name = tokens[0] + (slash ? 1 : 0);
+    if (count == 1 && slash) ++word;
     size_t offset = (size_t)(word - copy);
     size_t prefix = strlen(word);
     const char *choices[BLOCK_INTERNAL_FIRST + COUNT(cli_commands) +
-                         COUNT(shared_commands) + COUNT(edit_commands) + DIR_COUNT + 1];
+                         COUNT(shared_commands) + DIR_COUNT];
     size_t choices_count = 0;
 #define ADD(array) do { \
     for (size_t i = 0; i < COUNT(array); ++i) choices[choices_count++] = (array)[i]; \
 } while (0)
     if (count == 1) {
-        if (slashes < 2) ADD(shared_commands);
-        ADD(edit_commands);
+        ADD(shared_commands);
         if (!gui && !slash) ADD(cli_commands);
-    } else if (count == 2 && strcmp(name, "paste") == 0) {
-        ADD(paste_flags);
-    } else if ((count == 2 || count == 3) &&
-               (strcmp(name, "stack") == 0 || strcmp(name, "move") == 0)) {
-        ADD(directions);
     } else if (count == 2 && strcmp(name, "tick") == 0) {
         ADD(tick_commands);
     } else if (count == 2 && strcmp(name, "plot") == 0) {

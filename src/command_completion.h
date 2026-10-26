@@ -13,7 +13,7 @@ typedef struct {
     bool active;
 } CommandCompletion;
 
-/* Complete the last word, preserving whitespace and leading '/' or '//'.
+/* Complete the last word, preserving whitespace and an optional leading '/'.
  * Consecutive calls cycle through matches; editing the line starts a new search.
  * gui restricts suggestions to commands accepted by the GUI. Never executes. */
 bool command_complete(CommandCompletion *state, char *line, size_t capacity,

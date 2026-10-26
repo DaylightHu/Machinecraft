@@ -3,7 +3,6 @@
 #include "block_renderer.h"
 #include "block_shape.h"
 #include "command_completion.h"
-#include "edit_command.h"
 #include "flexible_placement.h"
 #include "hotbar.h"
 #include "inventory.h"
@@ -569,26 +568,6 @@ static Direction camera_direction(const Camera3D *camera)
     return camera_horizontal_direction(camera);
 }
 
-static EditCommandContext edit_context(const GuiApp *app)
-{
-    EditCommandContext context = {.facing=camera_direction(&app->camera)};
-    double x=floor((double)app->camera.position.x+0.5);
-    double y=floor((double)app->camera.position.y+0.5);
-    double z=floor((double)app->camera.position.z+0.5);
-    if (isfinite(x) && isfinite(y) && isfinite(z) &&
-        x>=INT_MIN && x<=INT_MAX && y>=INT_MIN && y<=INT_MAX && z>=INT_MIN && z<=INT_MAX) {
-        context.position=(BlockPos){(int)x,(int)y,(int)z};
-        context.has_position=true;
-    }
-    return context;
-}
-
-static RsResult run_gui_edit(GuiApp *app, const EditCommand *command)
-{
-    return edit_command_run(app->session, command, edit_context(app),
-                             app->message, sizeof(app->message));
-}
-
 static bool flexible_placement_held(BlockId selected)
 {
     return selected > BLOCK_AIR && selected < BLOCK_INTERNAL_FIRST &&
@@ -682,6 +661,7 @@ static void update_command(GuiApp *app)
         app->chat_scroll = CHAT_HISTORY_CAPACITY*CHAT_TEXT_CAPACITY;
     int character;
     while ((character = GetCharPressed()) != 0) {
+        if (!app->plot_command.pending && !app->command_length && character == '/') continue;
         if (character >= 32 && character < 127 &&
             app->command_length + 1 < sizeof(app->command)) {
             app->command[app->command_length++] = (char)character;
@@ -715,7 +695,6 @@ static void update_command(GuiApp *app)
     }
     PlotCommand command;
     TickCommand tick;
-    EditCommand edit;
     bool error = false;
     if (app->plot_command.pending) {
         RsResult result = plot_command_answer(game_session_world(app->session), &app->plot_command,
@@ -723,8 +702,6 @@ static void update_command(GuiApp *app)
         error = result != RS_OK;
         if (error && !app->message[0])
             snprintf(app->message, sizeof(app->message), "Shrink: %s", rs_result_name(result));
-    } else if (edit_command_parse(app->command, &edit)) {
-        error = run_gui_edit(app, &edit) != RS_OK;
     } else if (tick_command_parse(app->command, &tick)) {
         RsResult result = tick_command_run(game_session_world(app->session),
             &tick, app->message, sizeof(app->message));
@@ -743,7 +720,7 @@ static void update_command(GuiApp *app)
     } else {
         error = true;
         snprintf(app->message, sizeof(app->message),
-                 "Use //pos1|pos2|copy|paste|stack|move, /tick freeze|step|noupdate, or /plot info|expand|shrink");
+                 "Use /tick freeze, /tick step NUMBER, /tick noupdate, or /plot info|expand|shrink");
     }
     add_chat_message(app, app->message, error);
     if (app->plot_command.pending) {
@@ -774,7 +751,6 @@ static VoxelHit update_world(GuiApp *app)
     VoxelHit hit = {0};
     if (IsKeyPressed(KEY_SLASH)) {
         release_mouse(app);
-        while (GetCharPressed() != 0) {} /* Consume the key that opened chat. */
         app->command[0] = '\0';
         app->command_length = 0;
         app->completion = (CommandCompletion){0};
@@ -826,76 +802,59 @@ static VoxelHit update_world(GuiApp *app)
         (PickVec3){ray.direction.x, ray.direction.y, ray.direction.z}, 6.0f);
     BlockId selected = hotbar_selected_block(&app->hotbar);
     Direction facing = camera_horizontal_direction(&app->camera);
-    InventorySlot held = hotbar_selected(&app->hotbar);
-    if (held.kind == INVENTORY_TOOL && held.tool == TOOL_WOODEN_AXE) {
-        for (unsigned point = 1; point <= 2; ++point) {
-            int button = point == 1 ? MOUSE_BUTTON_LEFT : MOUSE_BUTTON_RIGHT;
-            if (!IsMouseButtonPressed(button)) continue;
-            RsResult result = RS_INVALID_ARGUMENT;
-            if (hit.hit) {
-                EditCommand edit = {.kind = point == 1 ? EDIT_POS1 : EDIT_POS2,
-                    .position = hit.pos, .has_position = true};
-                result = run_gui_edit(app, &edit);
-            } else {
-                snprintf(app->message, sizeof(app->message), "Point at a block to select it");
-            }
-            add_chat_message(app, app->message, result != RS_OK);
-        }
-    } else {
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-            apply_edit(app, hit, selected, false, facing);
-        if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-            bool shift = IsKeyDown(KEY_LEFT_SHIFT) ||
-                         IsKeyDown(KEY_RIGHT_SHIFT);
-            BlockId target = hit.hit ? (BlockId)world_get(world, hit.pos).id :
-                                      BLOCK_AIR;
-            if (flexible_placement_held(selected)) {
-                apply_edit(app, hit, selected, true, facing);
-            } else if (hit.hit && !shift &&
-                target == BLOCK_BARREL) {
-                open_barrel(app, hit.pos);
-            } else if (hit.hit && !shift &&
-                       (target == BLOCK_HOPPER || target == BLOCK_DROPPER)) {
-                app->container_pos = hit.pos;
-                app->screen = target == BLOCK_HOPPER ? GUI_HOPPER : GUI_DROPPER;
-                release_mouse(app);
-            } else if (hit.hit && !shift && target == BLOCK_REDSTONE_WIRE) {
-                RsResult result = world_toggle_wire_dot(world, hit.pos);
-                if (result == RS_OK || result == RS_UNCHANGED)
-                    result = game_session_flush(app->session);
-                snprintf(app->message, sizeof(app->message), "Toggle dot: %s",
-                         rs_result_name(result));
-            } else if (hit.hit && !shift &&
-                       target == BLOCK_REDSTONE_REPEATER) {
-                RsResult result = world_cycle_repeater_delay(world, hit.pos);
-                if (result == RS_OK || result == RS_UNCHANGED)
-                    result = game_session_flush(app->session);
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        apply_edit(app, hit, selected, false, facing);
+    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+        bool shift = IsKeyDown(KEY_LEFT_SHIFT) ||
+                     IsKeyDown(KEY_RIGHT_SHIFT);
+        BlockId target = hit.hit ? (BlockId)world_get(world, hit.pos).id :
+                                  BLOCK_AIR;
+        if (flexible_placement_held(selected)) {
+            apply_edit(app, hit, selected, true, facing);
+        } else if (hit.hit && !shift &&
+            target == BLOCK_BARREL) {
+            open_barrel(app, hit.pos);
+        } else if (hit.hit && !shift &&
+                   (target == BLOCK_HOPPER || target == BLOCK_DROPPER)) {
+            app->container_pos = hit.pos;
+            app->screen = target == BLOCK_HOPPER ? GUI_HOPPER : GUI_DROPPER;
+            release_mouse(app);
+        } else if (hit.hit && !shift && target == BLOCK_REDSTONE_WIRE) {
+            RsResult result = world_toggle_wire_dot(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            snprintf(app->message, sizeof(app->message), "Toggle dot: %s",
+                     rs_result_name(result));
+        } else if (hit.hit && !shift &&
+                   target == BLOCK_REDSTONE_REPEATER) {
+            RsResult result = world_cycle_repeater_delay(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            snprintf(app->message, sizeof(app->message),
+                     "Cycle repeater delay: %s", rs_result_name(result));
+        } else if (hit.hit && !shift &&
+                   target == BLOCK_REDSTONE_COMPARATOR) {
+            RsResult result = world_toggle_comparator_mode(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            snprintf(app->message, sizeof(app->message),
+                     "Toggle comparator mode: %s", rs_result_name(result));
+        } else if (hit.hit && !shift && target == BLOCK_NOTE_BLOCK) {
+            RsResult result = world_cycle_note(world, hit.pos);
+            if (result == RS_OK || result == RS_UNCHANGED)
+                result = game_session_flush(app->session);
+            BlockState state = world_get(world, hit.pos);
+            if ((result == RS_OK || result == RS_UNCHANGED) && state.id == BLOCK_NOTE_BLOCK)
+                snprintf(app->message, sizeof(app->message), "Note: %u (%s)",
+                    (unsigned)state.data.note_block.note,
+                    note_instrument_name((NoteInstrument)state.data.note_block.instrument));
+            else
+                snprintf(app->message, sizeof(app->message), "Tune note: %s", rs_result_name(result));
+        } else {
+            if (hotbar_selected(&app->hotbar).kind == INVENTORY_ITEM)
                 snprintf(app->message, sizeof(app->message),
-                         "Cycle repeater delay: %s", rs_result_name(result));
-            } else if (hit.hit && !shift &&
-                       target == BLOCK_REDSTONE_COMPARATOR) {
-                RsResult result = world_toggle_comparator_mode(world, hit.pos);
-                if (result == RS_OK || result == RS_UNCHANGED)
-                    result = game_session_flush(app->session);
-                snprintf(app->message, sizeof(app->message),
-                         "Toggle comparator mode: %s", rs_result_name(result));
-            } else if (hit.hit && !shift && target == BLOCK_NOTE_BLOCK) {
-                RsResult result = world_cycle_note(world, hit.pos);
-                if (result == RS_OK || result == RS_UNCHANGED)
-                    result = game_session_flush(app->session);
-                BlockState state = world_get(world, hit.pos);
-                if ((result == RS_OK || result == RS_UNCHANGED) && state.id == BLOCK_NOTE_BLOCK)
-                    snprintf(app->message, sizeof(app->message), "Note: %u (%s)",
-                        (unsigned)state.data.note_block.note,
-                        note_instrument_name((NoteInstrument)state.data.note_block.instrument));
-                else
-                    snprintf(app->message, sizeof(app->message), "Tune note: %s", rs_result_name(result));
-            } else {
-                if (hotbar_selected(&app->hotbar).kind == INVENTORY_ITEM)
-                    snprintf(app->message, sizeof(app->message),
-                             "Open a hopper, dropper or barrel to store items");
-                else apply_edit(app, hit, selected, true, facing);
-            }
+                         "Open a hopper, dropper or barrel to store items");
+            else apply_edit(app, hit, selected, true, facing);
         }
     }
     if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) && hit.hit) {
@@ -1286,24 +1245,6 @@ static void draw_flexible_placement(GuiApp *app, VoxelHit hit)
     }
 }
 
-static void draw_selection(GuiApp *app)
-{
-    RegionEditor *editor=game_session_editor(app->session);
-    BlockPos first, second;
-    unsigned selected=region_editor_selection(editor,&first,&second);
-    Color color={72,48,184,255};
-    RegionBounds bounds;
-    if (region_editor_bounds(editor,&bounds)) {
-        BoundingBox box={
-            {(float)((double)bounds.min.x-0.505),(float)((double)bounds.min.y-0.505),(float)((double)bounds.min.z-0.505)},
-            {(float)((double)bounds.max.x+0.505),(float)((double)bounds.max.y+0.505),(float)((double)bounds.max.z+0.505)}};
-        DrawBoundingBox(box,color);
-    } else if (selected) {
-        BlockPos pos=(selected&1) ? first : second;
-        DrawCubeWires((Vector3){(float)pos.x,(float)pos.y,(float)pos.z},1.01f,1.01f,1.01f,color);
-    }
-}
-
 static void draw_world(GuiApp *app, VoxelHit hit)
 {
     ClearBackground((Color){184, 211, 214, 255});
@@ -1316,7 +1257,6 @@ static void draw_world(GuiApp *app, VoxelHit hit)
                                 center);
         }
         draw_flexible_placement(app, hit);
-        draw_selection(app);
     EndMode3D();
 
     if (app->screen == GUI_WORLD) {

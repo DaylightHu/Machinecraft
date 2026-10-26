@@ -49,11 +49,6 @@ Press Tab in either interface to complete the current word (for example,
 
 | Command | Action |
 | --- | --- |
-| `//pos1 [X Y Z]`, `//pos2 [X Y Z]` | Set the two inclusive selection corners. Coordinates also accept `X,Y,Z`. |
-| `//copy [X Y Z]` | Copy the selection, using the given position as the clipboard anchor. |
-| `//paste [-a] [X Y Z]` | Paste relative to the clipboard anchor. `-a` skips air. |
-| `//stack [COUNT] [DIRECTION]` | Add `COUNT` copies along a direction, spaced by the selection size. Default count: 1. |
-| `//move [DISTANCE] [DIRECTION]` | Move the selection's blocks, leaving air in uncovered source cells. Default distance: 1. |
 | `/plot expand DIRECTION [COUNT]` | Expand toward `east`, `west`, `south` or `north` in 512-block units. Optional `COUNT` expands multiple units at once; for example, `/plot expand east 2`. |
 | `/plot shrink DIRECTION [COUNT]` | Remove outer 512-block strips from the specified side, keeping at least 512 blocks on both axes. If edits may be deleted, enter `y` to confirm or `n` to cancel. |
 | `/tick freeze` | Toggle automatic game ticks. Toggling also cancels any remaining manual steps. |
