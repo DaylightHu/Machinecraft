@@ -85,6 +85,7 @@ struct WorkspaceEditor {
     EditorBuffer *buffers[EDITOR_BUFFER_LIMIT];
     size_t buffer_count, current;
     EditorMode mode;
+    EditorMode command_previous_mode;
     char cwd[EDITOR_PATH_CAPACITY];
     char command[EDITOR_COMMAND_CAPACITY];
     size_t command_length, command_cursor;
@@ -97,6 +98,8 @@ struct WorkspaceEditor {
     size_t partial_length;
     bool partial_error;
 };
+
+static void enter_command_mode(WorkspaceEditor *editor, EditorMode return_mode);
 
 static bool editor_key(int code)
 {
@@ -1381,10 +1384,7 @@ static void update_normal(WorkspaceEditor *editor)
     int character;
     while ((character = GetCharPressed()) != 0) {
         if (character == ':') {
-            editor->messages_visible = false;
-            editor->mode = EDITOR_COMMAND;
-            editor->command[0] = '\0';
-            editor->command_length = editor->command_cursor = 0;
+            enter_command_mode(editor, EDITOR_NORMAL);
             break;
         }
     }
@@ -1469,13 +1469,22 @@ static void command_insert(WorkspaceEditor *editor, const char *text,
     editor->command_length += length;
 }
 
+static void enter_command_mode(WorkspaceEditor *editor, EditorMode return_mode)
+{
+    editor->messages_visible = false;
+    editor->command_previous_mode = return_mode;
+    editor->mode = EDITOR_COMMAND;
+    editor->command[0] = '\0';
+    editor->command_length = editor->command_cursor = 0;
+}
+
 static ConsoleCommandReply update_command_mode(WorkspaceEditor *editor,
     GameSession **session, WorkspaceEditorWorldCommand world_command,
     void *context)
 {
     ConsoleCommandReply reply = {0};
     if (IsKeyPressed(KEY_ESCAPE)) {
-        editor->mode = EDITOR_NORMAL;
+        editor->mode = editor->command_previous_mode;
         editor->command[0] = '\0';
         editor->command_length = editor->command_cursor = 0;
         while (GetCharPressed() != 0) {}
@@ -1535,7 +1544,7 @@ static ConsoleCommandReply update_command_mode(WorkspaceEditor *editor,
         if (count > 0) command_insert(editor, encoded, (size_t)count);
     }
     if (IsKeyPressed(KEY_ENTER)) {
-        editor->mode = EDITOR_NORMAL;
+        editor->mode = editor->command_previous_mode;
         reply = execute_editor_command(editor, session, world_command, context);
         editor->command[0] = '\0';
         editor->command_length = editor->command_cursor = 0;
@@ -1588,7 +1597,13 @@ static void update_browser(WorkspaceEditor *editor)
     } else if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_L)) {
         browser_enter(editor);
     }
-    while (GetCharPressed() != 0) {}
+    int character;
+    while ((character = GetCharPressed()) != 0) {
+        if (character == ':') {
+            enter_command_mode(editor, EDITOR_BROWSER);
+            break;
+        }
+    }
 }
 
 WorkspaceEditor *workspace_editor_create(void)
