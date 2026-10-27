@@ -37,7 +37,7 @@ CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,
     World *world = game_session_world(session);
     TerminalStreams streams = {output, errors};
 
-    fputs("Redstone Sandbox (headless). Type help for commands.\n", output);
+    fputs("Redstone Sandbox (headless). See README.md for commands.\n", output);
     bool failed = false;
     bool return_to_title = false;
     char line[CONSOLE_COMMAND_CAPACITY];

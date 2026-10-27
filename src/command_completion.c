@@ -9,7 +9,7 @@ static const char *const schem_commands[] = {"save"};
 static const char *const schem_flags[] = {"-f"};
 static const char *const paste_flags[] = {"-a"};
 static const char *const cli_commands[] = {
-    "help", "place", "remove", "get", "dot", "delay", "mode", "tune",
+    "place", "remove", "get", "dot", "delay", "mode", "tune",
     "capacity", "hit", "slot", "slots", "stats", "dropper-seed",
     "save", "title", "quit"
 };

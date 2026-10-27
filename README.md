@@ -49,8 +49,8 @@ mc-nvim is the text workspace inside mcmux. The available editor actions are:
 | `:! COMMAND` | Run an external build or program command from the pane directory. |
 
 `:e` and `:Ex` keep the directory context in the pane. An `.mcs` file opens as
-a read-only view. Use `:help` to print the CLI command list. The `world`
-commands below manage which saved world this mc-nvim pane is attached to.
+a read-only view. Use the command tables below instead of an in-application
+help screen.
 
 | `:COMMAND` | Purpose |
 | --- | --- |
@@ -58,11 +58,42 @@ commands below manage which saved world this mc-nvim pane is attached to.
 | `:world create NAME` | Create and attach a new world. |
 | `:world attach NAME` | Attach the pane to an existing world. |
 | `:world detach` | Detach the pane from its current world. |
+| `:pos1 X Y Z` / `:pos2 X Y Z` | Set the inclusive selection corners. |
+| `:copy [X Y Z]` | Copy the selection with an optional anchor. |
+| `:paste [-a] X Y Z` | Paste at an anchor; `-a` skips air. |
+| `:stack [COUNT] DIRECTION` | Add repeated copies in a direction. |
+| `:move [DISTANCE] DIRECTION` | Move the selected blocks. |
+| `:undo` / `:redo` | Undo or redo the last selection edit. |
+| `:schem save [-f] NAME [X Y Z]` | Save the selection to `structures/NAME.mcs`; `-f` replaces an existing file. |
 | `:tick freeze` | Toggle automatic ticking. |
 | `:tick step NUMBER` | Run a fixed number of ticks while frozen. |
 | `:tick noupdate` | Toggle block callbacks and neighbor updates. |
-| `:schem save NAME` | Save the current selection to `structures/NAME.mcs`. |
-| `:undo` / `:redo` | Undo or redo the last world edit. |
+| `:plot info` | Show the current plot bounds. |
+| `:plot expand DIRECTION [COUNT]` | Expand the plot. |
+| `:plot shrink DIRECTION [COUNT]` | Shrink the plot; confirm if edits would be deleted. |
+| `:place X Y Z BLOCK [DIRECTION]` | Place a block. |
+| `:remove X Y Z` | Remove a block. |
+| `:get X Y Z` | Inspect a block and its state. |
+| `:dot X Y Z` | Toggle a redstone-wire dot. |
+| `:delay X Y Z` | Cycle a repeater delay. |
+| `:mode X Y Z` | Toggle comparator mode. |
+| `:tune X Y Z` | Cycle a note block note. |
+| `:capacity X Y Z LEVEL` | Set a barrel fullness level. |
+| `:slots X Y Z` | List a container's slots. |
+| `:slot X Y Z INDEX ITEM COUNT LIMIT` | Set one container slot. |
+| `:hit X Y Z U V arrow\|trident\|other` | Hit a target at face coordinates `U V` from `0` to `1`. |
+| `:dropper-seed SEED` | Set the dropper seed. |
+| `:stats` | Show simulation statistics. |
+| `:save` | Save the current world. |
+| `:title` | Save and detach this pane from its world. |
+| `:quit` | Save and close the current pane. |
+
+`DIRECTION` is one of `east`, `west`, `up`, `down`, `south`, or `north`.
+`BLOCK` is one of `iron`, `redstone_block`, `redstone_wire`,
+`redstone_torch`, `glass`, `redstone_repeater`, `redstone_comparator`,
+`powered_rail`, `activator_rail`, `observer`, `piston`, `sticky_piston`,
+`barrel`, `slime`, `note_block`, `honey`, `target`, `hopper`, `dropper`, or
+`redstone_lamp`.
 
 The same world-command language is available in the GUI command input opened
 with `/`.
