@@ -1147,6 +1147,29 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
         else (void)editor_open_file(editor, argument);
     } else if (strcmp(command, "w") == 0) {
         (void)editor_write(editor, argument);
+    } else if (strcmp(command, "q") == 0) {
+        if (*argument) {
+            workspace_editor_message(editor, "usage: :q", true);
+        } else if (workspace_editor_has_unsaved(editor)) {
+            workspace_editor_message(editor,
+                "unsaved changes; use :q! to discard them", true);
+        } else {
+            reply.action = CONSOLE_QUIT;
+        }
+    } else if (strcmp(command, "q!") == 0) {
+        if (*argument)
+            workspace_editor_message(editor, "usage: :q!", true);
+        else
+            reply.action = CONSOLE_QUIT_FORCE;
+    } else if (strcmp(command, "wq") == 0) {
+        if (editor_write(editor, argument)) {
+            if (workspace_editor_has_unsaved(editor))
+                workspace_editor_message(editor,
+                    "other buffers have unsaved changes; use :q! to discard them",
+                    true);
+            else
+                reply.action = CONSOLE_QUIT;
+        }
     } else if (strcmp(command, "mc") == 0) {
         if (!*argument) {
             workspace_editor_message(editor, "usage: :mc command", true);
@@ -1205,6 +1228,21 @@ static void update_normal(WorkspaceEditor *editor)
         interacted = true;
     }
     if (moved) remember_column(buffer);
+    if (IsKeyPressed(KEY_X)) {
+        if (buffer->readonly) {
+            workspace_editor_message(editor, "buffer is read only", true);
+        } else if (buffer->lines[buffer->row].length) {
+            if (!buffer_delete(buffer)) {
+                workspace_editor_message(editor, "cannot edit buffer", true);
+            } else {
+                clamp_cursor(buffer, false);
+                remember_column(buffer);
+                editor->messages_visible = false;
+            }
+        }
+        while (GetCharPressed() != 0) {}
+        return;
+    }
     if (IsKeyPressed(KEY_I)) {
         if (buffer->readonly) {
             workspace_editor_message(editor, "buffer is read only", true);

@@ -439,14 +439,14 @@ static void return_to_title(GuiApp *app)
     refresh_saves(app);
 }
 
-static bool close_pane(GuiApp *app);
+static bool close_pane(GuiApp *app, bool force);
 
 static void detach_gui_frontend(GuiApp *app)
 {
     close_world(app);
     app->screen = GUI_TITLE;
     workspace_layout_show_gui(&app->workspace);
-    if (!close_pane(app))
+    if (!close_pane(app, false))
         snprintf(app->pane_message, sizeof(app->pane_message),
                  "GUI remains open because no text pane could be created");
 }
@@ -2035,14 +2035,14 @@ static int split_editor_pane(GuiApp *app, bool split_x)
     return pane;
 }
 
-static bool close_pane(GuiApp *app)
+static bool close_pane(GuiApp *app, bool force)
 {
     int pane = app->workspace.focus;
     if (!pane && app->workspace.root < 0) {
         if (split_editor_pane(app, false) < 0) return false;
         app->workspace.focus = 0;
     }
-    if (pane > 0 && app->editors[pane - 1] &&
+    if (!force && pane > 0 && app->editors[pane - 1] &&
         workspace_editor_has_unsaved(app->editors[pane - 1])) {
         pane_notice(app, "mc-nvim has unsaved buffers; save them with :w before closing");
         workspace_editor_message(app->editors[pane - 1],
@@ -2129,7 +2129,7 @@ static bool update_pane_keys(GuiApp *app)
                 pane_notice(app, "GUI size is fixed; zoom applies to text panes");
             else pane_notice(app, "Text-pane zoom toggled");
             break;
-        case 'x': (void)close_pane(app); break;
+        case 'x': (void)close_pane(app, false); break;
         case 'g': workspace_layout_show_gui(&app->workspace); break;
         case '?': app->pane_help = true; break;
         default: pane_notice(app, "Unknown pane key"); break;
@@ -2159,12 +2159,14 @@ static void update_text_pane(GuiApp *app)
         workspace_editor_message(app->editors[pane - 1],
             "mc-nvim detached from world; GUI unchanged", false);
     }
-    else if (reply.action == CONSOLE_QUIT) {
-        if (!close_pane(app)) {
+    else if (reply.action == CONSOLE_QUIT ||
+             reply.action == CONSOLE_QUIT_FORCE) {
+        bool force = reply.action == CONSOLE_QUIT_FORCE;
+        if (!close_pane(app, force)) {
             if (pane > 0 && !app->workspace.gui_visible) {
                 workspace_layout_show_gui(&app->workspace);
                 app->workspace.focus = pane;
-                (void)close_pane(app);
+                (void)close_pane(app, force);
             } else {
                 pane_notice(app, "Cannot close the last visible pane");
             }
@@ -2221,8 +2223,8 @@ static void draw_pane_help(void)
         "?                 Show this help",
         "Esc               Cancel prefix / close help",
         "",
-        "mc-nvim: i/a insert, Esc normal, :Ex, :e path, :w",
-        "mc-nvim movement: Arrows or hjkl; :mc runs a world command",
+        "mc-nvim: i/a insert, x delete, Esc normal, :Ex, :e path, :w",
+        "mc-nvim: :q, :q!, :wq; Arrows/hjkl move; :mc runs a world command",
         "GUI and each text pane select worlds independently."
     };
     int width = GetScreenWidth() - 80;
