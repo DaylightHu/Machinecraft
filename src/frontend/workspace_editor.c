@@ -20,10 +20,15 @@
 #include <io.h>
 #include <windows.h>
 #define editor_getcwd _getcwd
+#define editor_popen _popen
+#define editor_pclose _pclose
 #else
 #include <dirent.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #define editor_getcwd getcwd
+#define editor_popen popen
+#define editor_pclose pclose
 #endif
 
 enum {
@@ -1126,6 +1131,112 @@ static void trim_end(char *text)
         text[--length] = '\0';
 }
 
+static bool append_text(char **cursor, size_t *remaining, const char *text)
+{
+    size_t length = strlen(text);
+    if (length >= *remaining) return false;
+    memcpy(*cursor, text, length);
+    *cursor += length;
+    *remaining -= length;
+    **cursor = '\0';
+    return true;
+}
+
+#ifndef _WIN32
+static bool append_shell_path(char **cursor, size_t *remaining,
+                              const char *path)
+{
+    if (!append_text(cursor, remaining, "'")) return false;
+    for (; *path; ++path) {
+        if (*path == '\'') {
+            if (!append_text(cursor, remaining, "'\\''")) return false;
+            continue;
+        }
+        char character[2] = {*path, '\0'};
+        if (!append_text(cursor, remaining, character)) return false;
+    }
+    return append_text(cursor, remaining, "'");
+}
+#endif
+
+static char *external_command_line(const WorkspaceEditor *editor,
+                                   const char *command)
+{
+    size_t command_length = strlen(command);
+    size_t cwd_length = strlen(editor->cwd);
+    if (command_length > SIZE_MAX - 3*cwd_length - 32) return NULL;
+    size_t capacity = command_length + 3*cwd_length + 32;
+    char *line = malloc(capacity);
+    if (!line) return NULL;
+    line[0] = '\0';
+    char *cursor = line;
+    size_t remaining = capacity;
+#ifdef _WIN32
+    char prefix[EDITOR_PATH_CAPACITY + 16];
+    int prefix_length = snprintf(prefix, sizeof(prefix), "cd /d \"%s\" && ",
+                                 editor->cwd);
+    bool ok = prefix_length >= 0 && (size_t)prefix_length < sizeof(prefix) &&
+              append_text(&cursor, &remaining, prefix);
+#else
+    bool ok = append_text(&cursor, &remaining, "cd ") &&
+              append_shell_path(&cursor, &remaining, editor->cwd) &&
+              append_text(&cursor, &remaining, " && ");
+#endif
+    ok = ok && append_text(&cursor, &remaining, command) &&
+         append_text(&cursor, &remaining, " 2>&1");
+    if (!ok) {
+        free(line);
+        return NULL;
+    }
+    return line;
+}
+
+static int external_command_status(int status)
+{
+#ifdef _WIN32
+    return status;
+#else
+    if (status == -1) return -1;
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return status;
+#endif
+}
+
+static void run_external_command(WorkspaceEditor *editor, const char *command)
+{
+    if (!*command) {
+        workspace_editor_message(editor, "usage: :! command", true);
+        return;
+    }
+    char *line = external_command_line(editor, command);
+    if (!line) {
+        workspace_editor_message(editor, "external command is too long", true);
+        return;
+    }
+    FILE *pipe = editor_popen(line, "r");
+    free(line);
+    if (!pipe) {
+        workspace_editor_message(editor, "cannot start external command", true);
+        return;
+    }
+    clear_messages(editor);
+    char output[1024];
+    while (fgets(output, sizeof(output), pipe))
+        command_output(editor, output, false);
+    int status = external_command_status(editor_pclose(pipe));
+    flush_command_output(editor);
+    if (status == 0) {
+        workspace_editor_message(editor, "external command finished: 0", false);
+    } else if (status < 0) {
+        workspace_editor_message(editor, "external command did not return a status", true);
+    } else {
+        char message[EDITOR_MESSAGE_LENGTH];
+        snprintf(message, sizeof(message), "external command failed: %d", status);
+        workspace_editor_message(editor, message, true);
+    }
+}
+
 static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
     GameSession **session, WorkspaceEditorWorldCommand world_command,
     void *context)
@@ -1134,7 +1245,10 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
     char line[EDITOR_COMMAND_CAPACITY];
     memcpy(line, editor->command, editor->command_length + 1);
     trim_end(line);
-    char *command = skip_space(line);
+    char command_line[EDITOR_COMMAND_CAPACITY];
+    char *command_start = skip_space(line);
+    snprintf(command_line, sizeof(command_line), "%s", command_start);
+    char *command = command_start;
     char *argument = command;
     while (*argument && *argument != ' ' && *argument != '\t') ++argument;
     if (*argument) *argument++ = '\0';
@@ -1170,26 +1284,22 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
             else
                 reply.action = CONSOLE_QUIT;
         }
-    } else if (strcmp(command, "mc") == 0) {
-        if (!*argument) {
-            workspace_editor_message(editor, "usage: :mc command", true);
-        } else {
-            clear_messages(editor);
-            bool handled = world_command &&
-                world_command(context, editor, argument, session);
-            if (!handled)
-                reply = console_command_run(*session, &editor->commands,
-                                            argument, command_output, editor);
-            flush_command_output(editor);
-            if (reply.steps) {
-                char message[96];
-                snprintf(message, sizeof(message), "Queued %u manual ticks",
-                         reply.steps);
-                workspace_editor_message(editor, message, false);
-            }
-        }
+    } else if (strcmp(command, "!") == 0) {
+        run_external_command(editor, argument);
     } else {
-        workspace_editor_message(editor, "unknown command", true);
+        clear_messages(editor);
+        bool handled = world_command &&
+            world_command(context, editor, command_line, session);
+        if (!handled)
+            reply = console_command_run(*session, &editor->commands,
+                                        command_line, command_output, editor);
+        flush_command_output(editor);
+        if (reply.steps) {
+            char message[96];
+            snprintf(message, sizeof(message), "Queued %u manual ticks",
+                     reply.steps);
+            workspace_editor_message(editor, message, false);
+        }
     }
     return reply;
 }

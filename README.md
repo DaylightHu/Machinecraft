@@ -45,21 +45,24 @@ mc-nvim is the text workspace inside mcmux. The available editor actions are:
 | `:q` | Close the current pane when its buffers are saved. |
 | `:q!` | Close the current pane and discard its unsaved buffers. |
 | `:wq` | Save and close the current pane. |
-| `:mc COMMAND` | Run a world or simulation command. |
+| `:COMMAND` | Run a world or simulation command using the same syntax as the CLI. |
+| `:! COMMAND` | Run an external build or program command from the pane directory. |
 
 `:e` and `:Ex` keep the directory context in the pane. An `.mcs` file opens as
-a read-only view. Use `:mc help` to print the complete world-command list.
+a read-only view. Use `:help` to print the CLI command list. The `world`
+commands below manage which saved world this mc-nvim pane is attached to.
 
-| `:mc COMMAND` | Purpose |
+| `:COMMAND` | Purpose |
 | --- | --- |
-| `:mc world list` | List saved and loaded worlds. |
-| `:mc world create NAME` | Create and attach a new world. |
-| `:mc world attach NAME` | Attach the pane to an existing world. |
-| `:mc world detach` | Detach the pane from its current world. |
-| `:mc /tick freeze` | Toggle automatic ticking. |
-| `:mc /tick step NUMBER` | Run a fixed number of ticks while frozen. |
-| `:mc /tick noupdate` | Toggle block callbacks and neighbor updates. |
-| `:mc //undo` / `:mc //redo` | Undo or redo the last world edit. |
+| `:world list` | List saved and loaded worlds. |
+| `:world create NAME` | Create and attach a new world. |
+| `:world attach NAME` | Attach the pane to an existing world. |
+| `:world detach` | Detach the pane from its current world. |
+| `:tick freeze` | Toggle automatic ticking. |
+| `:tick step NUMBER` | Run a fixed number of ticks while frozen. |
+| `:tick noupdate` | Toggle block callbacks and neighbor updates. |
+| `:schem save NAME` | Save the current selection to `structures/NAME.mcs`. |
+| `:undo` / `:redo` | Undo or redo the last world edit. |
 
 The same world-command language is available in the GUI command input opened
 with `/`.

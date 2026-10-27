@@ -937,7 +937,7 @@ static void update_command(GuiApp *app)
     } else {
         error = true;
         snprintf(app->message, sizeof(app->message),
-                 "Use //pos1|pos2|copy|paste|stack|move|undo|redo|schem, /tick freeze|step|noupdate, or /plot info|expand|shrink");
+                 "Use pos1|pos2|copy|paste|stack|move|undo|redo|schem, tick freeze|step|noupdate, or plot info|expand|shrink");
     }
     add_chat_message(app, app->message, error);
     if (app->plot_command.pending) {
@@ -2224,7 +2224,8 @@ static void draw_pane_help(void)
         "Esc               Cancel prefix / close help",
         "",
         "mc-nvim: i/a insert, x delete, Esc normal, :Ex, :e path, :w",
-        "mc-nvim: :q, :q!, :wq; Arrows/hjkl move; :mc runs a world command",
+        "mc-nvim: :q, :q!, :wq; Arrows/hjkl move; :! runs an external command",
+        "mc-nvim: regular world commands use the CLI syntax, such as :tick freeze",
         "GUI and each text pane select worlds independently."
     };
     int width = GetScreenWidth() - 80;
