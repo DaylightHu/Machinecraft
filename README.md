@@ -1,78 +1,76 @@
 # mcmux
 
-A redstone sandbox written in C, based on Minecraft 1.16.2.
-
-MCMUX(Minecraft Multiplexer) is a small, independent environment for building, observing, and testing redstone machines. It deliberately removes survival mechanics,
-entities, random terrain, and lighting simulation so the project can focus on
-redstone behavior, predictable timing, and performance.
-
+mcmux is a C redstone sandbox based on Minecraft 1.16.2. The GUI combines a
+world editor, redstone simulation, saved worlds, structure export, and an
+embedded mc-nvim workspace.
 
 ## Build
-A C11 compiler is the only required build tool; raylib is included in the repository. Compile the `nob` build runner once:
 
-macOS:
+Use a C compiler to compile `nob.c` into the `nob` build runner. Then run the
+`./nob` commands from the project root. On Windows, use the equivalent
+`nob.exe` form.
 
-```sh
-cc nob.c -o nob
-```
-
-Windows PowerShell:
-
-```powershell
-clang nob.c -o nob.exe
-```
-
-Run `./nob COMMAND` on macOS or `.\nob.exe COMMAND` on Windows.
-
-| Command | Action |
+| Command | Purpose |
 | --- | --- |
-| `build` | Build the GUI and CLI. This is the default when no command is given. |
-| `gui` | Build only the GUI. |
-| `cli` | Build only the CLI. |
-| `run` | Build and run the GUI. |
-| `run-cli` | Build and run the CLI. |
-| `vendor-list` | Print the raylib files required by macOS and Windows. |
-| `precommit` | Stage the required raylib files and verify an index-only build. |
-| `test` | Build and run structure persistence tests (also works on Linux). |
-| `reader` | Build `build/inspect_structure`, a standalone `.mcs` reader. |
-| `clean` | Remove the build directory. |
-| `help` | Show the command list. |
+| `./nob` or `./nob build` | Build the project. |
+| `./nob gui` | Build the GUI. |
+| `./nob run` | Build and launch the GUI. |
+| `./nob reader` | Build the standalone `.mcs` structure reader. |
+| `./nob vendor-list` | List the vendored raylib files required by the build. |
+| `./nob precommit` | Stage the required raylib files and verify an index-only build. |
+| `./nob clean` | Remove build outputs. |
+| `./nob help` | Show the available build commands. |
 
-## Commands
-
-In the GUI, press `/` to open command input, type a command, and press Enter.
-Command replies appear above the hotbar for ten seconds. Press `/` to view
-the reply history; use the mouse wheel or Page Up/Down to scroll. The latest
-100 replies are kept in memory and cleared when leaving the world or exiting
-the GUI. Empty input and Escape close the input without running a command.
-The CLI accepts the same commands, with or without the leading `/`.
-Press Tab in either interface to complete the current word (for example,
-`tick f` becomes `tick freeze`); repeated Tab presses cycle through matches.
-
-| Command | Action |
+## Use mcmux
+| Command | Purpose |
 | --- | --- |
-| `//pos1 [X Y Z]`, `//pos2 [X Y Z]` | Set the two inclusive selection corners. Coordinates also accept `X,Y,Z`. |
-| `//copy [X Y Z]` | Copy the selection, using the given position as the clipboard anchor. |
-| `//schem save [-f] NAME [X Y Z]` | Save the current selection directly to `structures/NAME.mcs`. Default anchor: selection minimum; optional coordinates set an explicit anchor. `-f` replaces an existing file. |
-| `//paste [-a] [X Y Z]` | Paste relative to the clipboard anchor. `-a` skips air. |
-| `//stack [COUNT] [DIRECTION]` | Add `COUNT` copies along a direction, spaced by the selection size. Default count: 1. |
-| `//move [DISTANCE] [DIRECTION]` | Move the selection's blocks, leaving air in uncovered source cells. Default distance: 1. |
-| `//undo` | Undo the last paste, stack or move, including block settings and inventories. |
-| `//redo` | Redo the last undone edit. A new nonempty edit clears redo. |
-| `/plot expand DIRECTION [COUNT]` | Expand toward `east`, `west`, `south` or `north` in 512-block units. Optional `COUNT` expands multiple units at once; for example, `/plot expand east 2`. |
-| `/plot shrink DIRECTION [COUNT]` | Remove outer 512-block strips from the specified side, keeping at least 512 blocks on both axes. If edits may be deleted, enter `y` to confirm or `n` to cancel. |
-| `/tick freeze` | Toggle automatic game ticks. Toggling also cancels any remaining manual steps. |
-| `/tick step NUMBER` | While frozen, queue this many game ticks, then remain frozen. `NUMBER` is required and accepts positive decimal integers through 4294967295. |
-| `/tick noupdate` | Toggle block callbacks, neighbor notifications and shape updates. Enabling does not replay skipped updates. |
+| `Ctrl + b` & `%` | Open mc-nvim |
+|`Ctrl + b` & `?` | Help |
 
-## Reference
-```
-https://github.com/raysan5/raylib
-https://github.com/tsoding/nob.h
-https://github.com/jdah/minecraft-weekend
-https://github.com/MCHPR/MCHPRS
-https://github.com/gnembon/fabric-carpet
-https://github.com/maruohon/tweakeroo
-https://github.com/EngineHub/WorldEdit
-https://github.com/tmux/tmux
-```
+
+## mc-nvim
+
+mc-nvim is the text workspace inside mcmux. The available editor actions are:
+
+| Mode or command | Action |
+| --- | --- |
+| Normal mode: `i` | Insert before the cursor. |
+| Normal mode: `a` | Insert after the cursor. |
+| Normal mode: `x` | Delete the character under the cursor. |
+| Normal mode: `h` `j` `k` `l` or arrow keys | Move the cursor. |
+| `Esc` | Return to Normal mode. |
+| `:Ex` | Browse the current directory. |
+| `:e PATH` | Open a file, or prepare a new file when it does not exist. |
+| `:w` | Save the current file. |
+| `:q` | Close the current pane when its buffers are saved. |
+| `:q!` | Close the current pane and discard its unsaved buffers. |
+| `:wq` | Save and close the current pane. |
+| `:mc COMMAND` | Run a world or simulation command. |
+
+`:e` and `:Ex` keep the directory context in the pane. An `.mcs` file opens as
+a read-only view. Use `:mc help` to print the complete world-command list.
+
+| `:mc COMMAND` | Purpose |
+| --- | --- |
+| `:mc world list` | List saved and loaded worlds. |
+| `:mc world create NAME` | Create and attach a new world. |
+| `:mc world attach NAME` | Attach the pane to an existing world. |
+| `:mc world detach` | Detach the pane from its current world. |
+| `:mc /tick freeze` | Toggle automatic ticking. |
+| `:mc /tick step NUMBER` | Run a fixed number of ticks while frozen. |
+| `:mc /tick noupdate` | Toggle block callbacks and neighbor updates. |
+| `:mc //undo` / `:mc //redo` | Undo or redo the last world edit. |
+
+The same world-command language is available in the GUI command input opened
+with `/`.
+
+## References
+
+- https://github.com/raysan5/raylib
+- https://github.com/tsoding/nob.h
+- https://github.com/jdah/minecraft-weekend
+- https://github.com/MCHPR/MCHPRS
+- https://github.com/gnembon/fabric-carpet
+- https://github.com/maruohon/tweakeroo
+- https://github.com/EngineHub/WorldEdit
+- https://github.com/tmux/tmux
