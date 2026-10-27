@@ -92,23 +92,23 @@ void workspace_layout_geometry(const WorkspaceLayout *layout, int width, int hei
     int gui_width = layout->gui_visible ? smaller(larger(1, layout->gui_width), available) : 0;
     geometry->gui = (WorkspaceRect){0, 0, gui_width, height};
     int start = layout->gui_visible ? smaller(width, gui_width + WORKSPACE_DIVIDER) : 0;
-    geometry->cli = (WorkspaceRect){start, 0, width - start, height};
-    geometry->compact = minimum(layout, layout->root, true) > geometry->cli.width ||
-                        minimum(layout, layout->root, false) > geometry->cli.height;
+    geometry->text = (WorkspaceRect){start, 0, width - start, height};
+    geometry->compact = minimum(layout, layout->root, true) > geometry->text.width ||
+                        minimum(layout, layout->root, false) > geometry->text.height;
     int zoom = layout->zoom;
     if (geometry->compact && zoom < 0)
         zoom = layout->focus > 0 ? layout->focus : first_pane(layout, layout->root);
     if (zoom > 0) {
-        geometry->panes[zoom - 1] = geometry->cli;
+        geometry->panes[zoom - 1] = geometry->text;
         geometry->visible[zoom - 1] = true;
-    } else geometry_node(layout, layout->root, geometry->cli, geometry);
+    } else geometry_node(layout, layout->root, geometry->text, geometry);
 }
 int workspace_layout_split(WorkspaceLayout *layout, bool split_x, int width, int height)
 {
     int pane;
-    for (pane = 1; pane <= WORKSPACE_CLI_LIMIT; ++pane)
+    for (pane = 1; pane <= WORKSPACE_TEXT_LIMIT; ++pane)
         if (!workspace_layout_has_pane(layout, pane)) break;
-    if (pane > WORKSPACE_CLI_LIMIT) return -1;
+    if (pane > WORKSPACE_TEXT_LIMIT) return -1;
     if (layout->root < 0) {
         if (layout->gui_visible && layout->gui_width <= 0) layout->gui_width = width;
         layout->root = free_node(layout);
@@ -176,8 +176,8 @@ static void focus_pane(WorkspaceLayout *layout, int pane)
 }
 void workspace_layout_next(WorkspaceLayout *layout)
 {
-    for (int i = 1; i <= WORKSPACE_CLI_LIMIT + 1; ++i) {
-        int pane = (layout->focus + i) % (WORKSPACE_CLI_LIMIT + 1);
+    for (int i = 1; i <= WORKSPACE_TEXT_LIMIT + 1; ++i) {
+        int pane = (layout->focus + i) % (WORKSPACE_TEXT_LIMIT + 1);
         if (workspace_layout_has_pane(layout, pane)) { focus_pane(layout, pane); return; }
     }
 }
@@ -190,7 +190,7 @@ bool workspace_layout_focus(WorkspaceLayout *layout, WorkspaceDirection directio
     int64_t x = 2LL*from.x + from.width, y = 2LL*from.y + from.height;
     int best = -1;
     int64_t score = INT64_MAX;
-    for (int pane = 0; pane <= WORKSPACE_CLI_LIMIT; ++pane) {
+    for (int pane = 0; pane <= WORKSPACE_TEXT_LIMIT; ++pane) {
         if (pane == layout->focus || !workspace_layout_has_pane(layout, pane) ||
             (pane && !geometry.visible[pane - 1])) continue;
         WorkspaceRect to = pane ? geometry.panes[pane - 1] : geometry.gui;
@@ -234,7 +234,7 @@ bool workspace_layout_resize(WorkspaceLayout *layout, WorkspaceDirection directi
     }
     if (node < 0) return false;
     WorkspaceRect box;
-    if (!find_rect(layout, layout->root, node, geometry.cli, &box)) return false;
+    if (!find_rect(layout, layout->root, node, geometry.text, &box)) return false;
     WorkspaceNode *n = &layout->nodes[node];
     int total = (x ? box.width : box.height) - WORKSPACE_DIVIDER;
     int low = minimum(layout, n->first, x), high = total - minimum(layout, n->second, x);

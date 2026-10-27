@@ -90,21 +90,29 @@ static void command_reset_target(WorkspaceWorldCommandIO *io)
         io->reset_target_state(io->reset_context);
 }
 
+static const char *frontend_name(const WorkspaceWorldCommandIO *io)
+{
+    return io->frontend_name && io->frontend_name[0] ?
+        io->frontend_name : "CLI";
+}
+
 static bool bind_target(WorkspaceWorldCommandIO *io, GameSession **target,
                         GameSession *session,
                         const char *name, bool created)
 {
     if (*target == session) {
-        char message[GAME_SESSION_NAME_CAPACITY + 48];
-        snprintf(message, sizeof(message), "CLI already attached to '%s'", name);
+        char message[GAME_SESSION_NAME_CAPACITY + 64];
+        snprintf(message, sizeof(message), "%s already attached to '%s'",
+                 frontend_name(io), name);
         command_write(io, message, false);
         return true;
     }
     command_reset_target(io);
     *target = session;
-    char message[GAME_SESSION_NAME_CAPACITY + 48];
-    snprintf(message, sizeof(message), created ? "Created and attached CLI to '%s'" :
-             "CLI attached to '%s'", name);
+    char message[GAME_SESSION_NAME_CAPACITY + 64];
+    snprintf(message, sizeof(message), created ?
+             "Created and attached %s to '%s'" : "%s attached to '%s'",
+             frontend_name(io), name);
     command_write(io, message, false);
     return true;
 }
@@ -279,12 +287,18 @@ bool workspace_world_command_run(WorkspaceWorldCommandIO *io,
     if (command.kind == WORKSPACE_WORLD_LIST) return run_list(io, *target);
     if (command.kind == WORKSPACE_WORLD_DETACH) {
         if (!*target) {
-            command_error(io, "CLI is not attached to a world");
+            char message[96];
+            snprintf(message, sizeof(message), "%s is not attached to a world",
+                     frontend_name(io));
+            command_error(io, message);
             return true;
         }
         *target = NULL;
         command_reset_target(io);
-        command_write(io, "CLI detached from world", false);
+        char message[96];
+        snprintf(message, sizeof(message), "%s detached from world",
+                 frontend_name(io));
+        command_write(io, message, false);
         return true;
     }
     if (!game_session_valid_name(command.name)) {
