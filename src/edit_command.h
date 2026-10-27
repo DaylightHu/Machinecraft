@@ -5,13 +5,14 @@
 #include "rs/region_edit.h"
 
 typedef enum { EDIT_INVALID, EDIT_POS1, EDIT_POS2, EDIT_COPY, EDIT_PASTE,
-               EDIT_STACK, EDIT_MOVE, EDIT_UNDO, EDIT_REDO } EditCommandKind;
+               EDIT_STACK, EDIT_MOVE, EDIT_UNDO, EDIT_REDO, EDIT_SCHEM_SAVE } EditCommandKind;
 typedef struct {
     EditCommandKind kind;
     BlockPos position;
     Direction direction;
     uint32_t count;
-    bool has_position, skip_air;
+    bool has_position, skip_air, overwrite;
+    char name[68]; /* Portable structure name, optionally ending in .mcs. */
 } EditCommand;
 typedef struct {
     BlockPos position;

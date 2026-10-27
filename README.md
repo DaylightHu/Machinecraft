@@ -33,6 +33,8 @@ Run `./nob COMMAND` on macOS or `.\nob.exe COMMAND` on Windows.
 | `run-cli` | Build and run the CLI. |
 | `vendor-list` | Print the raylib files required by macOS and Windows. |
 | `precommit` | Stage the required raylib files and verify an index-only build. |
+| `test` | Build and run structure persistence tests (also works on Linux). |
+| `reader` | Build `build/inspect_structure`, a standalone `.mcs` reader. |
 | `clean` | Remove the build directory. |
 | `help` | Show the command list. |
 
@@ -51,6 +53,7 @@ Press Tab in either interface to complete the current word (for example,
 | --- | --- |
 | `//pos1 [X Y Z]`, `//pos2 [X Y Z]` | Set the two inclusive selection corners. Coordinates also accept `X,Y,Z`. |
 | `//copy [X Y Z]` | Copy the selection, using the given position as the clipboard anchor. |
+| `//schem save [-f] NAME [X Y Z]` | Save the current selection directly to `structures/NAME.mcs`. Default anchor: selection minimum; optional coordinates set an explicit anchor. `-f` replaces an existing file. |
 | `//paste [-a] [X Y Z]` | Paste relative to the clipboard anchor. `-a` skips air. |
 | `//stack [COUNT] [DIRECTION]` | Add `COUNT` copies along a direction, spaced by the selection size. Default count: 1. |
 | `//move [DISTANCE] [DIRECTION]` | Move the selection's blocks, leaving air in uncovered source cells. Default distance: 1. |

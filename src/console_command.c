@@ -268,6 +268,7 @@ static void print_help(ConsoleSink *output)
           "tick noupdate (toggle block updates; skipped updates are not replayed)\n"
           "pos1 X Y Z / pos2 X Y Z (select inclusive corners)\n"
           "copy [X Y Z] (default anchor: selection minimum)\n"
+          "schem save [-f] NAME [X Y Z] (save selection to structures/NAME.mcs; -f replaces)\n"
           "paste [-a] X Y Z (paste at anchor; -a skips air)\n"
           "stack [COUNT] DIRECTION / move [DISTANCE] DIRECTION\n"
           "undo / redo (one paste, stack or move edit)\n"
