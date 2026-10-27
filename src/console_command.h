@@ -6,7 +6,12 @@
 
 enum { CONSOLE_COMMAND_CAPACITY = 512 };
 typedef struct { PlotCommandState plot; } ConsoleCommandState;
-typedef enum { CONSOLE_CONTINUE, CONSOLE_TITLE, CONSOLE_QUIT } ConsoleCommandAction;
+typedef enum {
+    CONSOLE_CONTINUE,
+    CONSOLE_TITLE,
+    CONSOLE_QUIT,
+    CONSOLE_QUIT_FORCE
+} ConsoleCommandAction;
 typedef struct {
     ConsoleCommandAction action;
     uint32_t steps;

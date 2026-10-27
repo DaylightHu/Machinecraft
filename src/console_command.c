@@ -38,7 +38,7 @@ static void console_printf(ConsoleSink *sink, const char *format, ...)
 
 
 typedef enum {
-    COMMAND_HELP, COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
+    COMMAND_PLACE, COMMAND_REMOVE, COMMAND_GET,
     COMMAND_DOT, COMMAND_DELAY, COMMAND_MODE, COMMAND_TUNE, COMMAND_CAPACITY,
     COMMAND_HIT, COMMAND_SLOT, COMMAND_SLOTS, COMMAND_STATS,
     COMMAND_DROPPER_SEED, COMMAND_SAVE, COMMAND_TITLE, COMMAND_QUIT
@@ -176,9 +176,7 @@ static bool parse_command(char *tokens[], int count, Command *command)
     *command = (Command){ .support = DIR_DOWN, .ticks = 1 };
     const char *name = tokens[0];
 
-    if (strcmp(name, "help") == 0 && count == 1) {
-        command->kind = COMMAND_HELP;
-    } else if (strcmp(name, "save") == 0 && count == 1) {
+    if (strcmp(name, "save") == 0 && count == 1) {
         command->kind = COMMAND_SAVE;
     } else if (strcmp(name, "title") == 0 && count == 1) {
         command->kind = COMMAND_TITLE;
@@ -251,37 +249,6 @@ static bool parse_command(char *tokens[], int count, Command *command)
         return false;
     }
     return true;
-}
-
-static void print_help(ConsoleSink *output)
-{
-    console_puts("place X Y Z BLOCK [DIRECTION]\n"
-          "remove X Y Z\nget X Y Z\ndot X Y Z\ndelay X Y Z\n"
-          "mode X Y Z\ntune X Y Z\ncapacity X Y Z LEVEL\n"
-          "slots X Y Z\nslot X Y Z INDEX ITEM COUNT LIMIT (zero based; 0 0 0 clears)\n"
-          "hit X Y Z U V arrow|trident|other (U/V: 0..1 on the hit face)\n"
-          "dropper-seed SEED\n"
-          "plot info\nplot expand east|west|south|north [COUNT]\n"
-          "plot shrink east|west|south|north [COUNT] (y/n confirmation when deleting edits)\n"
-          "tick freeze (toggle; also cancels pending manual steps)\n"
-          "tick step NUMBER (positive integer; requires freeze)\n"
-          "tick noupdate (toggle block updates; skipped updates are not replayed)\n"
-          "pos1 X Y Z / pos2 X Y Z (select inclusive corners)\n"
-          "copy [X Y Z] (default anchor: selection minimum)\n"
-          "paste [-a] X Y Z (paste at anchor; -a skips air)\n"
-          "stack [COUNT] DIRECTION / move [DISTANCE] DIRECTION\n"
-          "undo / redo (one paste, stack or move edit)\n"
-          "stats\nsave\n"
-          "title (save and return to world selection)\n"
-          "help\nquit (save and exit)\nBlocks:", output);
-    for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id) {
-        console_printf(output, " %s", block_name(id));
-    }
-    console_puts("\nTorch direction is its support: down/east/west/north/south; default down.\n"
-          "Repeater/comparator/observer direction is output; piston direction is its front; barrel direction is its lid; rail direction selects its horizontal axis.\n"
-          "Observer, barrel, dropper and both piston types accept all six directions. Gates and rails are horizontal; default north.\n"
-          "Hopper direction is its outlet: down or horizontal; default down. Up maps to down.\n",
-          output);
 }
 
 static RsResult print_block(const World *world, BlockPos position, ConsoleSink *output)
@@ -421,9 +388,6 @@ static RsResult execute_command(World *world, const Command *command,
     RsResult result;
 
     switch (command->kind) {
-    case COMMAND_HELP:
-        print_help(output);
-        return RS_OK;
     case COMMAND_GET:
         return print_block(world, command->position, output);
     case COMMAND_SLOTS: {
@@ -527,13 +491,11 @@ ConsoleCommandReply console_command_run(GameSession *session,
         if (!count) return reply;
         Command command;
         if (count < 0 || !parse_command(tokens, count, &command)) {
-            console_puts("error: invalid command; use help\n", errors);
+            console_puts("error: invalid command; see README.md\n", errors);
             reply.failed = true;
             return reply;
         }
-        if (command.kind == COMMAND_HELP) {
-            print_help(output);
-        } else if (command.kind == COMMAND_TITLE) {
+        if (command.kind == COMMAND_TITLE) {
             reply.action = CONSOLE_TITLE;
         } else if (command.kind == COMMAND_QUIT) {
             reply.action = CONSOLE_QUIT;
@@ -570,7 +532,7 @@ ConsoleCommandReply console_command_run(GameSession *session,
         if (!count) return reply;
         Command command;
         if (count < 0 || !parse_command(tokens, count, &command)) {
-            console_puts("error: invalid command; use help\n", errors);
+            console_puts("error: invalid command; see README.md\n", errors);
             reply.failed = true;
             return reply;
         }

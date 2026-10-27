@@ -4,10 +4,12 @@
 #include <string.h>
 
 static const char *const shared_commands[] = {"tick", "plot"};
-static const char *const edit_commands[] = {"pos1", "pos2", "copy", "paste", "stack", "move", "undo", "redo"};
+static const char *const edit_commands[] = {"pos1", "pos2", "copy", "paste", "stack", "move", "undo", "redo", "schem"};
+static const char *const schem_commands[] = {"save"};
+static const char *const schem_flags[] = {"-f"};
 static const char *const paste_flags[] = {"-a"};
 static const char *const cli_commands[] = {
-    "help", "place", "remove", "get", "dot", "delay", "mode", "tune",
+    "place", "remove", "get", "dot", "delay", "mode", "tune",
     "capacity", "hit", "slot", "slots", "stats", "dropper-seed",
     "save", "title", "quit"
 };
@@ -74,6 +76,10 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
         if (workspace && !gui && !slash) ADD(workspace_commands);
     } else if (count == 2 && strcmp(name, "paste") == 0) {
         ADD(paste_flags);
+    } else if (count == 2 && strcmp(name, "schem") == 0) {
+        ADD(schem_commands);
+    } else if (count == 3 && strcmp(name, "schem") == 0 && strcmp(tokens[1], "save") == 0) {
+        ADD(schem_flags);
     } else if ((count == 2 || count == 3) &&
                (strcmp(name, "stack") == 0 || strcmp(name, "move") == 0)) {
         ADD(directions);

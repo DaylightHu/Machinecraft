@@ -14,7 +14,7 @@
 #include "voxel_pick.h"
 #include "world_renderer.h"
 #include "workspace_layout.h"
-#include "workspace_console.h"
+#include "workspace_editor.h"
 #include "world_command.h"
 #include "world_session_manager.h"
 #include "raylib.h"
@@ -98,15 +98,15 @@ typedef struct {
     bool running;
     bool fatal_error;
     WorkspaceLayout workspace;
-    WorkspaceConsole *consoles[WORKSPACE_CLI_LIMIT];
-    GameSession *cli_sessions[WORKSPACE_CLI_LIMIT];
+    WorkspaceEditor *editors[WORKSPACE_TEXT_LIMIT];
+    GameSession *editor_sessions[WORKSPACE_TEXT_LIMIT];
     /* Borrowed from the host; frontends may select sessions but do not own them. */
     WorldSessionManager *world_sessions;
     RenderTexture2D gui_target;
     Texture2D title_background;
     bool pane_prefix, pane_help;
-    bool window_gui_visible, window_cli_visible, window_resize_pending;
-    int window_width, window_height, window_cli_width;
+    bool window_gui_visible, window_text_visible, window_resize_pending;
+    int window_width, window_height, window_text_width;
     char pane_message[MESSAGE_CAPACITY];
 } GuiApp;
 
@@ -439,16 +439,16 @@ static void return_to_title(GuiApp *app)
     refresh_saves(app);
 }
 
-static bool close_pane(GuiApp *app);
+static bool close_pane(GuiApp *app, bool force);
 
 static void detach_gui_frontend(GuiApp *app)
 {
     close_world(app);
     app->screen = GUI_TITLE;
     workspace_layout_show_gui(&app->workspace);
-    if (!close_pane(app))
+    if (!close_pane(app, false))
         snprintf(app->pane_message, sizeof(app->pane_message),
-                 "GUI remains open because no CLI pane could be created");
+                 "GUI remains open because no text pane could be created");
 }
 
 static void perform_after_save(GuiApp *app, AfterSave action)
@@ -937,7 +937,7 @@ static void update_command(GuiApp *app)
     } else {
         error = true;
         snprintf(app->message, sizeof(app->message),
-                 "Use //pos1|pos2|copy|paste|stack|move|undo|redo, /tick freeze|step|noupdate, or /plot info|expand|shrink");
+                 "Use pos1|pos2|copy|paste|stack|move|undo|redo|schem, tick freeze|step|noupdate, or plot info|expand|shrink");
     }
     add_chat_message(app, app->message, error);
     if (app->plot_command.pending) {
@@ -1758,10 +1758,10 @@ static void draw_save_error(GuiApp *app)
             detach_gui_frontend(app);
         } else if (action == AFTER_SAVE_HOST_EXIT) {
             close_world(app);
-            for (int pane = 0; pane < WORKSPACE_CLI_LIMIT; ++pane) {
-                app->cli_sessions[pane] = NULL;
-                if (app->consoles[pane])
-                    workspace_console_detach_world(app->consoles[pane]);
+            for (int pane = 0; pane < WORKSPACE_TEXT_LIMIT; ++pane) {
+                app->editor_sessions[pane] = NULL;
+                if (app->editors[pane])
+                    workspace_editor_detach_world(app->editors[pane]);
             }
             app->running = false;
         }
@@ -1811,7 +1811,7 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
     app->window_gui_visible = true;
     app->window_width = GetScreenWidth();
     app->window_height = GetScreenHeight();
-    app->window_cli_width = WORKSPACE_CLI_WIDTH;
+    app->window_text_width = WORKSPACE_TEXT_WIDTH;
     refresh_saves(app);
     return true;
 }
@@ -1819,10 +1819,10 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
 static void shutdown_gui(GuiApp *app)
 {
     close_world(app);
-    for (int i = 0; i < WORKSPACE_CLI_LIMIT; ++i) {
-        app->cli_sessions[i] = NULL;
-        workspace_console_destroy(app->consoles[i]);
-        app->consoles[i] = NULL;
+    for (int i = 0; i < WORKSPACE_TEXT_LIMIT; ++i) {
+        app->editor_sessions[i] = NULL;
+        workspace_editor_destroy(app->editors[i]);
+        app->editors[i] = NULL;
     }
     if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
     app->gui_target = (RenderTexture2D){0};
@@ -1855,32 +1855,32 @@ static void workspace_geometry(const GuiApp *app, WorkspaceGeometry *geometry)
     workspace_layout_geometry(&app->workspace, GetScreenWidth(), workspace_height(app), geometry);
 }
 
-/* Remember the split CLI width separately from its standalone window size.
+/* Remember the split text width separately from its standalone window size.
  * Either frontend alone gets at least the preferred GUI width. */
 static void sync_workspace_window(GuiApp *app)
 {
-    bool gui = app->workspace.gui_visible, cli = app->workspace.root >= 0;
-    if (gui != app->window_gui_visible || cli != app->window_cli_visible) {
+    bool gui = app->workspace.gui_visible, text = app->workspace.root >= 0;
+    if (gui != app->window_gui_visible || text != app->window_text_visible) {
         /* A second action can arrive before Windows acknowledges the first
          * resize. Use its requested dimensions, never the stale native size. */
         bool use_requested_size = app->window_resize_pending || IsWindowMaximized();
         int width = use_requested_size ? app->window_width : GetScreenWidth();
-        int cli_width = WORKSPACE_CLI_WIDTH;
-        if (app->window_cli_visible) {
-            cli_width = app->window_cli_width;
+        int text_width = WORKSPACE_TEXT_WIDTH;
+        if (app->window_text_visible) {
+            text_width = app->window_text_width;
             if (app->window_gui_visible) {
                 int gui_width = app->workspace.gui_width;
                 int available = width - WORKSPACE_DIVIDER - WORKSPACE_MIN_WIDTH;
                 if (gui_width > available) gui_width = available;
-                cli_width = width - gui_width - WORKSPACE_DIVIDER;
+                text_width = width - gui_width - WORKSPACE_DIVIDER;
             }
-            if (cli_width < WORKSPACE_MIN_WIDTH) cli_width = WORKSPACE_MIN_WIDTH;
+            if (text_width < WORKSPACE_MIN_WIDTH) text_width = WORKSPACE_MIN_WIDTH;
         }
         int target = app->workspace.gui_width;
-        if (gui && cli) target += cli_width + WORKSPACE_DIVIDER;
-        else if (cli && cli_width > target) target = cli_width;
+        if (gui && text) target += text_width + WORKSPACE_DIVIDER;
+        else if (text && text_width > target) target = text_width;
         int minimum_width = gui ? 1000 : WORKSPACE_MIN_WIDTH;
-        if (gui && cli)
+        if (gui && text)
             minimum_width = app->workspace.gui_width + WORKSPACE_DIVIDER + WORKSPACE_MIN_WIDTH;
         int minimum_height = gui ? 650 : WORKSPACE_MIN_HEIGHT + WORKSPACE_STATUS_HEIGHT;
         int height = use_requested_size ? app->window_height : GetScreenHeight();
@@ -1889,10 +1889,10 @@ static void sync_workspace_window(GuiApp *app)
         /* Keep the preferred GUI size separate from platform resize callbacks.
          * SetWindowMinSize() also resizes a GLFW window on Windows. */
         app->window_gui_visible = gui;
-        app->window_cli_visible = cli;
+        app->window_text_visible = text;
         app->window_width = target;
         app->window_height = height;
-        app->window_cli_width = cli_width;
+        app->window_text_width = text_width;
         app->window_resize_pending = true;
         if (IsWindowMaximized()) RestoreWindow();
         SetWindowMinSize(minimum_width, minimum_height);
@@ -1915,7 +1915,7 @@ static void sync_workspace_window(GuiApp *app)
     }
     /* Only a settled GUI-only window can supply a new user-selected width. */
     if (!IsWindowMaximized()) {
-        if (gui && !cli) app->workspace.gui_width = GetScreenWidth();
+        if (gui && !text) app->workspace.gui_width = GetScreenWidth();
         app->window_width = GetScreenWidth();
         app->window_height = GetScreenHeight();
     }
@@ -1930,28 +1930,30 @@ typedef struct {
     GuiApp *app;
 } WorldCommandContext;
 
-static void world_command_write(void *context, const char *text, bool error)
+static void editor_world_command_write(void *context, const char *text,
+                                       bool error)
 {
-    workspace_console_message(context, text, error);
+    workspace_editor_message(context, text, error);
 }
 
-static void world_command_reset(void *context)
+static void editor_world_command_reset(void *context)
 {
-    workspace_console_detach_world(context);
+    workspace_editor_detach_world(context);
 }
 
-static bool handle_workspace_world_command(void *context,
-    WorkspaceConsole *console, const char *input, GameSession **target)
+static bool handle_workspace_editor_world_command(void *context,
+    WorkspaceEditor *editor, const char *input, GameSession **target)
 {
     WorldCommandContext *command_context = context;
     GuiApp *app = command_context->app;
     WorkspaceWorldCommandIO io = {
         .sessions = app->world_sessions,
         .save_directory = save_directory,
-        .write = world_command_write,
-        .write_context = console,
-        .reset_target_state = world_command_reset,
-        .reset_context = console
+        .frontend_name = "mc-nvim",
+        .write = editor_world_command_write,
+        .write_context = editor,
+        .reset_target_state = editor_world_command_reset,
+        .reset_context = editor
     };
     bool handled = workspace_world_command_run(&io, input, target);
     if (io.saves_changed) refresh_saves(app);
@@ -2006,44 +2008,55 @@ static void apply_pane_focus(GuiApp *app)
     while (GetCharPressed() != 0) {}
 }
 
-static int split_cli_pane(GuiApp *app, bool split_x)
+static int split_editor_pane(GuiApp *app, bool split_x)
 {
     int slot = 1;
-    while (slot <= WORKSPACE_CLI_LIMIT &&
+    while (slot <= WORKSPACE_TEXT_LIMIT &&
            workspace_layout_has_pane(&app->workspace, slot)) ++slot;
-    if (slot > WORKSPACE_CLI_LIMIT) {
-        pane_notice(app, "Maximum CLI pane count reached");
+    if (slot > WORKSPACE_TEXT_LIMIT) {
+        pane_notice(app, "Maximum text pane count reached");
         return -1;
     }
-    WorkspaceConsole *console = workspace_console_create();
-    if (!console) { pane_notice(app, "Cannot allocate a CLI pane"); return -1; }
+    WorkspaceEditor *editor = workspace_editor_create();
+    if (!editor) {
+        pane_notice(app, "Cannot allocate an mc-nvim pane");
+        return -1;
+    }
     int pane = workspace_layout_split(&app->workspace, split_x,
         GetScreenWidth(), workspace_height(app));
     if (pane < 0) {
-        workspace_console_destroy(console);
-        pane_notice(app, "No room for a new CLI pane (maximum 8); enlarge the window or close a pane");
+        workspace_editor_destroy(editor);
+        pane_notice(app,
+            "No room for a new mc-nvim pane; enlarge the window or close a pane");
         return -1;
     }
-    app->consoles[pane - 1] = console;
+    app->editors[pane - 1] = editor;
     app->pane_message[0] = '\0';
     return pane;
 }
 
-static bool close_pane(GuiApp *app)
+static bool close_pane(GuiApp *app, bool force)
 {
     int pane = app->workspace.focus;
     if (!pane && app->workspace.root < 0) {
-        if (split_cli_pane(app, false) < 0) return false;
+        if (split_editor_pane(app, false) < 0) return false;
         app->workspace.focus = 0;
+    }
+    if (!force && pane > 0 && app->editors[pane - 1] &&
+        workspace_editor_has_unsaved(app->editors[pane - 1])) {
+        pane_notice(app, "mc-nvim has unsaved buffers; save them with :w before closing");
+        workspace_editor_message(app->editors[pane - 1],
+            "unsaved buffers; :e each file and :w before closing", true);
+        return false;
     }
     if (!workspace_layout_close(&app->workspace)) {
         pane_notice(app, "Keep one pane open; close the host window to end the workspace");
         return false;
     }
     if (pane > 0) {
-        app->cli_sessions[pane - 1] = NULL;
-        workspace_console_destroy(app->consoles[pane - 1]);
-        app->consoles[pane - 1] = NULL;
+        app->editor_sessions[pane - 1] = NULL;
+        workspace_editor_destroy(app->editors[pane - 1]);
+        app->editors[pane - 1] = NULL;
     } else if (app->session && app->screen == GUI_BARREL) {
         (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
         app->screen = GUI_WORLD;
@@ -2091,7 +2104,7 @@ static bool update_pane_keys(GuiApp *app)
         if (control) {
             bool resized = workspace_layout_resize(&app->workspace, direction, 24,
                 GetScreenWidth(), workspace_height(app));
-            pane_notice(app, resized ? "CLI divider moved" : "No movable CLI divider in this direction; GUI size is fixed");
+            pane_notice(app, resized ? "Text divider moved" : "No movable text divider in this direction; GUI size is fixed");
         } else (void)workspace_layout_focus(&app->workspace, direction,
             GetScreenWidth(), workspace_height(app));
     }
@@ -2100,23 +2113,23 @@ static bool update_pane_keys(GuiApp *app)
         if (acted) continue;
         acted = true;
         switch (character) {
-        case '%': (void)split_cli_pane(app, true); break;
-        case '"': (void)split_cli_pane(app, false); break;
+        case '%': (void)split_editor_pane(app, true); break;
+        case '"': (void)split_editor_pane(app, false); break;
         case 'o': workspace_layout_next(&app->workspace); break;
         case 'H': case 'J': case 'K': case 'L': {
             WorkspaceDirection move = character == 'H' ? WORKSPACE_LEFT :
                 character == 'L' ? WORKSPACE_RIGHT : character == 'K' ? WORKSPACE_UP : WORKSPACE_DOWN;
             bool resized = workspace_layout_resize(&app->workspace, move, 24,
                 GetScreenWidth(), workspace_height(app));
-            pane_notice(app, resized ? "CLI divider moved" : "No movable CLI divider; GUI size is fixed");
+            pane_notice(app, resized ? "Text divider moved" : "No movable text divider; GUI size is fixed");
             break;
         }
         case 'z':
             if (!workspace_layout_zoom(&app->workspace))
-                pane_notice(app, "GUI size is fixed; zoom applies to CLI panes");
-            else pane_notice(app, "CLI zoom toggled inside the CLI area");
+                pane_notice(app, "GUI size is fixed; zoom applies to text panes");
+            else pane_notice(app, "Text-pane zoom toggled");
             break;
-        case 'x': (void)close_pane(app); break;
+        case 'x': (void)close_pane(app, false); break;
         case 'g': workspace_layout_show_gui(&app->workspace); break;
         case '?': app->pane_help = true; break;
         default: pane_notice(app, "Unknown pane key"); break;
@@ -2129,28 +2142,31 @@ static bool update_pane_keys(GuiApp *app)
     return true;
 }
 
-static void update_cli_pane(GuiApp *app)
+static void update_text_pane(GuiApp *app)
 {
     int pane = app->workspace.focus;
-    if (pane <= 0 || !app->consoles[pane - 1]) return;
+    if (pane <= 0 || !app->editors[pane - 1]) return;
     WorldCommandContext context = {app};
-    ConsoleCommandReply reply = workspace_console_update(app->consoles[pane - 1],
-        &app->cli_sessions[pane - 1], handle_workspace_world_command, &context);
+    ConsoleCommandReply reply = workspace_editor_update(app->editors[pane - 1],
+        &app->editor_sessions[pane - 1],
+        handle_workspace_editor_world_command, &context);
     if (reply.fatal) {
         app->fatal_error = true;
         app->running = false;
     } else if (reply.action == CONSOLE_TITLE) {
-        app->cli_sessions[pane - 1] = NULL;
-        workspace_console_detach_world(app->consoles[pane - 1]);
-        workspace_console_message(app->consoles[pane - 1],
-                                  "CLI detached from world; GUI unchanged", false);
+        app->editor_sessions[pane - 1] = NULL;
+        workspace_editor_detach_world(app->editors[pane - 1]);
+        workspace_editor_message(app->editors[pane - 1],
+            "mc-nvim detached from world; GUI unchanged", false);
     }
-    else if (reply.action == CONSOLE_QUIT) {
-        if (!close_pane(app)) {
+    else if (reply.action == CONSOLE_QUIT ||
+             reply.action == CONSOLE_QUIT_FORCE) {
+        bool force = reply.action == CONSOLE_QUIT_FORCE;
+        if (!close_pane(app, force)) {
             if (pane > 0 && !app->workspace.gui_visible) {
                 workspace_layout_show_gui(&app->workspace);
                 app->workspace.focus = pane;
-                (void)close_pane(app);
+                (void)close_pane(app, force);
             } else {
                 pane_notice(app, "Cannot close the last visible pane");
             }
@@ -2171,7 +2187,7 @@ static VoxelHit update_workspace_input(GuiApp *app)
         app->pane_prefix = app->pane_help = false;
     } else if (!update_pane_keys(app)) {
         /* GUI modal keys are routed only while pane 0 owns focus. */
-        if (app->workspace.focus > 0) update_cli_pane(app);
+        if (app->workspace.focus > 0) update_text_pane(app);
         else if (app->screen == GUI_TITLE) update_title(app);
         else if (app->screen == GUI_PAUSE) {
             if (IsKeyPressed(KEY_ESCAPE)) {
@@ -2196,22 +2212,21 @@ static void draw_pane_help(void)
 {
     const char *lines[] = {
         "Workspace keys - press Ctrl+b, release, then:",
-        "%                 Split CLI left / right",
-        "\"                 Split CLI top / bottom",
+        "%                 Split mc-nvim left / right",
+        "\"                 Split mc-nvim top / bottom",
         "Arrow             Focus pane in that direction",
         "o                 Focus next pane",
-        "Ctrl+Arrow/HJKL   Move nearest CLI divider",
-        "z                 Zoom / restore CLI area",
+        "Ctrl+Arrow/HJKL   Move nearest text divider",
+        "z                 Zoom / restore text area",
         "x                 Close focused pane",
         "g                 Restore and focus mc-gui",
         "?                 Show this help",
         "Esc               Cancel prefix / close help",
         "",
-        "CLI: Enter executes, Tab completes, Up/Down history",
-        "PgUp/PgDn scroll, Ctrl/Cmd+V pastes, Ctrl+U clears",
-        "CLI Esc clears its line or cancels a pending confirmation",
-        "CLI title saves and detaches; quit saves and closes this pane",
-        "GUI and each CLI pane select worlds independently."
+        "mc-nvim: i/a insert, x delete, Esc normal, :Ex, :e path, :w",
+        "mc-nvim: :q, :q!, :wq; Arrows/hjkl move; :! runs an external command",
+        "mc-nvim: regular world commands use the CLI syntax, such as :tick freeze",
+        "GUI and each text pane select worlds independently."
     };
     int width = GetScreenWidth() - 80;
     if (width > 800) width = 800;
@@ -2265,10 +2280,11 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
         DrawRectangleLinesEx(pane_rectangle(geometry.gui), app->workspace.focus == 0 ? 2 : 1, accent);
     }
     gui_view_reset();
-    for (int i = 0; i < WORKSPACE_CLI_LIMIT; ++i) {
-        if (geometry.visible[i] && app->consoles[i])
-            workspace_console_draw(app->consoles[i], pane_rectangle(geometry.panes[i]),
-                i + 1, app->workspace.focus == i + 1, app->workspace.zoom > 0 || geometry.compact);
+    for (int i = 0; i < WORKSPACE_TEXT_LIMIT; ++i) {
+        if (geometry.visible[i] && app->editors[i])
+            workspace_editor_draw(app->editors[i], pane_rectangle(geometry.panes[i]),
+                i + 1, app->workspace.focus == i + 1,
+                app->workspace.zoom > 0 || geometry.compact);
     }
     int y = GetScreenHeight() - WORKSPACE_STATUS_HEIGHT;
     const char *state = app->screen == GUI_SAVE_ERROR ? "SAVE ERROR" :
@@ -2276,7 +2292,7 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
         "" :
         app->screen == GUI_PAUSE ? "GUI MENU" :
         sim_is_frozen(game_session_world(app->session)) ? "FROZEN" : "RUNNING";
-    const char *message = geometry.compact ? "CLI area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
+    const char *message = geometry.compact ? "Text area too small: showing one pane; enlarge window to restore layout" : app->pane_message;
     bool show_status = state[0] || geometry.compact || app->pane_message[0];
     if (show_status) {
         DrawRectangle(0, y, GetScreenWidth(), WORKSPACE_STATUS_HEIGHT, (Color){37, 28, 57, 255});

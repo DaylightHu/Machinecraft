@@ -25,6 +25,7 @@ typedef void (*WorkspaceWorldCommandReset)(void *context);
 typedef struct {
     WorldSessionManager *sessions;
     const char *save_directory;
+    const char *frontend_name;
     WorkspaceWorldCommandWrite write;
     void *write_context;
     WorkspaceWorldCommandReset reset_target_state;

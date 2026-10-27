@@ -40,6 +40,7 @@ static const char *common_sources[] = {
     "src/console_command.c",
     "src/plot_command.c",
     "src/region_edit.c",
+    "src/structure.c",
     "src/edit_command.c",
     "src/tick_command.c",
     "src/item.c",
@@ -78,7 +79,7 @@ static const char *gui_sources[] = {
     "src/frontend/gui_view.c",
     "src/frontend/ui_font.c",
     "src/frontend/workspace_layout.c",
-    "src/frontend/workspace_console.c",
+    "src/frontend/workspace_editor.c",
     "src/frontend/world_command.c",
     "src/frontend/world_session_manager.c",
     "src/frontend/block_renderer.c",
@@ -800,6 +801,26 @@ cleanup:
     return result;
 }
 
+/* These tools need only the simulation core, including on non-GUI platforms. */
+static bool build_headless_tool(const char *source, const char *name, bool run)
+{
+    if (!nob_mkdir_if_not_exists("build")) return false;
+    const char *output=nob_temp_sprintf("build/%s%s",name,executable_suffix());
+    Nob_Cmd command={0};
+    nob_cmd_append(&command,compiler(),"-std=c11","-O2","-Wall","-Wextra","-Iinclude","-Isrc");
+    for (size_t i=0;i<NOB_ARRAY_LEN(common_sources);++i) nob_cmd_append(&command,common_sources[i]);
+    nob_cmd_append(&command,source,"-o",output);
+#ifndef _WIN32
+    nob_cmd_append(&command,"-lm");
+#endif
+    if (!nob_cmd_run(&command)) return false;
+    if (run) {
+        nob_cmd_append(&command,output);
+        if (!nob_cmd_run(&command)) return false;
+    }
+    return true;
+}
+
 static void print_help(const char *program)
 {
     printf("Usage: %s [command]\n\n", program);
@@ -811,6 +832,8 @@ static void print_help(const char *program)
     printf("  run-cli      Build and run the CLI from the repository root\n");
     printf("  vendor-list  Print the raylib files required by macOS and Windows\n");
     printf("  precommit    Stage the exact raylib set and verify an index-only build\n");
+    printf("  test         Build and run the structure persistence tests\n");
+    printf("  reader       Build build/inspect_structure, a standalone .mcs reader\n");
     printf("  clean        Remove the build directory\n");
     printf("  help         Show this help\n");
 }
@@ -822,6 +845,10 @@ int main(int argc, char **argv)
     const char *program = nob_shift(argv, argc);
     const char *command = argc > 0 ? nob_shift(argv, argc) : "build";
 
+    if (strcmp(command,"test")==0)
+        return build_headless_tool("tests/structure_test.c","structure_test",true) ? 0 : 1;
+    if (strcmp(command,"reader")==0)
+        return build_headless_tool("tools/inspect_structure.c","inspect_structure",false) ? 0 : 1;
     if (strcmp(command, "build") == 0) {
         return build_machinecraft(true, true) ? 0 : 1;
     }
