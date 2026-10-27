@@ -88,16 +88,6 @@ help screen.
 | `:title` | Save and detach this pane from its world. |
 | `:quit` | Save and close the current pane. |
 
-`DIRECTION` is one of `east`, `west`, `up`, `down`, `south`, or `north`.
-`BLOCK` is one of `iron`, `redstone_block`, `redstone_wire`,
-`redstone_torch`, `glass`, `redstone_repeater`, `redstone_comparator`,
-`powered_rail`, `activator_rail`, `observer`, `piston`, `sticky_piston`,
-`barrel`, `slime`, `note_block`, `honey`, `target`, `hopper`, `dropper`, or
-`redstone_lamp`.
-
-The same world-command language is available in the GUI command input opened
-with `/`.
-
 ## References
 
 - https://github.com/raysan5/raylib
