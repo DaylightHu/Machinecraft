@@ -1835,14 +1835,6 @@ static void shutdown_gui(GuiApp *app)
     CloseWindow();
 }
 
-static int first_unsaved_editor(const GuiApp *app)
-{
-    for (int i = 0; i < WORKSPACE_TEXT_LIMIT; ++i)
-        if (app->editors[i] && workspace_editor_has_unsaved(app->editors[i]))
-            return i;
-    return -1;
-}
-
 static Rectangle pane_rectangle(WorkspaceRect box)
 {
     return (Rectangle){(float)box.x, (float)box.y, (float)box.width, (float)box.height};
@@ -2321,26 +2313,15 @@ int gui_run(WorldSessionManager *world_sessions)
         bool close_requested = WindowShouldClose();
         if (close_requested && !app.close_latched &&
             app.screen != GUI_SAVE_ERROR) {
-            int unsaved = first_unsaved_editor(&app);
-            if (unsaved >= 0) {
-                app.workspace.focus = unsaved + 1;
-                if (app.workspace.zoom > 0) app.workspace.zoom = unsaved + 1;
-                pane_notice(&app,
-                    "mc-nvim has unsaved buffers; use :w before closing the window");
-                workspace_editor_message(app.editors[unsaved],
-                    "window close cancelled: save all modified buffers first", true);
-                apply_pane_focus(&app);
-            } else {
-                app.close_latched = true;
-                if (app.screen == GUI_BARREL) {
-                    (void)world_close_barrel(game_session_world(app.session), app.barrel_pos);
-                    app.screen = GUI_WORLD;
-                }
-                if (any_world_dirty(&app))
-                    request_save_action(&app, AFTER_SAVE_HOST_EXIT);
-                else
-                    app.running = false;
+            app.close_latched = true;
+            if (app.screen == GUI_BARREL) {
+                (void)world_close_barrel(game_session_world(app.session), app.barrel_pos);
+                app.screen = GUI_WORLD;
             }
+            if (any_world_dirty(&app))
+                request_save_action(&app, AFTER_SAVE_HOST_EXIT);
+            else
+                app.running = false;
         }
         if (!app.running) break;
 
