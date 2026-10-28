@@ -34,13 +34,33 @@ size_t structure_container_size(const Structure *structure, BlockPos local);
 StructureResult structure_get_container_slot(const Structure *structure,
     BlockPos local, size_t slot, ContainerStack *stack);
 
-/* Versioned .mcs format documented in docs/structure-format.md. Atomic publish
+/* Versioned .mcs format; C usage documented in docs/c-programs.md. Atomic publish
  * through a temporary file beside path; no directory creation. Existing files
  * are preserved unless overwrite is true. Read allocates a detached immutable
  * structure; neither operation requires or modifies a World. NULL result is OK. */
 StructureResult structure_write(const Structure *structure, const char *path,
                                  bool overwrite);
 Structure *structure_read(const char *path, StructureResult *result);
+
+/* Translate a local cell (same coordinates as structure_get) to a placement
+ * whose saved anchor is at target_anchor. On failure, world_pos is unchanged.
+ * This checks integer range and local bounds, not a particular world's bounds. */
+StructureResult structure_resolve(const Structure *structure,
+    BlockPos target_anchor, BlockPos local, BlockPos *world_pos);
+
+/* Create an owned, independent world; destroy it with world_destroy().
+ * All cells, including air, saved states and inventories are installed before
+ * the world is returned. No placement/neighbor callbacks or ticks are replayed.
+ * The world starts frozen at tick 0 with updates enabled, empty scheduled work,
+ * fresh torch history, default random state and zero container cooldowns.
+ * Hoppers register in local Y/Z/X order and first tick when the caller steps.
+ * source_tick is NOT restored. This is a new instance, not checkpoint recovery.
+ * Terrain outside the cuboid follows config. The plot grows in whole plots to
+ * contain the placement; vertical limits and coordinate margins still apply.
+ * Failure destroys the incomplete world and returns NULL with a result code.
+ * The detached structure remains reusable and may be destroyed after success. */
+World *structure_instantiate(const Structure *structure, WorldConfig config,
+    BlockPos target_anchor, StructureResult *result);
 const char *structure_result_name(StructureResult result);
 
 #endif

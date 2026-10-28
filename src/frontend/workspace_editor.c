@@ -1175,18 +1175,22 @@ static char *external_command_line(const WorkspaceEditor *editor,
     char *cursor = line;
     size_t remaining = capacity;
 #ifdef _WIN32
-    char prefix[EDITOR_PATH_CAPACITY + 16];
-    int prefix_length = snprintf(prefix, sizeof(prefix), "cd /d \"%s\" && ",
+    char prefix[EDITOR_PATH_CAPACITY + 32];
+    int prefix_length = snprintf(prefix, sizeof(prefix), "( cd /d \"%s\" && ",
                                  editor->cwd);
     bool ok = prefix_length >= 0 && (size_t)prefix_length < sizeof(prefix) &&
               append_text(&cursor, &remaining, prefix);
 #else
-    bool ok = append_text(&cursor, &remaining, "cd ") &&
+    bool ok = append_text(&cursor, &remaining, "(\ncd ") &&
               append_shell_path(&cursor, &remaining, editor->cwd) &&
-              append_text(&cursor, &remaining, " && ");
+              append_text(&cursor, &remaining, " &&\n");
 #endif
-    ok = ok && append_text(&cursor, &remaining, command) &&
-         append_text(&cursor, &remaining, " 2>&1");
+    ok = ok && append_text(&cursor, &remaining, command);
+#ifdef _WIN32
+    ok = ok && append_text(&cursor, &remaining, " ) 2>&1");
+#else
+    ok = ok && append_text(&cursor, &remaining, "\n) 2>&1");
+#endif
     if (!ok) {
         free(line);
         return NULL;
@@ -1248,8 +1252,14 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
     char line[EDITOR_COMMAND_CAPACITY];
     memcpy(line, editor->command, editor->command_length + 1);
     trim_end(line);
-    char command_line[EDITOR_COMMAND_CAPACITY];
     char *command_start = skip_space(line);
+    /* Vim's shell escape does not require a space after '!'. Dispatch it
+     * before splitting editor command words, keeping shell quoting intact. */
+    if (*command_start == '!') {
+        run_external_command(editor, skip_space(command_start + 1));
+        return reply;
+    }
+    char command_line[EDITOR_COMMAND_CAPACITY];
     snprintf(command_line, sizeof(command_line), "%s", command_start);
     char *command = command_start;
     char *argument = command;
@@ -1287,8 +1297,6 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
             else
                 reply.action = CONSOLE_QUIT;
         }
-    } else if (strcmp(command, "!") == 0) {
-        run_external_command(editor, argument);
     } else {
         clear_messages(editor);
         bool handled = world_command &&

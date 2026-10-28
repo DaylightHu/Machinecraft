@@ -7,7 +7,7 @@
 *.app
 
 engine
-example
+/example/
 /build/
 /third_party/raylib/
 /nob

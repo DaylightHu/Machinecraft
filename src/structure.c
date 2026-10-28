@@ -169,6 +169,92 @@ bool structure_get(const Structure *s, BlockPos local, BlockState *state)
     *state=s->cells[index]; return true;
 }
 
+StructureResult structure_resolve(const Structure *s, BlockPos anchor,
+                                 BlockPos local, BlockPos *out)
+{
+    size_t index;
+    if (!s || !out) return STRUCTURE_INVALID_ARGUMENT;
+    if (!cell_index(s,local,&index)) return STRUCTURE_OUT_OF_BOUNDS;
+    int64_t x=(int64_t)anchor.x+s->info.origin.x+local.x-s->info.anchor.x;
+    int64_t y=(int64_t)anchor.y+s->info.origin.y+local.y-s->info.anchor.y;
+    int64_t z=(int64_t)anchor.z+s->info.origin.z+local.z-s->info.anchor.z;
+    if (x<INT_MIN || x>INT_MAX || y<INT_MIN || y>INT_MAX || z<INT_MIN || z>INT_MAX)
+        return STRUCTURE_OUT_OF_BOUNDS;
+    *out=(BlockPos){(int)x,(int)y,(int)z};
+    return STRUCTURE_OK;
+}
+
+static int64_t plot_minimum(int coordinate)
+{
+    int64_t n=coordinate, q=n/WORLD_PLOT_SIZE;
+    if (n%WORLD_PLOT_SIZE<0) --q;
+    return q*WORLD_PLOT_SIZE;
+}
+
+World *structure_instantiate(const Structure *s, WorldConfig config,
+                            BlockPos anchor, StructureResult *out)
+{
+    StructureResult result=STRUCTURE_INVALID_ARGUMENT;
+    World *w=NULL;
+    if (!s || config.ground_layers<0 || config.ground_layers>65) goto fail;
+    BlockPos low,high;
+    result=structure_resolve(s,anchor,(BlockPos){0},&low);
+    if (result!=STRUCTURE_OK) goto fail;
+    result=structure_resolve(s,anchor,(BlockPos){(int)s->info.width-1,
+        (int)s->info.height-1,(int)s->info.length-1},&high);
+    if (result!=STRUCTURE_OK) goto fail;
+    result=STRUCTURE_OUT_OF_BOUNDS;
+    if (low.y<WORLD_MIN_Y || high.y>WORLD_MAX_Y) goto fail;
+    /* Include the default plot without walking through intermediate plots. */
+    int64_t x0=plot_minimum(low.x<0 ? low.x : 0);
+    int64_t z0=plot_minimum(low.z<0 ? low.z : 0);
+    int64_t x1=plot_minimum(high.x>=WORLD_PLOT_SIZE ? high.x : WORLD_PLOT_SIZE-1)
+        +WORLD_PLOT_SIZE-1;
+    int64_t z1=plot_minimum(high.z>=WORLD_PLOT_SIZE ? high.z : WORLD_PLOT_SIZE-1)
+        +WORLD_PLOT_SIZE-1;
+    if (x0<INT_MIN || z0<INT_MIN || x1>INT_MAX || z1>INT_MAX) goto fail;
+    WorldPlotBounds plot={(int)x0,(int)z0,(int)x1,(int)z1};
+    if (!world_plot_bounds_valid(plot)) goto fail;
+    result=STRUCTURE_OUT_OF_MEMORY;
+    w=world_create(config);
+    if (!w) goto fail;
+    w->plot=plot;
+    for (size_t i=0;i<s->info.volume;++i) {
+        BlockPos p=local_pos(&s->info,i);
+        /* Bounds were checked above; all translated coordinates fit in int. */
+        p=(BlockPos){low.x+p.x,low.y+p.y,low.z+p.z};
+        BlockState state=s->cells[i];
+        if (!world_write_visual(w,p,state)) {
+            result=w->sim->error==RS_OUT_OF_MEMORY ? STRUCTURE_OUT_OF_MEMORY :
+                STRUCTURE_SIMULATION_ERROR;
+            goto fail;
+        }
+        if (state.id==BLOCK_REDSTONE_TORCH && !sim_attach_torch(w,p)) goto fail;
+    }
+    /* Runtime objects refer only to the completed cell array, never a
+     * partially placed circuit. No callbacks are invoked by attachment. */
+    for (size_t i=0;i<s->info.container_count;++i) {
+        const StructureContainer *c=&s->containers[i];
+        BlockPos p=local_pos(&s->info,c->cell);
+        p=(BlockPos){low.x+p.x,low.y+p.y,low.z+p.z};
+        BlockState state=s->cells[c->cell];
+        if (!container_attach(w,p,state)) goto fail;
+        ContainerRuntime *runtime=container_runtime(w,p);
+        memcpy(runtime->slots,c->slots,container_slot_count((BlockId)state.id)*sizeof(*c->slots));
+        if (state.id==BLOCK_BARREL) runtime->openers=state.data.barrel.open ? 1u : 0u;
+    }
+    if (sim_set_frozen(w,true)!=RS_OK) {
+        result=STRUCTURE_SIMULATION_ERROR;
+        goto fail;
+    }
+    set_result(out,STRUCTURE_OK);
+    return w;
+fail:
+    world_destroy(w);
+    set_result(out,result);
+    return NULL;
+}
+
 size_t structure_container_size(const Structure *s, BlockPos local)
 {
     size_t index;
