@@ -18,7 +18,12 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>
+
+#define WIN32_LEAN_AND_MEAN
+#define NOGDI
+#define NOUSER
 #include <windows.h>
+
 #define editor_getcwd _getcwd
 #define editor_popen _popen
 #define editor_pclose _pclose
