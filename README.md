@@ -50,19 +50,6 @@ mc-nvim is the text workspace inside mcmux. The available editor actions are:
 | `:COMMAND` | Run a world or simulation command using the same syntax as the CLI. |
 | `:!COMMAND` / `:! COMMAND` | Run a shell command from the pane directory; show its output and exit status. |
 
-`:e` and `:Ex` keep the directory context in the pane. An `.mcs` file opens as
-a read-only view. Use the command tables below instead of an in-application
-help screen.
-
-Save edits with `:w` before compiling. For example, from the repository root,
-`:!cc nob.c -o nob` compiles the build runner and `:!./nob reader` builds the
-structure reader. Shell escapes use the system's installed compiler and shell;
-the pane's current directory is used for relative paths. Both stdout and stderr
-are captured, including diagnostics from command chains. External commands run
-synchronously; the editor resumes when the command exits.
-
-For the structure-to-C workflow, see [Write C programs in mc-nvim](docs/c-programs.md)
-and [the XOR example](examples/xor_gate.c).
 
 | `:COMMAND` | Purpose |
 | --- | --- |
