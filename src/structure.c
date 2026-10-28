@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
@@ -37,6 +38,19 @@ struct Structure {
 static void set_result(StructureResult *out, StructureResult result)
 {
     if (out) *out = result;
+}
+
+/* Retain the latest read failure on this thread before cleanup changes errno. */
+static _Thread_local char structure_io_detail[1024];
+
+static void record_read_error(const char *operation, const char *path,
+                              int error, const char *detail)
+{
+    const char *reason=detail ? detail :
+        error ? strerror(error) : "system did not supply an error code";
+    snprintf(structure_io_detail,sizeof(structure_io_detail),
+        "structure file I/O error: %s failed: %s [path: %s]",
+        operation,reason,path);
 }
 
 /* Explicit fields, not a dumped C struct or an internal palette state ID. */
@@ -282,6 +296,7 @@ static StructureResult publish(const char *temporary, const char *path, bool ove
 
 StructureResult structure_write(const Structure *s, const char *path, bool overwrite)
 {
+    structure_io_detail[0]='\0';
     if (!s || !path || !*path) return STRUCTURE_INVALID_ARGUMENT;
     ByteBuffer palette, b; bytes_init(&palette); bytes_init(&b);
     StructureResult result=STRUCTURE_OUT_OF_MEMORY;
@@ -337,16 +352,38 @@ done:
 
 Structure *structure_read(const char *path, StructureResult *out)
 {
+    structure_io_detail[0]='\0';
     StructureResult result=STRUCTURE_INVALID_ARGUMENT;
     Structure *s=NULL; BlockState *palette=NULL; bool *seen=NULL;
     ByteBuffer b; bytes_init(&b);
     if (!path || !*path) goto done;
+    errno=0;
     FILE *file=fopen(path,"rb");
-    if (!file) { result=STRUCTURE_IO_ERROR; goto done; }
+    if (!file) {
+        record_read_error("fopen",path,errno,NULL);
+        result=STRUCTURE_IO_ERROR;
+        goto done;
+    }
     result=STRUCTURE_IO_ERROR;
-    bool measured=fseek(file,0,SEEK_END)==0;
-    long length=measured ? ftell(file) : -1;
-    if (length<0 || fseek(file,0,SEEK_SET)!=0) { fclose(file); goto done; }
+    errno=0;
+    if (fseek(file,0,SEEK_END)!=0) {
+        record_read_error("fseek(SEEK_END)",path,errno,NULL);
+        fclose(file);
+        goto done;
+    }
+    errno=0;
+    long length=ftell(file);
+    if (length<0) {
+        record_read_error("ftell",path,errno,NULL);
+        fclose(file);
+        goto done;
+    }
+    errno=0;
+    if (fseek(file,0,SEEK_SET)!=0) {
+        record_read_error("fseek(SEEK_SET)",path,errno,NULL);
+        fclose(file);
+        goto done;
+    }
     /* The largest v1 body is all barrels, plus the maximum palette. */
     uint64_t limit=HEADER_SIZE+(uint64_t)STATE_ID_LIMIT*RECORD_SIZE+
         (uint64_t)STRUCTURE_BLOCK_LIMIT*(2+8+27*6)+4;
@@ -354,9 +391,20 @@ Structure *structure_read(const char *path, StructureResult *out)
     b.size=b.capacity=(size_t)length;
     b.data=malloc(b.size ? b.size : 1);
     if (!b.data) { fclose(file); result=STRUCTURE_OUT_OF_MEMORY; goto done; }
-    bool read_ok=fread(b.data,1,b.size,file)==b.size;
-    if (fclose(file)!=0) read_ok=false;
-    if (!read_ok) goto done;
+    errno=0;
+    size_t read_size=fread(b.data,1,b.size,file);
+    if (read_size!=b.size) {
+        int error=errno;
+        record_read_error("fread",path,error,
+            ferror(file) ? NULL : "file ended before its measured length");
+        fclose(file);
+        goto done;
+    }
+    errno=0;
+    if (fclose(file)!=0) {
+        record_read_error("fclose",path,errno,NULL);
+        goto done;
+    }
     result=STRUCTURE_CORRUPT;
     if (b.size<HEADER_SIZE+4 || memcmp(b.data,magic,sizeof(magic))) goto done;
     b.cursor=8;
@@ -505,6 +553,8 @@ fail:
 
 const char *structure_result_name(StructureResult result)
 {
+    if (result==STRUCTURE_IO_ERROR && structure_io_detail[0])
+        return structure_io_detail;
     static const char *const names[]={"ok","invalid argument","out of bounds",
         "structure exceeds the block limit","out of memory","structure file I/O error",
         "structure already exists; use -f to replace it","corrupt structure file",

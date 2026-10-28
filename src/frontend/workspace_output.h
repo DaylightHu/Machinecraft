@@ -1,0 +1,24 @@
+#ifndef MC_WORKSPACE_OUTPUT_H
+#define MC_WORKSPACE_OUTPUT_H
+
+#include "raylib.h"
+#include <stddef.h>
+
+typedef struct WorkspaceOutput WorkspaceOutput;
+typedef void (*WorkspaceOutputReceiver)(void *source, const char *text,
+                                        bool error, bool finished);
+
+WorkspaceOutput *workspace_output_create(void);
+void workspace_output_destroy(WorkspaceOutput *output);
+void workspace_output_message(WorkspaceOutput *output, const char *text, bool error);
+bool workspace_output_start(WorkspaceOutput *output, const char *command,
+    const char *label, void *source, WorkspaceOutputReceiver receiver,
+    char *error, size_t error_capacity);
+void workspace_output_detach(WorkspaceOutput *output, void *source);
+void workspace_output_poll(WorkspaceOutput *output);
+void workspace_output_cancel(WorkspaceOutput *output);
+void workspace_output_update(WorkspaceOutput *output);
+void workspace_output_draw(WorkspaceOutput *output, Rectangle box, int pane,
+                            bool focused, bool zoomed);
+
+#endif

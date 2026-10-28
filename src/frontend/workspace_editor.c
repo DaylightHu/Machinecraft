@@ -3,6 +3,7 @@
 #endif
 
 #include "workspace_editor.h"
+#include "workspace_output.h"
 #include "ui_font.h"
 #include "rs/structure.h"
 
@@ -56,6 +57,8 @@ enum {
 typedef enum {
     EDITOR_NORMAL,
     EDITOR_INSERT,
+    EDITOR_VISUAL,
+    EDITOR_VISUAL_LINE,
     EDITOR_COMMAND,
     EDITOR_BROWSER
 } EditorMode;
@@ -103,6 +106,13 @@ struct WorkspaceEditor {
     char partial[EDITOR_MESSAGE_LENGTH];
     size_t partial_length;
     bool partial_error;
+    size_t selection_row, selection_column;
+    char pending_operator;
+    char *yank;
+    bool yank_linewise;
+    WorkspaceOutput *output;
+    int pane;
+    bool receiving_output;
 };
 
 static void enter_command_mode(WorkspaceEditor *editor, EditorMode return_mode);
@@ -252,6 +262,8 @@ static void push_message(WorkspaceEditor *editor, const char *text, bool error)
     snprintf(editor->messages[index].text, EDITOR_MESSAGE_LENGTH, "%s", text);
     editor->messages[index].error = error;
     editor->messages_visible = true;
+    if (editor->output && !editor->receiving_output)
+        workspace_output_message(editor->output, text, error);
 }
 
 void workspace_editor_message(WorkspaceEditor *editor, const char *text,
@@ -1346,6 +1358,204 @@ static bool insert_text(EditorBuffer *buffer, const char *text)
     return true;
 }
 
+typedef struct { size_t row, column; } EditorPosition;
+typedef struct { EditorPosition first, end; bool linewise; } EditorRange;
+
+static bool visual_mode(const WorkspaceEditor *editor)
+{
+    return editor->mode==EDITOR_VISUAL || editor->mode==EDITOR_VISUAL_LINE;
+}
+
+static EditorRange selected_range(const WorkspaceEditor *editor,
+                                   const EditorBuffer *buffer)
+{
+    EditorPosition first={editor->selection_row,editor->selection_column};
+    EditorPosition last={buffer->row,buffer->column};
+    if (first.row>last.row || (first.row==last.row && first.column>last.column)) {
+        EditorPosition swap=first; first=last; last=swap;
+    }
+    bool linewise=editor->mode==EDITOR_VISUAL_LINE;
+    if (linewise) { first.column=0; last=(EditorPosition){last.row+1,0}; }
+    else {
+        const EditorLine *line=&buffer->lines[last.row];
+        last.column=utf8_next(line,last.column);
+        if (!line->length && last.row+1<buffer->line_count)
+            last=(EditorPosition){last.row+1,0};
+    }
+    return (EditorRange){first,last,linewise};
+}
+
+static char *range_text(const EditorBuffer *buffer, EditorRange range)
+{
+    size_t bytes=0;
+    for (size_t row=range.first.row; row<buffer->line_count && row<=range.end.row; ++row) {
+        if (range.linewise && row==range.end.row) break;
+        size_t first=row==range.first.row ? range.first.column : 0;
+        size_t end=row==range.end.row ? range.end.column : buffer->lines[row].length;
+        bytes+=end-first;
+        if (range.linewise || row<range.end.row) ++bytes;
+    }
+    char *text=malloc(bytes+1);
+    if (!text) return NULL;
+    size_t offset=0;
+    for (size_t row=range.first.row; row<buffer->line_count && row<=range.end.row; ++row) {
+        if (range.linewise && row==range.end.row) break;
+        size_t first=row==range.first.row ? range.first.column : 0;
+        size_t end=row==range.end.row ? range.end.column : buffer->lines[row].length;
+        memcpy(text+offset,buffer->lines[row].text+first,end-first);
+        offset+=end-first;
+        if (range.linewise || row<range.end.row) text[offset++]='\n';
+    }
+    text[offset]='\0';
+    return text;
+}
+
+/* Prepare replacement lines before changing the buffer. Positions are bytes,
+ * and both ends are at UTF-8 character boundaries. The end is exclusive. */
+static bool replace_range(EditorBuffer *buffer, EditorPosition first,
+                           EditorPosition end, const char *text)
+{
+    size_t removed=end.column-first.column;
+    if (first.row!=end.row) {
+        removed=buffer->lines[first.row].length-first.column+end.column;
+        for (size_t row=first.row+1; row<end.row; ++row)
+            removed+=buffer->lines[row].length;
+        removed+=end.row-first.row;
+    }
+    size_t length=strlen(text), added_count=1;
+    if (length>EDITOR_FILE_LIMIT-(buffer->bytes-removed)) return false;
+    for (size_t i=0; i<length; ++i) if (text[i]=='\n') ++added_count;
+    EditorLine *added=calloc(added_count,sizeof(*added));
+    if (!added) return false;
+    size_t start=0,index=0;
+    bool ok=false;
+    for (size_t i=0; i<=length; ++i) {
+        if (i!=length && text[i]!='\n') continue;
+        size_t prefix=index==0 ? first.column : 0;
+        size_t suffix=i==length ? buffer->lines[end.row].length-end.column : 0;
+        size_t size=prefix+i-start+suffix;
+        if (!line_reserve(&added[index],size+1)) goto done;
+        if (prefix) memcpy(added[index].text,buffer->lines[first.row].text,prefix);
+        memcpy(added[index].text+prefix,text+start,i-start);
+        if (suffix) memcpy(added[index].text+prefix+i-start,
+            buffer->lines[end.row].text+end.column,suffix);
+        added[index].text[size]='\0'; added[index].length=size;
+        ++index; start=i+1;
+    }
+    size_t old_count=end.row-first.row+1;
+    size_t count=buffer->line_count-old_count+added_count;
+    if (!buffer_reserve_lines(buffer,count)) goto done;
+    for (size_t row=first.row; row<=end.row; ++row) line_destroy(&buffer->lines[row]);
+    memmove(buffer->lines+first.row+added_count,buffer->lines+end.row+1,
+        (buffer->line_count-end.row-1)*sizeof(*buffer->lines));
+    memcpy(buffer->lines+first.row,added,added_count*sizeof(*added));
+    if (count<buffer->line_count)
+        memset(buffer->lines+count,0,(buffer->line_count-count)*sizeof(*buffer->lines));
+    buffer->line_count=count;
+    buffer->bytes=buffer->bytes-removed+length;
+    buffer->row=first.row; buffer->column=first.column;
+    buffer->dirty=true;
+    clamp_cursor(buffer,false); remember_column(buffer);
+    ok=true;
+done:
+    if (!ok) for (size_t i=0; i<added_count; ++i) line_destroy(&added[i]);
+    free(added);
+    return ok;
+}
+
+static bool operate_range(WorkspaceEditor *editor, EditorRange range, bool erase)
+{
+    EditorBuffer *buffer=current_buffer(editor);
+    size_t previous_column=buffer->column;
+    if (erase && buffer->readonly) {
+        workspace_editor_message(editor,"buffer is read only",true);
+        return false;
+    }
+    char *text=range_text(buffer,range);
+    if (!text) goto fail;
+    EditorPosition first=range.first,end=range.end;
+    if (erase && range.linewise) {
+        if (end.row==buffer->line_count) {
+            end=(EditorPosition){buffer->line_count-1,
+                buffer->lines[buffer->line_count-1].length};
+            if (first.row) first=(EditorPosition){first.row-1,buffer->lines[first.row-1].length};
+        }
+    }
+    if (erase && !replace_range(buffer,first,end,"")) { free(text); goto fail; }
+    free(editor->yank); editor->yank=text; editor->yank_linewise=range.linewise;
+    SetClipboardText(text);
+    buffer->row=range.first.row<buffer->line_count ? range.first.row : buffer->line_count-1;
+    buffer->column=range.linewise ?
+        erase ? line_indent_length(&buffer->lines[buffer->row]) : previous_column :
+        range.first.column;
+    clamp_cursor(buffer,false); remember_column(buffer);
+    editor->mode=EDITOR_NORMAL; editor->pending_operator=0;
+    editor->messages_visible=false;
+    return true;
+fail:
+    workspace_editor_message(editor,"cannot copy or edit buffer",true);
+    return false;
+}
+
+static bool paste_register(WorkspaceEditor *editor, bool before, bool system_clipboard)
+{
+    EditorBuffer *buffer=current_buffer(editor);
+    if (buffer->readonly) {
+        workspace_editor_message(editor,"buffer is read only",true);
+        return false;
+    }
+    const char *clipboard=!system_clipboard && editor->yank ? editor->yank : GetClipboardText();
+    if (!clipboard || !*clipboard) return true;
+    size_t length=strlen(clipboard);
+    if (length>EDITOR_FILE_LIMIT) goto fail;
+    char *text=malloc(length+2);
+    if (!text) goto fail;
+    size_t used=0;
+    for (size_t i=0; i<length; ++i) {
+        if (clipboard[i]=='\r' && clipboard[i+1]=='\n') continue;
+        text[used++]=clipboard[i]=='\r' ? '\n' : clipboard[i];
+    }
+    text[used]='\0';
+    bool linewise=editor->yank && !strcmp(clipboard,editor->yank) ?
+        editor->yank_linewise : used && text[used-1]=='\n';
+    EditorPosition position={buffer->row,buffer->column};
+    size_t cursor_row=position.row,cursor_column=position.column;
+    if (linewise) {
+        bool empty=buffer->line_count==1 && !buffer->lines[0].length;
+        if (empty) text[--used]='\0';
+        else if (before) position.column=0;
+        else if (position.row+1<buffer->line_count) { ++position.row; position.column=0; }
+        else {
+            position.column=buffer->lines[position.row].length;
+            memmove(text+1,text,used);
+            text[0]='\n';
+            text[used]='\0'; /* Replace the register's final newline with a leading one. */
+        }
+        cursor_row=empty ? 0 : before ? buffer->row : buffer->row+1;
+        cursor_column=0;
+    } else {
+        if (!before && buffer->lines[position.row].length)
+            position.column=utf8_next(&buffer->lines[position.row],position.column);
+        cursor_row=position.row; cursor_column=position.column;
+        for (size_t i=0; i<used; ++i) {
+            if (text[i]=='\n') { ++cursor_row; cursor_column=0; }
+            else ++cursor_column;
+        }
+    }
+    bool ok=replace_range(buffer,position,position,text);
+    free(text);
+    if (!ok) goto fail;
+    buffer->row=cursor_row;
+    if (linewise) buffer->column=line_indent_length(&buffer->lines[buffer->row]);
+    else buffer->column=cursor_column ? utf8_previous(&buffer->lines[buffer->row],cursor_column) : 0;
+    clamp_cursor(buffer,false); remember_column(buffer);
+    editor->messages_visible=false;
+    return true;
+fail:
+    workspace_editor_message(editor,"cannot paste clipboard",true);
+    return false;
+}
+
 static char *skip_space(char *text)
 {
     while (*text == ' ' || *text == '\t') ++text;
@@ -1435,6 +1645,18 @@ static int external_command_status(int status)
 #endif
 }
 
+static void receive_process_output(void *source,const char *text,
+                                    bool error,bool finished)
+{
+    WorkspaceEditor *editor=source;
+    editor->receiving_output=true;
+    if (finished) {
+        flush_command_output(editor);
+        workspace_editor_message(editor,text,error);
+    } else command_output(editor,text,error);
+    editor->receiving_output=false;
+}
+
 static void run_external_command(WorkspaceEditor *editor, const char *command)
 {
     if (!*command) {
@@ -1444,6 +1666,16 @@ static void run_external_command(WorkspaceEditor *editor, const char *command)
     char *line = external_command_line(editor, command);
     if (!line) {
         workspace_editor_message(editor, "external command is too long", true);
+        return;
+    }
+    if (editor->output) {
+        char error[EDITOR_MESSAGE_LENGTH],label[EDITOR_COMMAND_CAPACITY+64];
+        snprintf(label,sizeof(label),"[mc-nvim %d] $ %s",editor->pane,command);
+        if (workspace_output_start(editor->output,line,label,editor,
+                receive_process_output,error,sizeof(error)))
+            clear_messages(editor);
+        else workspace_editor_message(editor,error,true);
+        free(line);
         return;
     }
     FILE *pipe = editor_popen(line, "r");
@@ -1544,6 +1776,31 @@ static void update_normal(WorkspaceEditor *editor)
 {
     EditorBuffer *buffer = current_buffer(editor);
     if (!buffer) return;
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        editor->mode=EDITOR_NORMAL; editor->pending_operator=0;
+        while (GetCharPressed()!=0) {}
+        return;
+    }
+    bool control=IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) ||
+        IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER);
+    if (control) {
+        if (visual_mode(editor) && (IsKeyPressed(KEY_C) || IsKeyPressed(KEY_X)))
+            (void)operate_range(editor,selected_range(editor,buffer),IsKeyPressed(KEY_X));
+        else if (IsKeyPressed(KEY_V) && !visual_mode(editor))
+            (void)paste_register(editor,false,true);
+        while (GetCharPressed()!=0) {}
+        return;
+    }
+    if (IsKeyPressed(KEY_DELETE)) {
+        if (visual_mode(editor)) (void)operate_range(editor,selected_range(editor,buffer),true);
+        else if (buffer->lines[buffer->row].length) {
+            EditorRange range={{buffer->row,buffer->column},
+                {buffer->row,utf8_next(&buffer->lines[buffer->row],buffer->column)},false};
+            (void)operate_range(editor,range,true);
+        }
+        while (GetCharPressed()!=0) {}
+        return;
+    }
     bool moved = false, interacted = false;
     if (editor_key(KEY_LEFT) || editor_key(KEY_H)) {
         EditorLine *line = &buffer->lines[buffer->row];
@@ -1574,48 +1831,60 @@ static void update_normal(WorkspaceEditor *editor)
         interacted = true;
     }
     if (moved) remember_column(buffer);
-    if (IsKeyPressed(KEY_X)) {
-        if (buffer->readonly) {
-            workspace_editor_message(editor, "buffer is read only", true);
-        } else if (buffer->lines[buffer->row].length) {
-            if (!buffer_delete(buffer)) {
-                workspace_editor_message(editor, "cannot edit buffer", true);
-            } else {
-                clamp_cursor(buffer, false);
-                remember_column(buffer);
-                editor->messages_visible = false;
-            }
-        }
-        while (GetCharPressed() != 0) {}
-        return;
-    }
-    if (IsKeyPressed(KEY_I)) {
-        if (buffer->readonly) {
-            workspace_editor_message(editor, "buffer is read only", true);
-            while (GetCharPressed() != 0) {}
-            return;
-        }
-        editor->messages_visible = false;
-        editor->mode = EDITOR_INSERT;
-        while (GetCharPressed() != 0) {}
-        return;
-    }
-    if (IsKeyPressed(KEY_A)) {
-        if (buffer->readonly) {
-            workspace_editor_message(editor, "buffer is read only", true);
-            while (GetCharPressed() != 0) {}
-            return;
-        }
-        editor->messages_visible = false;
-        EditorLine *line = &buffer->lines[buffer->row];
-        if (line->length) buffer->column = utf8_next(line, buffer->column);
-        editor->mode = EDITOR_INSERT;
-        remember_column(buffer);
-        while (GetCharPressed() != 0) {}
-        return;
-    }
+    if (interacted) editor->pending_operator=0;
     int character;
     while ((character = GetCharPressed()) != 0) {
+        if (character=='v' || character=='V') {
+            EditorMode mode=character=='V' ? EDITOR_VISUAL_LINE : EDITOR_VISUAL;
+            if (!visual_mode(editor)) {
+                editor->selection_row=buffer->row;
+                editor->selection_column=buffer->column;
+            }
+            editor->mode=editor->mode==mode ? EDITOR_NORMAL : mode;
+            editor->pending_operator=0;
+            editor->messages_visible=false;
+            continue;
+        }
+        if (visual_mode(editor)) {
+            if (character=='D') {
+                size_t first=editor->selection_row<buffer->row ? editor->selection_row : buffer->row;
+                size_t last=editor->selection_row>buffer->row ? editor->selection_row : buffer->row;
+                (void)operate_range(editor,(EditorRange){{first,0},{last+1,0},true},true);
+            } else if (character=='y' || character=='d' || character=='x')
+                (void)operate_range(editor,selected_range(editor,buffer),character!='y');
+            continue;
+        }
+        EditorLine *line=&buffer->lines[buffer->row];
+        if (character=='d' || character=='y') {
+            if (editor->pending_operator==character) {
+                EditorRange range={{buffer->row,0},{buffer->row+1,0},true};
+                (void)operate_range(editor,range,character=='d');
+            } else editor->pending_operator=(char)character;
+            continue;
+        }
+        editor->pending_operator=0;
+        if (character=='D' || character=='x') {
+            if (line->length) {
+                EditorRange range={{buffer->row,buffer->column},
+                    {buffer->row,character=='D' ? line->length : utf8_next(line,buffer->column)},false};
+                (void)operate_range(editor,range,true);
+            }
+        } else if (character=='p' || character=='P') {
+            (void)paste_register(editor,character=='P',false);
+        } else if (character=='i' || character=='a' || character=='I' || character=='A') {
+            if (buffer->readonly) {
+                workspace_editor_message(editor,"buffer is read only",true);
+                continue;
+            }
+            if (character=='a' && line->length) buffer->column=utf8_next(line,buffer->column);
+            else if (character=='I') buffer->column=line_indent_length(line);
+            else if (character=='A') buffer->column=line->length;
+            editor->mode=EDITOR_INSERT;
+            editor->messages_visible=false;
+            remember_column(buffer);
+            while (GetCharPressed()!=0) {}
+            return;
+        }
         if (character == ':') {
             enter_command_mode(editor, EDITOR_NORMAL);
             break;
@@ -1858,9 +2127,19 @@ WorkspaceEditor *workspace_editor_create(void)
     return editor;
 }
 
+void workspace_editor_set_output(WorkspaceEditor *editor,WorkspaceOutput *output,
+                                  int pane)
+{
+    if (!editor) return;
+    workspace_output_detach(editor->output,editor);
+    editor->output=output; editor->pane=pane;
+}
+
 void workspace_editor_destroy(WorkspaceEditor *editor)
 {
     if (!editor) return;
+    workspace_output_detach(editor->output,editor);
+    free(editor->yank);
     browser_clear(editor);
     for (size_t i = 0; i < editor->buffer_count; ++i)
         buffer_destroy(editor->buffers[i]);
@@ -2025,6 +2304,22 @@ static void draw_buffer(WorkspaceEditor *editor, Rectangle box,
         size_t index = buffer->top + (size_t)row;
         if (index >= buffer->line_count) break;
         int y = body_top + row*EDITOR_ROW_HEIGHT;
+        if (visual_mode(editor)) {
+            EditorRange range=selected_range(editor,buffer);
+            bool selected=index>=range.first.row &&
+                (range.linewise ? index<range.end.row : index<=range.end.row);
+            if (selected) {
+                size_t first=index==range.first.row ? range.first.column : 0;
+                size_t end=index==range.end.row ? range.end.column : buffer->lines[index].length;
+                size_t a=range.linewise ? buffer->left : visual_column(&buffer->lines[index],first);
+                size_t b=range.linewise ? buffer->left+(size_t)columns :
+                    visual_column(&buffer->lines[index],end)+(index<range.end.row ? 1 : 0);
+                if (a<buffer->left) a=buffer->left;
+                if (b>buffer->left+(size_t)columns) b=buffer->left+(size_t)columns;
+                if (b>a) DrawRectangle(text_x+(int)(a-buffer->left)*cell_width,y,
+                    (int)(b-a)*cell_width,EDITOR_ROW_HEIGHT,(Color){75,59,110,255});
+            }
+        }
         char number[32];
         snprintf(number, sizeof(number), "%*zu", (int)digits, index + 1);
         ui_text_draw(number, (int)box.x + 6, y + 2, EDITOR_FONT_SIZE,
@@ -2036,11 +2331,11 @@ static void draw_buffer(WorkspaceEditor *editor, Rectangle box,
         ui_text_draw(visible, text_x, y + 2, EDITOR_FONT_SIZE,
                      (Color){211, 222, 231, 255});
     }
-    if (focused && (editor->mode == EDITOR_NORMAL || editor->mode == EDITOR_INSERT)) {
+    if (focused && (editor->mode == EDITOR_NORMAL || editor->mode == EDITOR_INSERT || visual_mode(editor))) {
         int screen_row = (int)(buffer->row - buffer->top);
         int cursor_x = text_x + (int)(cursor_visual - buffer->left)*cell_width;
         int cursor_y = body_top + screen_row*EDITOR_ROW_HEIGHT + 2;
-        if (editor->mode == EDITOR_NORMAL) {
+        if (editor->mode != EDITOR_INSERT) {
             DrawRectangle(cursor_x, cursor_y, cell_width,
                           EDITOR_FONT_SIZE + 2, (Color){172, 143, 255, 95});
             DrawRectangleLines(cursor_x, cursor_y, cell_width,
@@ -2056,6 +2351,8 @@ static void draw_buffer(WorkspaceEditor *editor, Rectangle box,
 static const char *mode_name(EditorMode mode)
 {
     switch (mode) {
+    case EDITOR_VISUAL: return "-- VISUAL --";
+    case EDITOR_VISUAL_LINE: return "-- VISUAL LINE --";
     case EDITOR_INSERT: return "-- INSERT --";
     case EDITOR_COMMAND: return "COMMAND";
     case EDITOR_BROWSER: return "EXPLORER";

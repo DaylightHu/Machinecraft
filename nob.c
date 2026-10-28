@@ -80,6 +80,7 @@ static const char *gui_sources[] = {
     "src/frontend/ui_font.c",
     "src/frontend/workspace_layout.c",
     "src/frontend/workspace_editor.c",
+    "src/frontend/workspace_output.c",
     "src/frontend/world_command.c",
     "src/frontend/world_session_manager.c",
     "src/frontend/block_renderer.c",
