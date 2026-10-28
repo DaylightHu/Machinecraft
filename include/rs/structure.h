@@ -18,12 +18,6 @@ typedef struct {
     size_t volume, container_count;
 } StructureInfo;
 
-/* Normalize inclusive corners. NULL anchor uses the minimum corner. Captures
- * all cells (including air), configurations, current states and inventories.
- * Never edits or advances the world or uses the editor's clipboard. Active
- * moving pistons are rejected. Does not capture scheduled ticks, cooldowns,
- * torch history, random state or dependencies outside the selected cuboid.
- * Call only between simulation callbacks, on the world's owning thread. */
 Structure *structure_capture(const World *world, BlockPos first, BlockPos second,
                              const BlockPos *anchor, StructureResult *result);
 void structure_destroy(Structure *structure);
@@ -34,13 +28,9 @@ size_t structure_container_size(const Structure *structure, BlockPos local);
 StructureResult structure_get_container_slot(const Structure *structure,
     BlockPos local, size_t slot, ContainerStack *stack);
 
-/* Versioned .mcs format documented in docs/structure-format.md. Atomic publish
- * through a temporary file beside path; no directory creation. Existing files
- * are preserved unless overwrite is true. Read allocates a detached immutable
- * structure; neither operation requires or modifies a World. NULL result is OK. */
 StructureResult structure_write(const Structure *structure, const char *path,
                                  bool overwrite);
 Structure *structure_read(const char *path, StructureResult *result);
 const char *structure_result_name(StructureResult result);
-
+World *structure_load(const char *path, StructureResult *result);
 #endif

@@ -432,6 +432,77 @@ done:
     set_result(out,result); return s;
 }
 
+static int64_t structure_plot_minimum(int coordinate)
+{
+    int64_t n=coordinate, q=n/WORLD_PLOT_SIZE;
+    if (n%WORLD_PLOT_SIZE<0) --q;
+    return q*WORLD_PLOT_SIZE;
+}
+
+World *structure_load(const char *path, StructureResult *out)
+{
+    StructureResult result;
+    Structure *s=structure_read(path,&result);
+    World *w=NULL;
+    if (!s) goto fail;
+
+    BlockPos low=s->info.origin;
+    int64_t high_x=(int64_t)low.x+s->info.width-1;
+    int64_t high_y=(int64_t)low.y+s->info.height-1;
+    int64_t high_z=(int64_t)low.z+s->info.length-1;
+    result=STRUCTURE_OUT_OF_BOUNDS;
+    if (low.y<WORLD_MIN_Y || high_y>WORLD_MAX_Y) goto fail;
+    /* Include the default plot; allocate only the chunks actually accessed. */
+    int64_t x0=structure_plot_minimum(low.x<0 ? low.x : 0);
+    int64_t z0=structure_plot_minimum(low.z<0 ? low.z : 0);
+    int64_t x1=structure_plot_minimum(high_x>=WORLD_PLOT_SIZE ? (int)high_x : WORLD_PLOT_SIZE-1)
+        +WORLD_PLOT_SIZE-1;
+    int64_t z1=structure_plot_minimum(high_z>=WORLD_PLOT_SIZE ? (int)high_z : WORLD_PLOT_SIZE-1)
+        +WORLD_PLOT_SIZE-1;
+    if (x0<INT_MIN || z0<INT_MIN || x1>INT_MAX || z1>INT_MAX) goto fail;
+    WorldPlotBounds plot={(int)x0,(int)z0,(int)x1,(int)z1};
+    if (!world_plot_bounds_valid(plot)) goto fail;
+
+    result=STRUCTURE_OUT_OF_MEMORY;
+    w=world_create(world_config_default());
+    if (!w) goto fail;
+    w->plot=plot;
+    for (size_t i=0;i<s->info.volume;++i) {
+        BlockPos p=local_pos(&s->info,i);
+        p=(BlockPos){low.x+p.x,low.y+p.y,low.z+p.z};
+        BlockState state=s->cells[i];
+        if (!world_write_visual(w,p,state)) {
+            result=w->sim->error==RS_OUT_OF_MEMORY ? STRUCTURE_OUT_OF_MEMORY :
+                STRUCTURE_SIMULATION_ERROR;
+            goto fail;
+        }
+        if (state.id==BLOCK_REDSTONE_TORCH && !sim_attach_torch(w,p)) goto fail;
+    }
+    /* Attach runtime objects only after every saved cell has been installed. */
+    for (size_t i=0;i<s->info.container_count;++i) {
+        const StructureContainer *c=&s->containers[i];
+        BlockPos p=local_pos(&s->info,c->cell);
+        p=(BlockPos){low.x+p.x,low.y+p.y,low.z+p.z};
+        BlockState state=s->cells[c->cell];
+        if (!container_attach(w,p,state)) goto fail;
+        ContainerRuntime *runtime=container_runtime(w,p);
+        memcpy(runtime->slots,c->slots,container_slot_count((BlockId)state.id)*sizeof(*c->slots));
+        if (state.id==BLOCK_BARREL) runtime->openers=state.data.barrel.open ? 1u : 0u;
+    }
+    if (sim_set_frozen(w,true)!=RS_OK) {
+        result=STRUCTURE_SIMULATION_ERROR;
+        goto fail;
+    }
+    structure_destroy(s);
+    set_result(out,STRUCTURE_OK);
+    return w;
+fail:
+    world_destroy(w);
+    structure_destroy(s);
+    set_result(out,result);
+    return NULL;
+}
+
 const char *structure_result_name(StructureResult result)
 {
     static const char *const names[]={"ok","invalid argument","out of bounds",
