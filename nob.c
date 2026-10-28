@@ -1,5 +1,8 @@
 #if !defined(_WIN32)
 #define _POSIX_C_SOURCE 200909L
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
 #endif
 
 #if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
@@ -20,6 +23,7 @@
 #define RAYLIB_CONFIG "raylib_config.h"
 
 static const char *common_sources[] = {
+    "src/mcmux.c",
     "src/world.c",
     "src/worldgen.c",
     "src/storage.c",
@@ -80,6 +84,7 @@ static const char *gui_sources[] = {
     "src/frontend/ui_font.c",
     "src/frontend/workspace_layout.c",
     "src/frontend/workspace_editor.c",
+    "src/frontend/workspace_output.c",
     "src/frontend/world_command.c",
     "src/frontend/world_session_manager.c",
     "src/frontend/block_renderer.c",
@@ -852,6 +857,105 @@ done:
     return ok;
 }
 
+static char *user_source_path(const char *source)
+{
+#ifdef _WIN32
+    char *absolute=_fullpath(NULL,source,0);
+#else
+    char *absolute=realpath(source,NULL);
+#endif
+    if (!absolute) {
+        nob_log(NOB_ERROR,"cannot resolve source %s: %s",source,strerror(errno));
+        return NULL;
+    }
+#ifdef _WIN32
+    for (char *p=absolute; *p; ++p) if (*p=='\\') *p='/';
+#endif
+    size_t length=strlen(absolute);
+    if (length<2 || absolute[length-2]!='.' ||
+        tolower((unsigned char)absolute[length-1])!='c' ||
+        nob_get_file_type(absolute)!=NOB_FILE_REGULAR) {
+        nob_log(NOB_ERROR,"expected a C source file: %s",source);
+        free(absolute);
+        return NULL;
+    }
+    return absolute;
+}
+
+static bool make_parent_directories(const char *path)
+{
+    char *directory=string_dup(path);
+    bool ok=true;
+    for (char *p=directory; *p; ++p) if (*p=='/') {
+        *p='\0';
+        if (!nob_mkdir_if_not_exists(directory)) { ok=false; break; }
+        *p='/';
+    }
+    free(directory);
+    return ok;
+}
+
+static bool build_user_program(const char *source,bool run)
+{
+    char *absolute=user_source_path(source);
+    if (!absolute) return false;
+    bool ok=false;
+    const char *root=nob_get_current_dir_temp();
+    if (!root) goto done;
+    size_t root_length=strlen(root);
+    if (strlen(absolute)<root_length) goto outside_project;
+    for (size_t i=0; i<root_length; ++i) {
+        unsigned char a=(unsigned char)root[i],b=(unsigned char)absolute[i];
+#ifdef _WIN32
+        if (a=='\\') a='/';
+        a=(unsigned char)tolower(a); b=(unsigned char)tolower(b);
+#endif
+        if (a!=b) goto outside_project;
+    }
+    const char *relative=absolute+root_length;
+    bool root_separator=root_length && root[root_length-1]=='/';
+#ifdef _WIN32
+    root_separator=root_separator || (root_length && root[root_length-1]=='\\');
+#endif
+    if (!root_separator) {
+        if (*relative!='/') goto outside_project;
+        ++relative;
+    }
+    if (!*relative) goto outside_project;
+    const char *stem=nob_temp_sprintf("build/programs/%.*s",(int)strlen(relative)-2,relative);
+    const char *output=nob_temp_sprintf("%s%s",stem,executable_suffix());
+    const char *temporary=nob_temp_sprintf("build/program-tmp/%.*s%s",
+        (int)strlen(relative)-2,relative,executable_suffix());
+    if (!make_parent_directories(output) || !make_parent_directories(temporary) ||
+        !build_core_library()) goto done;
+    Nob_Cmd command={0};
+    nob_cmd_append(&command,compiler(),"-std=c11","-O2","-Wall","-Wextra",
+        "-Iinclude","-x","c",absolute,"-x","none","build/libmcmux.a","-o",temporary);
+#ifndef _WIN32
+    nob_cmd_append(&command,"-lm");
+#endif
+    if (!nob_cmd_run(&command)) {
+        if (nob_file_exists(temporary)) (void)nob_delete_file(temporary);
+        goto done;
+    }
+    if (!nob_rename(temporary,output)) {
+        if (nob_file_exists(temporary)) (void)nob_delete_file(temporary);
+        goto done;
+    }
+    nob_log(NOB_INFO,"built %s",output);
+    if (run) {
+        nob_cmd_append(&command,output);
+        if (!nob_cmd_run(&command)) goto done;
+    }
+    ok=true;
+    goto done;
+outside_project:
+    nob_log(NOB_ERROR,"source must be inside the project directory: %s",source);
+done:
+    free(absolute);
+    return ok;
+}
+
 static bool build_headless_tool(const char *source, const char *name, bool run)
 {
     if (!nob_mkdir_if_not_exists("build")) return false;
@@ -885,6 +989,8 @@ static void print_help(const char *program)
     printf("  test         Build and run the structure persistence tests\n");
     printf("  reader       Build build/inspect_structure, a standalone .mcs reader\n");
     printf("  lib          Build build/libmcmux.a (no GUI dependencies)\n");
+    printf("  build-c FILE Build a user C program linked with the simulation core\n");
+    printf("  run-c FILE   Build and run a user C program from the repository root\n");
     printf("  clean        Remove the build directory\n");
     printf("  help         Show this help\n");
 }
@@ -901,6 +1007,13 @@ int main(int argc, char **argv)
     if (strcmp(command,"reader")==0)
         return build_headless_tool("tools/inspect_structure.c","inspect_structure",false) ? 0 : 1;
     if (strcmp(command,"lib")==0) return build_core_library() ? 0 : 1;
+    if (strcmp(command,"build-c")==0 || strcmp(command,"run-c")==0) {
+        if (argc!=1) {
+            nob_log(NOB_ERROR,"usage: %s %s path/to/program.c",program,command);
+            return 1;
+        }
+        return build_user_program(argv[0],strcmp(command,"run-c")==0) ? 0 : 1;
+    }
     if (strcmp(command, "build") == 0) {
         return build_machinecraft(true, true) ? 0 : 1;
     }

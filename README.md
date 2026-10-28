@@ -42,6 +42,8 @@ mc-nvim is the text workspace inside mcmux. The available editor actions are:
 | `:Ex` | Browse the current directory. |
 | `:e PATH` | Open a file, or prepare a new file when it does not exist. |
 | `:w` | Save the current file. |
+| `:make` | Save and build the current C file, updating the core library as needed. |
+| `:run` | Save, build, and run the current C program from the project root. |
 | `:q` | Close the current pane when its buffers are saved. |
 | `:q!` | Close the current pane and discard its unsaved buffers. |
 | `:wq` | Save and close the current pane. |

@@ -15,6 +15,7 @@
 #include "world_renderer.h"
 #include "workspace_layout.h"
 #include "workspace_editor.h"
+#include "workspace_output.h"
 #include "world_command.h"
 #include "world_session_manager.h"
 #include "raylib.h"
@@ -99,6 +100,8 @@ typedef struct {
     bool fatal_error;
     WorkspaceLayout workspace;
     WorkspaceEditor *editors[WORKSPACE_TEXT_LIMIT];
+    WorkspaceOutput *output;
+    int output_pane;
     GameSession *editor_sessions[WORKSPACE_TEXT_LIMIT];
     /* Borrowed from the host; frontends may select sessions but do not own them. */
     WorldSessionManager *world_sessions;
@@ -1807,6 +1810,11 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
         return false;
     }
     workspace_layout_init(&app->workspace);
+    app->output=workspace_output_create();
+    if (!app->output) {
+        fprintf(stderr,"Cannot allocate mc-output history\n");
+        return false;
+    }
     app->workspace.gui_width = GetScreenWidth();
     app->window_gui_visible = true;
     app->window_width = GetScreenWidth();
@@ -1824,6 +1832,8 @@ static void shutdown_gui(GuiApp *app)
         workspace_editor_destroy(app->editors[i]);
         app->editors[i] = NULL;
     }
+    workspace_output_destroy(app->output);
+    app->output=NULL;
     if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
     app->gui_target = (RenderTexture2D){0};
     if (app->title_background.id) UnloadTexture(app->title_background);
@@ -2031,7 +2041,25 @@ static int split_editor_pane(GuiApp *app, bool split_x)
         return -1;
     }
     app->editors[pane - 1] = editor;
+    workspace_editor_set_output(editor,app->output,pane);
     app->pane_message[0] = '\0';
+    return pane;
+}
+
+static int open_output_pane(GuiApp *app)
+{
+    if (app->output_pane && workspace_layout_has_pane(&app->workspace,app->output_pane)) {
+        app->workspace.focus=app->output_pane;
+        return app->output_pane;
+    }
+    int pane=workspace_layout_split(&app->workspace,false,
+        GetScreenWidth(),workspace_height(app));
+    if (pane<0) {
+        pane_notice(app,"No room for mc-output; enlarge the window or close a pane");
+        return -1;
+    }
+    app->output_pane=pane;
+    app->pane_message[0]='\0';
     return pane;
 }
 
@@ -2054,6 +2082,7 @@ static bool close_pane(GuiApp *app, bool force)
         return false;
     }
     if (pane > 0) {
+        if (pane==app->output_pane) app->output_pane=0;
         app->editor_sessions[pane - 1] = NULL;
         workspace_editor_destroy(app->editors[pane - 1]);
         app->editors[pane - 1] = NULL;
@@ -2116,6 +2145,7 @@ static bool update_pane_keys(GuiApp *app)
         case '%': (void)split_editor_pane(app, true); break;
         case '"': (void)split_editor_pane(app, false); break;
         case 'o': workspace_layout_next(&app->workspace); break;
+        case 'c': (void)open_output_pane(app); break;
         case 'H': case 'J': case 'K': case 'L': {
             WorkspaceDirection move = character == 'H' ? WORKSPACE_LEFT :
                 character == 'L' ? WORKSPACE_RIGHT : character == 'K' ? WORKSPACE_UP : WORKSPACE_DOWN;
@@ -2145,6 +2175,10 @@ static bool update_pane_keys(GuiApp *app)
 static void update_text_pane(GuiApp *app)
 {
     int pane = app->workspace.focus;
+    if (pane>0 && pane==app->output_pane) {
+        workspace_output_update(app->output);
+        return;
+    }
     if (pane <= 0 || !app->editors[pane - 1]) return;
     WorldCommandContext context = {app};
     ConsoleCommandReply reply = workspace_editor_update(app->editors[pane - 1],
@@ -2177,6 +2211,7 @@ static void update_text_pane(GuiApp *app)
 static VoxelHit update_workspace_input(GuiApp *app)
 {
     VoxelHit hit = {0};
+    workspace_output_poll(app->output);
     sync_workspace_window(app);
     if (!prepare_gui_view(app)) return hit;
     if (!IsWindowFocused() && app->workspace.focus == 0 && app->session &&
@@ -2216,6 +2251,7 @@ static void draw_pane_help(void)
         "\"                 Split mc-nvim top / bottom",
         "Arrow             Focus pane in that direction",
         "o                 Focus next pane",
+        "c                 Open / focus mc-output",
         "Ctrl+Arrow/HJKL   Move nearest text divider",
         "z                 Zoom / restore text area",
         "x                 Close focused pane",
@@ -2223,9 +2259,12 @@ static void draw_pane_help(void)
         "?                 Show this help",
         "Esc               Cancel prefix / close help",
         "",
-        "mc-nvim: i/a insert, x delete, Esc normal, :Ex, :e path, :w",
+        "mc-nvim: v/V select, y copy, d delete, dd/yy line, D to end, p/P paste",
+        "mc-nvim: i/a insert, Esc normal, :Ex, :e path, :w",
+        "mc-nvim: :make builds the current C file; :run builds and runs it",
         "mc-nvim: :q, :q!, :wq; Arrows/hjkl move; :! runs an external command",
         "mc-nvim: regular world commands use the CLI syntax, such as :tick freeze",
+        "mc-output: PgUp/PgDn scroll, End follow, Ctrl+C stop command",
         "GUI and each text pane select worlds independently."
     };
     int width = GetScreenWidth() - 80;
@@ -2281,6 +2320,9 @@ static void draw_workspace(GuiApp *app, VoxelHit hit)
     }
     gui_view_reset();
     for (int i = 0; i < WORKSPACE_TEXT_LIMIT; ++i) {
+        if (geometry.visible[i] && app->output_pane==i+1)
+            workspace_output_draw(app->output,pane_rectangle(geometry.panes[i]),
+                i+1,app->workspace.focus==i+1,app->workspace.zoom>0 || geometry.compact);
         if (geometry.visible[i] && app->editors[i])
             workspace_editor_draw(app->editors[i], pane_rectangle(geometry.panes[i]),
                 i + 1, app->workspace.focus == i + 1,
