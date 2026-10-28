@@ -16,6 +16,8 @@ Use a C compiler to compile `nob.c` into the `nob` build runner. Then run the
 | `./nob gui` | Build the GUI. |
 | `./nob run` | Build and launch the GUI. |
 | `./nob reader` | Build the standalone `.mcs` structure reader. |
+| `./nob lib` | Build the headless C library, `build/libmcmux.a`. |
+| `./nob run-c SOURCE.c [ARGS...]` | Compile and run a user C program against the core library. |
 | `./nob vendor-list` | List the vendored raylib files required by the build. |
 | `./nob precommit` | Stage the required raylib files and verify an index-only build. |
 | `./nob clean` | Remove build outputs. |
@@ -46,11 +48,21 @@ mc-nvim is the text workspace inside mcmux. The available editor actions are:
 | `:q!` | Close the current pane and discard its unsaved buffers. |
 | `:wq` | Save and close the current pane. |
 | `:COMMAND` | Run a world or simulation command using the same syntax as the CLI. |
-| `:! COMMAND` | Run an external build or program command from the pane directory. |
+| `:!COMMAND` / `:! COMMAND` | Run a shell command from the pane directory; show its output and exit status. |
 
 `:e` and `:Ex` keep the directory context in the pane. An `.mcs` file opens as
 a read-only view. Use the command tables below instead of an in-application
 help screen.
+
+Save edits with `:w` before compiling. For example, from the repository root,
+`:!cc nob.c -o nob` compiles the build runner and `:!./nob reader` builds the
+structure reader. Shell escapes use the system's installed compiler and shell;
+the pane's current directory is used for relative paths. Both stdout and stderr
+are captured, including diagnostics from command chains. External commands run
+synchronously; the editor resumes when the command exits.
+
+For the structure-to-C workflow, see [Write C programs in mc-nvim](docs/c-programs.md)
+and [the XOR example](examples/xor_gate.c).
 
 | `:COMMAND` | Purpose |
 | --- | --- |
