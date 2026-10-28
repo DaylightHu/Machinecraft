@@ -368,16 +368,16 @@ static bool normalize_absolute_path(const char *input,
 }
 #endif
 
-static bool path_resolve(const WorkspaceEditor *editor, const char *input,
+static bool path_resolve(const char *directory, const char *input,
                          char output[EDITOR_PATH_CAPACITY])
 {
-    if (!editor || !input || !*input) return false;
+    if (!directory || !*directory || !input || !*input) return false;
 #ifdef _WIN32
     char joined[EDITOR_PATH_CAPACITY];
     bool absolute = (isalpha((unsigned char)input[0]) && input[1] == ':') ||
                     input[0] == '/' || input[0] == '\\';
     int count = absolute ? snprintf(joined, sizeof(joined), "%s", input) :
-        snprintf(joined, sizeof(joined), "%s/%s", editor->cwd, input);
+        snprintf(joined, sizeof(joined), "%s/%s", directory, input);
     if (count < 0 || (size_t)count >= sizeof(joined)) return false;
     char native[EDITOR_PATH_CAPACITY];
     if (!_fullpath(native, joined, sizeof(native))) return false;
@@ -387,7 +387,7 @@ static bool path_resolve(const WorkspaceEditor *editor, const char *input,
 #else
     char joined[EDITOR_PATH_CAPACITY];
     int count = input[0] == '/' ? snprintf(joined, sizeof(joined), "%s", input) :
-        snprintf(joined, sizeof(joined), "%s/%s", editor->cwd, input);
+        snprintf(joined, sizeof(joined), "%s/%s", directory, input);
     return count >= 0 && (size_t)count < sizeof(joined) &&
            normalize_absolute_path(joined, output);
 #endif
@@ -554,7 +554,7 @@ static bool browser_read_directory(WorkspaceEditor *editor, const char *path)
 static bool browser_open(WorkspaceEditor *editor, const char *input)
 {
     char path[EDITOR_PATH_CAPACITY];
-    if (!path_resolve(editor, input && *input ? input : editor->cwd, path)) {
+    if (!path_resolve(editor->cwd, input && *input ? input : editor->cwd, path)) {
         workspace_editor_message(editor, "path is too long", true);
         return false;
     }
@@ -714,7 +714,7 @@ static bool install_buffer(WorkspaceEditor *editor, EditorBuffer *buffer)
 static bool editor_open_file(WorkspaceEditor *editor, const char *input)
 {
     char path[EDITOR_PATH_CAPACITY];
-    if (!path_resolve(editor, input, path)) {
+    if (!path_resolve(editor->command_cwd, input, path)) {
         workspace_editor_message(editor, "path is too long", true);
         return false;
     }
@@ -865,7 +865,7 @@ static bool editor_write(WorkspaceEditor *editor, const char *argument)
     char path[EDITOR_PATH_CAPACITY];
     bool save_as = argument && *argument;
     if (save_as) {
-        if (!path_resolve(editor, argument, path)) {
+        if (!path_resolve(editor->command_cwd, argument, path)) {
             workspace_editor_message(editor, "path is too long", true);
             return false;
         }
