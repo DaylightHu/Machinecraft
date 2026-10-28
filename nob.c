@@ -23,6 +23,7 @@
 #define RAYLIB_CONFIG "raylib_config.h"
 
 static const char *common_sources[] = {
+    "src/mcmux.c",
     "src/world.c",
     "src/worldgen.c",
     "src/storage.c",
