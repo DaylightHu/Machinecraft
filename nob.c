@@ -802,6 +802,56 @@ cleanup:
 }
 
 /* These tools need only the simulation core, including on non-GUI platforms. */
+static bool build_core_library(void)
+{
+    if (!nob_mkdir_if_not_exists("build") ||
+        !nob_mkdir_if_not_exists("build/lib") ||
+        !nob_mkdir_if_not_exists("build/lib/obj")) return false;
+    bool ok=false;
+    Files headers={0},objects={0};
+    if (!nob_walk_dir("include",collect_header,.data=&headers) ||
+        !nob_walk_dir("src",collect_header,.data=&headers)) goto done;
+    files_add(&headers,"nob.c");
+    for (size_t i=0;i<NOB_ARRAY_LEN(common_sources);++i) {
+        const char *source=common_sources[i];
+        char *name=string_dup(source);
+        for (char *p=name;*p;++p) if (*p=='/' || *p=='\\') *p='_';
+        const char *object=nob_temp_sprintf("build/lib/obj/%.*s.o",
+            (int)strlen(name)-2,name);
+        free(name);
+        bool rebuild;
+        if (!needs_rebuild(object,source,&headers,&rebuild)) goto done;
+        if (rebuild) {
+            Nob_Cmd cc={0};
+            nob_cmd_append(&cc,compiler(),"-std=c11","-O2","-Wall","-Wextra",
+                "-Iinclude","-Isrc","-c",source,"-o",object);
+            if (!nob_cmd_run(&cc)) goto done;
+        }
+        files_add(&objects,object);
+    }
+    int rebuild=nob_needs_rebuild("build/libmcmux.a",objects.items,objects.count);
+    if (rebuild<0) goto done;
+    if (rebuild) {
+        const char *archive="build/libmcmux.a.tmp";
+        if (nob_file_exists(archive) && !nob_delete_file(archive)) goto done;
+        const char *ar=getenv("AR");
+#ifdef _WIN32
+        if (!ar || !*ar) ar="llvm-ar";
+#else
+        if (!ar || !*ar) ar="ar";
+#endif
+        Nob_Cmd command={0};
+        nob_cmd_append(&command,ar,"rcs",archive);
+        for (size_t i=0;i<objects.count;++i) nob_cmd_append(&command,objects.items[i]);
+        if (!nob_cmd_run(&command)) goto done;
+        if (!nob_rename(archive,"build/libmcmux.a")) goto done;
+    }
+    ok=true;
+done:
+    files_free(&headers); files_free(&objects);
+    return ok;
+}
+
 static bool build_headless_tool(const char *source, const char *name, bool run)
 {
     if (!nob_mkdir_if_not_exists("build")) return false;
@@ -834,6 +884,7 @@ static void print_help(const char *program)
     printf("  precommit    Stage the exact raylib set and verify an index-only build\n");
     printf("  test         Build and run the structure persistence tests\n");
     printf("  reader       Build build/inspect_structure, a standalone .mcs reader\n");
+    printf("  lib          Build build/libmcmux.a (no GUI dependencies)\n");
     printf("  clean        Remove the build directory\n");
     printf("  help         Show this help\n");
 }
@@ -849,6 +900,7 @@ int main(int argc, char **argv)
         return build_headless_tool("tests/structure_test.c","structure_test",true) ? 0 : 1;
     if (strcmp(command,"reader")==0)
         return build_headless_tool("tools/inspect_structure.c","inspect_structure",false) ? 0 : 1;
+    if (strcmp(command,"lib")==0) return build_core_library() ? 0 : 1;
     if (strcmp(command, "build") == 0) {
         return build_machinecraft(true, true) ? 0 : 1;
     }

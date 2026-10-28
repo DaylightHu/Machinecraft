@@ -87,6 +87,7 @@ struct WorkspaceEditor {
     EditorMode mode;
     EditorMode command_previous_mode;
     char cwd[EDITOR_PATH_CAPACITY];
+    char command_cwd[EDITOR_PATH_CAPACITY];
     char command[EDITOR_COMMAND_CAPACITY];
     size_t command_length, command_cursor;
     BrowserEntry entries[EDITOR_BROWSER_LIMIT];
@@ -1035,6 +1036,225 @@ static bool buffer_newline(EditorBuffer *buffer)
     return true;
 }
 
+static size_t line_indent_length(const EditorLine *line)
+{
+    size_t length = 0;
+    while (length < line->length &&
+           (line->text[length] == ' ' || line->text[length] == '\t')) ++length;
+    return length;
+}
+
+typedef struct { bool tabs; size_t width; } EditorIndent;
+
+static EditorIndent buffer_indent_style(const EditorBuffer *buffer)
+{
+    size_t tabs = 0, spaces = 0, width = 0, block_width = 0;
+    size_t previous_indent = 0;
+    bool previous_open = false;
+    for (size_t row = 0; row < buffer->line_count; ++row) {
+        const EditorLine *line = &buffer->lines[row];
+        size_t length = line_indent_length(line);
+        if (length == line->length || line->text[length] == '#' ||
+            line->text[length] == '*' ||
+            (line->text[length] == '/' && length + 1 < line->length &&
+             (line->text[length + 1] == '/' || line->text[length + 1] == '*')))
+            continue;
+        if (length && memchr(line->text, '\t', length)) ++tabs;
+        else if (length) {
+            ++spaces;
+            if (length <= 2*EDITOR_TAB_WIDTH && (!width || length < width))
+                width = length;
+            if (previous_open && length > previous_indent) {
+                size_t step = length - previous_indent;
+                if (step <= 2*EDITOR_TAB_WIDTH && (!block_width || step < block_width))
+                    block_width = step;
+            }
+        }
+        size_t end = line->length;
+        while (end && (line->text[end - 1] == ' ' || line->text[end - 1] == '\t')) --end;
+        previous_open = end && line->text[end - 1] == '{';
+        previous_indent = length;
+    }
+    if (block_width) width = block_width;
+    return (EditorIndent){tabs > spaces, width ? width : EDITOR_TAB_WIDTH};
+}
+
+static bool buffer_is_c(const EditorBuffer *buffer)
+{
+    return buffer->named && (extension_equal(buffer->path, ".c") ||
+                             extension_equal(buffer->path, ".h"));
+}
+
+typedef struct {
+    size_t depth, brace_row;
+    char last;
+    bool code;
+} EditorCIndent;
+
+/* Inspect only text before the cursor. Braces in literals, comments and
+ * preprocessor lines do not participate in C block indentation. */
+static EditorCIndent c_indent_context(const EditorBuffer *buffer, size_t row,
+                                      size_t column, size_t find_depth)
+{
+    enum { C_CODE, C_STRING, C_CHAR, C_COMMENT, C_LINE_COMMENT } state = C_CODE;
+    EditorCIndent result = {.brace_row = SIZE_MAX};
+    bool escaped = false, directive = false;
+    for (size_t r = 0; r <= row; ++r) {
+        const EditorLine *line = &buffer->lines[r];
+        size_t limit = r == row ? column : line->length;
+        result.last = 0;
+        for (size_t i = 0; i < limit; ++i) {
+            char ch = line->text[i];
+            char next = i + 1 < limit ? line->text[i + 1] : '\0';
+            if (state == C_LINE_COMMENT) continue;
+            if (state == C_COMMENT) {
+                if (ch == '*' && next == '/') { state = C_CODE; ++i; }
+                continue;
+            }
+            if (state == C_STRING || state == C_CHAR) {
+                if (escaped) escaped = false;
+                else if (ch == '\\') escaped = true;
+                else if (ch == (state == C_STRING ? '"' : '\'')) state = C_CODE;
+                continue;
+            }
+            if (ch == '/' && next == '/') { state = C_LINE_COMMENT; ++i; continue; }
+            if (ch == '/' && next == '*') { state = C_COMMENT; ++i; continue; }
+            if (ch == ' ' || ch == '\t' || ch == '\r') continue;
+            if (ch == '#' && !result.last) directive = true;
+            if (ch == '"' || ch == '\'') state = ch == '"' ? C_STRING : C_CHAR;
+            if (directive) continue;
+            result.last = ch;
+            if (ch == '{') {
+                if (++result.depth == find_depth) result.brace_row = r;
+            } else if (ch == '}' && result.depth) --result.depth;
+        }
+        if (r != row) {
+            bool continued = line->length && line->text[line->length - 1] == '\\';
+            if (state != C_COMMENT && !continued) state = C_CODE;
+            directive = directive && continued;
+            escaped = false;
+        }
+    }
+    result.code = state == C_CODE && !directive;
+    return result;
+}
+
+static size_t c_open_brace_row(const EditorBuffer *buffer,
+                                EditorCIndent context)
+{
+    if (!context.depth || !context.code) return SIZE_MAX;
+    return c_indent_context(buffer, buffer->row, buffer->column,
+                            context.depth).brace_row;
+}
+
+static bool line_with_indent(EditorLine *line, const EditorLine *prefix,
+                              size_t indent, char extra, size_t extra_length,
+                              const char *tail, size_t tail_length)
+{
+    size_t length = indent + extra_length + tail_length;
+    if (!line_reserve(line, length + 1)) return false;
+    if (indent) memcpy(line->text, prefix->text, indent);
+    if (extra_length) memset(line->text + indent, extra, extra_length);
+    if (tail_length) memcpy(line->text + indent + extra_length, tail, tail_length);
+    line->text[length] = '\0';
+    line->length = length;
+    return true;
+}
+
+static bool buffer_indented_newline(EditorBuffer *buffer)
+{
+    const EditorLine *line = &buffer->lines[buffer->row];
+    size_t indent = line_indent_length(line);
+    if (indent > buffer->column) indent = buffer->column;
+    const EditorLine *prefix = line;
+    size_t tail_start = buffer->column, extra = 0, count = 1;
+    size_t closing_indent = 0;
+    const EditorLine *closing_prefix = line;
+    EditorIndent style = buffer_indent_style(buffer);
+    if (buffer_is_c(buffer)) {
+        EditorCIndent context = c_indent_context(buffer, buffer->row,
+                                                buffer->column, SIZE_MAX);
+        if (context.last == '{') extra = style.tabs ? 1 : style.width;
+        if (context.code && buffer->column >= line_indent_length(line)) {
+            while (tail_start < line->length &&
+                (line->text[tail_start] == ' ' || line->text[tail_start] == '\t'))
+                ++tail_start;
+            if (tail_start < line->length && line->text[tail_start] == '}') {
+                size_t row = c_open_brace_row(buffer, context);
+                if (row != SIZE_MAX) {
+                    closing_prefix = &buffer->lines[row];
+                    closing_indent = line_indent_length(closing_prefix);
+                    if (extra) count = 2;
+                    else { prefix = closing_prefix; indent = closing_indent; }
+                }
+            }
+        }
+    }
+    size_t removed = tail_start - buffer->column;
+    size_t added_bytes = count + indent + extra + (count == 2 ? closing_indent : 0);
+    if (added_bytes > EDITOR_FILE_LIMIT - (buffer->bytes - removed)) return false;
+    EditorLine added[2] = {{0}, {0}};
+    const char *tail = line->text + tail_start;
+    size_t tail_length = line->length - tail_start;
+    if (!line_with_indent(&added[0], prefix, indent, style.tabs ? '\t' : ' ', extra,
+                          tail, count == 2 ? 0 : tail_length) ||
+        (count == 2 && !line_with_indent(&added[1], closing_prefix, closing_indent,
+                                         ' ', 0, tail, tail_length)) ||
+        !buffer_reserve_lines(buffer, buffer->line_count + count)) {
+        line_destroy(&added[0]); line_destroy(&added[1]);
+        return false;
+    }
+    memmove(buffer->lines + buffer->row + count + 1,
+            buffer->lines + buffer->row + 1,
+            (buffer->line_count - buffer->row - 1)*sizeof(*buffer->lines));
+    for (size_t i = 0; i < count; ++i) buffer->lines[buffer->row + i + 1] = added[i];
+    EditorLine *original = &buffer->lines[buffer->row];
+    original->length = buffer->column;
+    original->text[original->length] = '\0';
+    buffer->line_count += count;
+    buffer->bytes = buffer->bytes - removed + added_bytes;
+    ++buffer->row;
+    buffer->column = indent + extra;
+    buffer->dirty = true;
+    remember_column(buffer);
+    return true;
+}
+
+static bool buffer_tab(EditorBuffer *buffer)
+{
+    EditorIndent style = buffer_indent_style(buffer);
+    if (style.tabs) return buffer_insert(buffer, "\t", 1);
+    size_t column = visual_column(&buffer->lines[buffer->row], buffer->column);
+    size_t spaces = style.width - column%style.width;
+    return buffer_insert(buffer, "        ", spaces);
+}
+
+static bool buffer_typed_text(EditorBuffer *buffer, const char *text, size_t length)
+{
+    EditorLine *line = &buffer->lines[buffer->row];
+    if (length != 1 || *text != '}' || !buffer_is_c(buffer) ||
+        buffer->column != line_indent_length(line))
+        return buffer_insert(buffer, text, length);
+    EditorCIndent context = c_indent_context(buffer, buffer->row,
+                                            buffer->column, SIZE_MAX);
+    size_t row = c_open_brace_row(buffer, context);
+    if (row == SIZE_MAX) return buffer_insert(buffer, text, length);
+    const EditorLine *prefix = &buffer->lines[row];
+    size_t indent = line_indent_length(prefix), removed = buffer->column;
+    size_t tail = line->length - buffer->column;
+    if (indent + 1 > EDITOR_FILE_LIMIT - (buffer->bytes - removed) ||
+        !line_reserve(line, indent + 1 + tail + 1)) return false;
+    memmove(line->text + indent + 1, line->text + removed, tail + 1);
+    if (indent) memcpy(line->text, prefix->text, indent);
+    line->text[indent] = '}';
+    line->length = indent + 1 + tail;
+    buffer->bytes = buffer->bytes - removed + indent + 1;
+    buffer->column = indent + 1;
+    buffer->dirty = true;
+    remember_column(buffer);
+    return true;
+}
+
 static bool buffer_backspace(EditorBuffer *buffer)
 {
     EditorLine *line = &buffer->lines[buffer->row];
@@ -1166,7 +1386,7 @@ static char *external_command_line(const WorkspaceEditor *editor,
                                    const char *command)
 {
     size_t command_length = strlen(command);
-    size_t cwd_length = strlen(editor->cwd);
+    size_t cwd_length = strlen(editor->command_cwd);
     if (command_length > SIZE_MAX - 3*cwd_length - 32) return NULL;
     size_t capacity = command_length + 3*cwd_length + 32;
     char *line = malloc(capacity);
@@ -1175,18 +1395,22 @@ static char *external_command_line(const WorkspaceEditor *editor,
     char *cursor = line;
     size_t remaining = capacity;
 #ifdef _WIN32
-    char prefix[EDITOR_PATH_CAPACITY + 16];
-    int prefix_length = snprintf(prefix, sizeof(prefix), "cd /d \"%s\" && ",
-                                 editor->cwd);
+    char prefix[EDITOR_PATH_CAPACITY + 32];
+    int prefix_length = snprintf(prefix, sizeof(prefix), "( cd /d \"%s\" && ",
+                                 editor->command_cwd);
     bool ok = prefix_length >= 0 && (size_t)prefix_length < sizeof(prefix) &&
               append_text(&cursor, &remaining, prefix);
 #else
-    bool ok = append_text(&cursor, &remaining, "cd ") &&
-              append_shell_path(&cursor, &remaining, editor->cwd) &&
-              append_text(&cursor, &remaining, " && ");
+    bool ok = append_text(&cursor, &remaining, "(\ncd ") &&
+              append_shell_path(&cursor, &remaining, editor->command_cwd) &&
+              append_text(&cursor, &remaining, " &&\n");
 #endif
-    ok = ok && append_text(&cursor, &remaining, command) &&
-         append_text(&cursor, &remaining, " 2>&1");
+    ok = ok && append_text(&cursor, &remaining, command);
+#ifdef _WIN32
+    ok = ok && append_text(&cursor, &remaining, " ) 2>&1");
+#else
+    ok = ok && append_text(&cursor, &remaining, "\n) 2>&1");
+#endif
     if (!ok) {
         free(line);
         return NULL;
@@ -1248,8 +1472,14 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
     char line[EDITOR_COMMAND_CAPACITY];
     memcpy(line, editor->command, editor->command_length + 1);
     trim_end(line);
-    char command_line[EDITOR_COMMAND_CAPACITY];
     char *command_start = skip_space(line);
+    /* Vim's shell escape does not require a space after '!'. Dispatch it
+     * before splitting editor command words, keeping shell quoting intact. */
+    if (*command_start == '!') {
+        run_external_command(editor, skip_space(command_start + 1));
+        return reply;
+    }
+    char command_line[EDITOR_COMMAND_CAPACITY];
     snprintf(command_line, sizeof(command_line), "%s", command_start);
     char *command = command_start;
     char *argument = command;
@@ -1287,8 +1517,6 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
             else
                 reply.action = CONSOLE_QUIT;
         }
-    } else if (strcmp(command, "!") == 0) {
-        run_external_command(editor, argument);
     } else {
         clear_messages(editor);
         bool handled = world_command &&
@@ -1441,16 +1669,16 @@ static void update_insert(WorkspaceEditor *editor)
         workspace_editor_message(editor, "cannot edit buffer", true);
     if (editor_key(KEY_DELETE) && !buffer_delete(buffer))
         workspace_editor_message(editor, "cannot edit buffer", true);
-    if (IsKeyPressed(KEY_ENTER) && !buffer_newline(buffer))
+    if (IsKeyPressed(KEY_ENTER) && !buffer_indented_newline(buffer))
         workspace_editor_message(editor, "cannot add line", true);
-    if (IsKeyPressed(KEY_TAB) && !buffer_insert(buffer, "    ", EDITOR_TAB_WIDTH))
+    if (IsKeyPressed(KEY_TAB) && !buffer_tab(buffer))
         workspace_editor_message(editor, "cannot insert tab", true);
     int character;
     while ((character = GetCharPressed()) != 0) {
         if (control || super || character < 32 || character == 127) continue;
         int count = 0;
         const char *encoded = CodepointToUTF8(character, &count);
-        if (count > 0 && !buffer_insert(buffer, encoded, (size_t)count)) {
+        if (count > 0 && !buffer_typed_text(buffer, encoded, (size_t)count)) {
             workspace_editor_message(editor, "cannot insert text", true);
             break;
         }
@@ -1615,6 +1843,8 @@ WorkspaceEditor *workspace_editor_create(void)
         return NULL;
     }
     slashify(editor->cwd);
+    /* Browsing changes cwd; commands keep the directory used by world saves. */
+    memcpy(editor->command_cwd, editor->cwd, strlen(editor->cwd) + 1);
     EditorBuffer *buffer = buffer_create_empty();
     if (!buffer) { free(editor); return NULL; }
     editor->buffers[0] = buffer;

@@ -48,9 +48,6 @@ mc-nvim is the text workspace inside mcmux. The available editor actions are:
 | `:COMMAND` | Run a world or simulation command using the same syntax as the CLI. |
 | `:! COMMAND` | Run an external build or program command from the pane directory. |
 
-`:e` and `:Ex` keep the directory context in the pane. An `.mcs` file opens as
-a read-only view. Use the command tables below instead of an in-application
-help screen.
 
 | `:COMMAND` | Purpose |
 | --- | --- |
