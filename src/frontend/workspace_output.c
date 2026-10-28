@@ -5,6 +5,7 @@
 #include "ui_font.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -148,8 +149,44 @@ void workspace_output_detach(WorkspaceOutput *output,void *source)
     }
 }
 
+bool workspace_output_is_running(const WorkspaceOutput *output)
+{
+    return output && output->running;
+}
+
+#ifdef _WIN32
+static char *program_command_line(const char *const *arguments)
+{
+    size_t capacity=1;
+    for (size_t i=0; arguments[i]; ++i) {
+        size_t length=strlen(arguments[i]);
+        if (capacity>SIZE_MAX-3 || length>(SIZE_MAX-capacity-3)/2) return NULL;
+        capacity+=2*length+3;
+    }
+    char *line=malloc(capacity),*cursor=line;
+    if (!line) return NULL;
+    for (size_t i=0; arguments[i]; ++i) {
+        if (i) *cursor++=' ';
+        *cursor++='"';
+        size_t slashes=0;
+        for (const char *p=arguments[i]; ; ++p) {
+            if (*p=='\\') { ++slashes; continue; }
+            size_t count=(*p=='"' || !*p) ? 2*slashes : slashes;
+            while (count--) *cursor++='\\';
+            slashes=0;
+            if (!*p) break;
+            if (*p=='"') *cursor++='\\';
+            *cursor++=*p;
+        }
+        *cursor++='"';
+    }
+    *cursor='\0';
+    return line;
+}
+#endif
+
 static bool launch_process(WorkspaceOutput *output,const char *command,
-                            char *error,size_t capacity)
+    const char *const *arguments,const char *directory,char *error,size_t capacity)
 {
 #ifdef _WIN32
     SECURITY_ATTRIBUTES security={sizeof(security),NULL,TRUE};
@@ -167,15 +204,15 @@ static bool launch_process(WorkspaceOutput *output,const char *command,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits={0};
     limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limits,sizeof(limits))) goto fail;
-    size_t length=strlen(command);
-    line=malloc(length+32);
+    size_t length=command ? strlen(command) : 0;
+    line=arguments ? program_command_line(arguments) : malloc(length+32);
     if (!line) { SetLastError(ERROR_NOT_ENOUGH_MEMORY); goto fail; }
-    snprintf(line,length+32,"cmd.exe /d /s /c \"%s\"",command);
+    if (!arguments) snprintf(line,length+32,"cmd.exe /d /s /c \"%s\"",command);
     STARTUPINFOA startup={0};
     startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES;
     startup.hStdInput=input; startup.hStdOutput=startup.hStdError=writer;
     if (!CreateProcessA(NULL,line,NULL,NULL,TRUE,
-        CREATE_NO_WINDOW|CREATE_SUSPENDED,NULL,NULL,&startup,&process)) goto fail;
+        CREATE_NO_WINDOW|CREATE_SUSPENDED,NULL,directory,&startup,&process)) goto fail;
     if (!AssignProcessToJobObject(job,process.hProcess) ||
         ResumeThread(process.hThread)==(DWORD)-1) goto fail;
     free(line); CloseHandle(input); CloseHandle(writer); CloseHandle(process.hThread);
@@ -193,6 +230,18 @@ fail:
     snprintf(error,capacity,"cannot start external command (Windows error %lu)",(unsigned long)failure);
     return false;
 #else
+    char **program_arguments=NULL;
+    if (arguments) {
+        size_t count=0;
+        while (arguments[count]) ++count;
+        program_arguments=calloc(count+6,sizeof(*program_arguments));
+        if (!program_arguments) goto fail;
+        program_arguments[0]="sh"; program_arguments[1]="-c";
+        program_arguments[2]="cd \"$1\" && shift && exec \"$@\"";
+        program_arguments[3]="mc-nvim";
+        program_arguments[4]=(char *)directory;
+        for (size_t i=0; i<count; ++i) program_arguments[i+5]=(char *)arguments[i];
+    }
     int descriptors[2];
     if (pipe(descriptors)<0) goto fail;
     /* GUI launches may have closed standard descriptors. Keep the pipe away
@@ -223,34 +272,57 @@ fail:
     if (!result) result=posix_spawn_file_actions_addclose(&actions,descriptors[1]);
     if (!result) result=posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETPGROUP);
     if (!result) result=posix_spawnattr_setpgroup(&attributes,0);
-    char *arguments[]={"sh","-c",(char *)command,NULL};
+    char *shell_arguments[]={"sh","-c",(char *)command,NULL};
     pid_t child=0;
-    if (!result) result=posix_spawn(&child,"/bin/sh",&actions,&attributes,arguments,environ);
+    if (!result) result=posix_spawn(&child,"/bin/sh",&actions,&attributes,
+        program_arguments ? program_arguments : shell_arguments,environ);
     posix_spawn_file_actions_destroy(&actions); posix_spawnattr_destroy(&attributes);
     close(descriptors[1]);
+    free(program_arguments); program_arguments=NULL;
     if (result) { close(descriptors[0]); errno=result; goto fail; }
     output->pipe=descriptors[0]; output->process=child;
     return true;
-fail:
-    snprintf(error,capacity,"cannot start external command: %s",strerror(errno));
+fail: {
+    int failure=errno;
+    free(program_arguments);
+    snprintf(error,capacity,"cannot start external command: %s",strerror(failure));
     return false;
+}
 #endif
+}
+
+static bool start_process(WorkspaceOutput *output,const char *command,
+    const char *const *arguments,const char *directory,const char *label,
+    void *source,WorkspaceOutputReceiver receiver,char *error,size_t capacity)
+{
+    if (!output || output->running) {
+        snprintf(error,capacity,"an external command is already running; use mc-output Ctrl+C to stop it");
+        return false;
+    }
+    if (!launch_process(output,command,arguments,directory,error,capacity)) return false;
+    output->running=true; output->exited=output->eof=output->cancelling=false;
+    output->source=source; output->receiver=receiver; output->partial_length=0;
+    output->partial[0]='\0'; output->status=0;
+    workspace_output_message(output,label,false);
+    return true;
 }
 
 bool workspace_output_start(WorkspaceOutput *output,const char *command,
     const char *label,void *source,WorkspaceOutputReceiver receiver,
     char *error,size_t capacity)
 {
-    if (!output || output->running) {
-        snprintf(error,capacity,"an external command is already running; use mc-output Ctrl+C to stop it");
+    return start_process(output,command,NULL,NULL,label,source,receiver,error,capacity);
+}
+
+bool workspace_output_start_program(WorkspaceOutput *output,
+    const char *const *arguments,const char *directory,const char *label,
+    void *source,WorkspaceOutputReceiver receiver,char *error,size_t capacity)
+{
+    if (!arguments || !arguments[0] || !*arguments[0] || !directory || !*directory) {
+        snprintf(error,capacity,"a program and working directory are required");
         return false;
     }
-    if (!launch_process(output,command,error,capacity)) return false;
-    output->running=true; output->exited=output->eof=output->cancelling=false;
-    output->source=source; output->receiver=receiver; output->partial_length=0;
-    output->partial[0]='\0'; output->status=0;
-    workspace_output_message(output,label,false);
-    return true;
+    return start_process(output,NULL,arguments,directory,label,source,receiver,error,capacity);
 }
 
 void workspace_output_cancel(WorkspaceOutput *output)

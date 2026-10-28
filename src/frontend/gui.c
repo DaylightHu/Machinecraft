@@ -2261,6 +2261,7 @@ static void draw_pane_help(void)
         "",
         "mc-nvim: v/V select, y copy, d delete, dd/yy line, D to end, p/P paste",
         "mc-nvim: i/a insert, Esc normal, :Ex, :e path, :w",
+        "mc-nvim: :make builds the current C file; :run builds and runs it",
         "mc-nvim: :q, :q!, :wq; Arrows/hjkl move; :! runs an external command",
         "mc-nvim: regular world commands use the CLI syntax, such as :tick freeze",
         "mc-output: PgUp/PgDn scroll, End follow, Ctrl+C stop command",

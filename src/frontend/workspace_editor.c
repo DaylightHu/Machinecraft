@@ -1701,6 +1701,64 @@ static void run_external_command(WorkspaceEditor *editor, const char *command)
     }
 }
 
+static bool find_project_root(const char *directory,char root[EDITOR_PATH_CAPACITY])
+{
+    if (!path_copy(root,directory)) return false;
+    for (;;) {
+        char path[EDITOR_PATH_CAPACITY],parent[EDITOR_PATH_CAPACITY];
+        if (path_join(root,"nob.c",path) && path_kind(path)==PATH_FILE &&
+            path_join(root,"nob.h",path) && path_kind(path)==PATH_FILE &&
+            path_join(root,"include/rs/structure.h",path) && path_kind(path)==PATH_FILE)
+            return true;
+        if (!path_parent(root,parent) || paths_equal(root,parent)) return false;
+        if (!path_copy(root,parent)) return false;
+    }
+}
+
+static void build_current_program(WorkspaceEditor *editor,bool run)
+{
+    EditorBuffer *buffer=current_buffer(editor);
+    if (!buffer || !buffer->named || !extension_equal(buffer->path,".c")) {
+        workspace_editor_message(editor,"open a named .c file before :make or :run",true);
+        return;
+    }
+    if (!editor->output) {
+        workspace_editor_message(editor,"build output is unavailable",true);
+        return;
+    }
+    if (workspace_output_is_running(editor->output)) {
+        workspace_editor_message(editor,
+            "a command is already running; use mc-output Ctrl+C to stop it",true);
+        return;
+    }
+    char directory[EDITOR_PATH_CAPACITY],root[EDITOR_PATH_CAPACITY];
+    bool found=path_parent(buffer->path,directory) && find_project_root(directory,root);
+    if (!found) found=find_project_root(editor->command_cwd,root);
+    if (!found) {
+        workspace_editor_message(editor,"cannot find the mcmux project directory",true);
+        return;
+    }
+    char tool[EDITOR_PATH_CAPACITY];
+#ifdef _WIN32
+    const char *tool_name="nob.exe";
+#else
+    const char *tool_name="nob";
+#endif
+    if (!path_join(root,tool_name,tool) || path_kind(tool)!=PATH_FILE) {
+        workspace_editor_message(editor,"project build tool not found; compile nob.c first",true);
+        return;
+    }
+    if (!editor_write(editor,"")) return;
+    const char *arguments[]={tool,run ? "run-c" : "build-c",buffer->path,NULL};
+    char error[EDITOR_MESSAGE_LENGTH],label[EDITOR_MESSAGE_LENGTH];
+    snprintf(label,sizeof(label),"[mc-nvim %d] :%s %.680s",editor->pane,
+        run ? "run" : "make",path_name(buffer->path));
+    if (workspace_output_start_program(editor->output,arguments,root,label,editor,
+            receive_process_output,error,sizeof(error)))
+        clear_messages(editor);
+    else workspace_editor_message(editor,error,true);
+}
+
 static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
     GameSession **session, WorkspaceEditorWorldCommand world_command,
     void *context)
@@ -1731,6 +1789,9 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
         else (void)editor_open_file(editor, argument);
     } else if (strcmp(command, "w") == 0) {
         (void)editor_write(editor, argument);
+    } else if (strcmp(command,"make")==0 || strcmp(command,"run")==0) {
+        if (*argument) workspace_editor_message(editor,"usage: :make or :run",true);
+        else build_current_program(editor,strcmp(command,"run")==0);
     } else if (strcmp(command, "q") == 0) {
         if (*argument) {
             workspace_editor_message(editor, "usage: :q", true);

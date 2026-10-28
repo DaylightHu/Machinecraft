@@ -14,7 +14,13 @@ void workspace_output_message(WorkspaceOutput *output, const char *text, bool er
 bool workspace_output_start(WorkspaceOutput *output, const char *command,
     const char *label, void *source, WorkspaceOutputReceiver receiver,
     char *error, size_t error_capacity);
+/* Arguments are passed literally; directory is the child's working directory. */
+bool workspace_output_start_program(WorkspaceOutput *output,
+    const char *const *arguments, const char *directory, const char *label,
+    void *source, WorkspaceOutputReceiver receiver,
+    char *error, size_t error_capacity);
 void workspace_output_detach(WorkspaceOutput *output, void *source);
+bool workspace_output_is_running(const WorkspaceOutput *output);
 void workspace_output_poll(WorkspaceOutput *output);
 void workspace_output_cancel(WorkspaceOutput *output);
 void workspace_output_update(WorkspaceOutput *output);
