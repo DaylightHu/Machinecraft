@@ -87,6 +87,7 @@ struct WorkspaceEditor {
     EditorMode mode;
     EditorMode command_previous_mode;
     char cwd[EDITOR_PATH_CAPACITY];
+    char command_cwd[EDITOR_PATH_CAPACITY];
     char command[EDITOR_COMMAND_CAPACITY];
     size_t command_length, command_cursor;
     BrowserEntry entries[EDITOR_BROWSER_LIMIT];
@@ -1166,7 +1167,7 @@ static char *external_command_line(const WorkspaceEditor *editor,
                                    const char *command)
 {
     size_t command_length = strlen(command);
-    size_t cwd_length = strlen(editor->cwd);
+    size_t cwd_length = strlen(editor->command_cwd);
     if (command_length > SIZE_MAX - 3*cwd_length - 32) return NULL;
     size_t capacity = command_length + 3*cwd_length + 32;
     char *line = malloc(capacity);
@@ -1177,12 +1178,12 @@ static char *external_command_line(const WorkspaceEditor *editor,
 #ifdef _WIN32
     char prefix[EDITOR_PATH_CAPACITY + 32];
     int prefix_length = snprintf(prefix, sizeof(prefix), "( cd /d \"%s\" && ",
-                                 editor->cwd);
+                                 editor->command_cwd);
     bool ok = prefix_length >= 0 && (size_t)prefix_length < sizeof(prefix) &&
               append_text(&cursor, &remaining, prefix);
 #else
     bool ok = append_text(&cursor, &remaining, "(\ncd ") &&
-              append_shell_path(&cursor, &remaining, editor->cwd) &&
+              append_shell_path(&cursor, &remaining, editor->command_cwd) &&
               append_text(&cursor, &remaining, " &&\n");
 #endif
     ok = ok && append_text(&cursor, &remaining, command);
@@ -1623,6 +1624,8 @@ WorkspaceEditor *workspace_editor_create(void)
         return NULL;
     }
     slashify(editor->cwd);
+    /* Browsing changes cwd; commands keep the directory used by world saves. */
+    memcpy(editor->command_cwd, editor->cwd, strlen(editor->cwd) + 1);
     EditorBuffer *buffer = buffer_create_empty();
     if (!buffer) { free(editor); return NULL; }
     editor->buffers[0] = buffer;
