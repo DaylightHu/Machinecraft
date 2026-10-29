@@ -487,19 +487,28 @@ static int64_t structure_plot_minimum(int coordinate)
     return q*WORLD_PLOT_SIZE;
 }
 
-World *structure_load(const char *path, StructureResult *out)
+World *structure_load_at(const char *path, const BlockPos *anchor,
+                         StructureResult *out)
 {
     StructureResult result;
     Structure *s=structure_read(path,&result);
     World *w=NULL;
     if (!s) goto fail;
 
-    BlockPos low=s->info.origin;
-    int64_t high_x=(int64_t)low.x+s->info.width-1;
-    int64_t high_y=(int64_t)low.y+s->info.height-1;
-    int64_t high_z=(int64_t)low.z+s->info.length-1;
+    int64_t offset_x = anchor ? (int64_t)anchor->x - s->info.anchor.x : 0;
+    int64_t offset_y = anchor ? (int64_t)anchor->y - s->info.anchor.y : 0;
+    int64_t offset_z = anchor ? (int64_t)anchor->z - s->info.anchor.z : 0;
+    int64_t low_x=(int64_t)s->info.origin.x+offset_x;
+    int64_t low_y=(int64_t)s->info.origin.y+offset_y;
+    int64_t low_z=(int64_t)s->info.origin.z+offset_z;
+    int64_t high_x=low_x+s->info.width-1;
+    int64_t high_y=low_y+s->info.height-1;
+    int64_t high_z=low_z+s->info.length-1;
     result=STRUCTURE_OUT_OF_BOUNDS;
-    if (low.y<WORLD_MIN_Y || high_y>WORLD_MAX_Y) goto fail;
+    if (low_x<INT_MIN || low_y<INT_MIN || low_z<INT_MIN ||
+        high_x>INT_MAX || high_y>INT_MAX || high_z>INT_MAX ||
+        low_y<WORLD_MIN_Y || high_y>WORLD_MAX_Y) goto fail;
+    BlockPos low={(int)low_x,(int)low_y,(int)low_z};
     /* Include the default plot; allocate only the chunks actually accessed. */
     int64_t x0=structure_plot_minimum(low.x<0 ? low.x : 0);
     int64_t z0=structure_plot_minimum(low.z<0 ? low.z : 0);
@@ -549,6 +558,11 @@ fail:
     structure_destroy(s);
     set_result(out,result);
     return NULL;
+}
+
+World *structure_load(const char *path, StructureResult *out)
+{
+    return structure_load_at(path, NULL, out);
 }
 
 const char *structure_result_name(StructureResult result)

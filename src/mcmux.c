@@ -2,6 +2,7 @@
 #include "region_edit_internal.h"
 #include "save_file.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -47,10 +48,10 @@ static GameSessionResult region_writeback_result(RsResult result)
     }
 }
 
-World *load_mcs(const char *path)
+World *load_mcs(const char *path, BlockPos anchor)
 {
     StructureResult result;
-    World *world = structure_load(path, &result);
+    World *world = structure_load_at(path, &anchor, &result);
     if (!world) {
         fprintf(stderr, "Error loading '%s': %s\n",
                 path ? path : "(null)", structure_result_name(result));
@@ -72,7 +73,7 @@ GameSessionResult save_mcw(World *world, const char *path)
 }
 
 GameSessionResult writeback_mcs(World *world, const char *mcs_path,
-                                const char *mcw_path)
+                                BlockPos anchor, const char *mcw_path)
 {
     if (!world || !mcs_path || !*mcs_path || !mcw_path || !*mcw_path)
         return GAME_SESSION_INVALID_ARGUMENT;
@@ -96,14 +97,27 @@ GameSessionResult writeback_mcs(World *world, const char *mcs_path,
         return GAME_SESSION_OUT_OF_MEMORY;
     }
 
-    BlockPos first = info.origin;
-    BlockPos second = {
-        info.origin.x + (int)info.width - 1,
-        info.origin.y + (int)info.height - 1,
-        info.origin.z + (int)info.length - 1
-    };
+    int64_t offset_x = (int64_t)anchor.x - info.anchor.x;
+    int64_t offset_y = (int64_t)anchor.y - info.anchor.y;
+    int64_t offset_z = (int64_t)anchor.z - info.anchor.z;
+    int64_t source_x = (int64_t)info.origin.x + offset_x;
+    int64_t source_y = (int64_t)info.origin.y + offset_y;
+    int64_t source_z = (int64_t)info.origin.z + offset_z;
+    int64_t source_max_x = source_x + info.width - 1;
+    int64_t source_max_y = source_y + info.height - 1;
+    int64_t source_max_z = source_z + info.length - 1;
+    if (source_x < INT_MIN || source_y < INT_MIN || source_z < INT_MIN ||
+        source_max_x > INT_MAX || source_max_y > INT_MAX || source_max_z > INT_MAX) {
+        region_editor_destroy(source_editor);
+        region_editor_destroy(target_editor);
+        world_destroy(target);
+        return GAME_SESSION_INVALID_ARGUMENT;
+    }
+    BlockPos first = {(int)source_x, (int)source_y, (int)source_z};
+    BlockPos second = {(int)source_max_x, (int)source_max_y, (int)source_max_z};
+    BlockPos target_first = info.origin;
     RsResult result = region_editor_transfer(source_editor, target_editor,
-                                             first, second, first, false,
+                                             first, second, target_first, false,
                                              NULL);
 
     region_editor_destroy(source_editor);
