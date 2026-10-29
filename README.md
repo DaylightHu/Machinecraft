@@ -25,7 +25,9 @@ Use a C compiler to compile `nob.c` into the `nob` build runner. Then run the
 | Command | Purpose |
 | --- | --- |
 | `Ctrl + b` & `%` | Open mc-nvim |
-|`Ctrl + b` & `?` | Help |
+| `Ctrl + b` & `g` | Open mc-gui |
+| `Ctrl + b` & `c` | Open mc-out |
+| `Ctrl + b` & `?` | Help |
 
 
 ## mc-nvim
