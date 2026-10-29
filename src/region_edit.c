@@ -1,4 +1,5 @@
 #include "rs/region_edit.h"
+#include "region_edit_internal.h"
 #include "sim_internal.h"
 
 #include <limits.h>
@@ -257,6 +258,72 @@ static RsResult plan_snapshot(RegionEditor *e, EditPlan *p, const Snapshot *s,
         if (result!=RS_OK) return result;
     }
     return RS_OK;
+}
+
+static RsResult apply_plan(RegionEditor *e, EditPlan *plan, size_t *changed);
+static void plan_destroy(EditPlan *p);
+
+RsResult region_editor_transfer(RegionEditor *source, RegionEditor *target,
+                                BlockPos first, BlockPos second,
+                                BlockPos anchor, bool skip_air,
+                                size_t *changed)
+{
+    if (changed) *changed = 0;
+    if (!source || !target || !source->world || !target->world)
+        return RS_INVALID_ARGUMENT;
+
+    RegionBounds source_bounds = {
+        .min = {
+            first.x < second.x ? first.x : second.x,
+            first.y < second.y ? first.y : second.y,
+            first.z < second.z ? first.z : second.z
+        },
+        .max = {
+            first.x > second.x ? first.x : second.x,
+            first.y > second.y ? first.y : second.y,
+            first.z > second.z ? first.z : second.z
+        }
+    };
+    uint64_t width = (uint64_t)((int64_t)source_bounds.max.x - source_bounds.min.x + 1);
+    uint64_t height = (uint64_t)((int64_t)source_bounds.max.y - source_bounds.min.y + 1);
+    uint64_t length = (uint64_t)((int64_t)source_bounds.max.z - source_bounds.min.z + 1);
+    if (!width || !height || !length || width > SIZE_MAX / height ||
+        width * height > SIZE_MAX / length)
+        return RS_INVALID_ARGUMENT;
+    source_bounds.volume = (size_t)(width * height * length);
+    if (!world_in_bounds(source->world, source_bounds.min) ||
+        !world_in_bounds(source->world, source_bounds.max))
+        return fail(source, RS_OUT_OF_BOUNDS, "Source region is outside the world");
+    if (source_bounds.volume > EDIT_BLOCK_LIMIT)
+        return fail(source, RS_INVALID_ARGUMENT,
+                    "Source region exceeds the 4194304-block edit limit");
+
+    int64_t offset_x = (int64_t)anchor.x - source_bounds.min.x;
+    int64_t offset_y = (int64_t)anchor.y - source_bounds.min.y;
+    int64_t offset_z = (int64_t)anchor.z - source_bounds.min.z;
+    RegionBounds destination;
+    if (!translated(target->world, source_bounds, offset_x, offset_y, offset_z,
+                    &destination))
+        return fail(target, RS_OUT_OF_BOUNDS,
+                    "Destination region is outside the world");
+
+    RsResult result = ready(source);
+    if (result != RS_OK) return result;
+    result = ready(target);
+    if (result != RS_OK) return result;
+
+    Snapshot snapshot;
+    result = snapshot_read(source, source_bounds, &snapshot);
+    if (result != RS_OK) {
+        snapshot_destroy(&snapshot);
+        return result;
+    }
+    EditPlan plan = {0};
+    result = plan_snapshot(target, &plan, &snapshot, destination, skip_air);
+    if (result == RS_OK) result = apply_plan(target, &plan, changed);
+    plan_destroy(&plan);
+    snapshot_destroy(&snapshot);
+    return result;
 }
 
 static void plan_destroy(EditPlan *p)
