@@ -84,7 +84,6 @@ static const char *gui_sources[] = {
     "src/frontend/ui_font.c",
     "src/frontend/workspace_layout.c",
     "src/frontend/workspace_editor.c",
-    "src/frontend/workspace_code.c",
     "src/frontend/workspace_output.c",
     "src/frontend/world_command.c",
     "src/frontend/world_session_manager.c",
@@ -486,7 +485,6 @@ static bool collect_project_headers(Files *headers)
     files_add(headers, RAYLIB_SRC "/raylib.h");
     files_add(headers, RAYLIB_SRC "/raymath.h");
     files_add(headers, RAYLIB_SRC "/rlgl.h");
-    files_add(headers, "third_party/jsmn.h");
     return true;
 }
 
@@ -977,63 +975,6 @@ static bool build_headless_tool(const char *source, const char *name, bool run)
     return true;
 }
 
-static void json_string(FILE *file,const char *text)
-{
-    fputc('"',file);
-    for (const unsigned char *p=(const unsigned char *)text; *p; ++p) {
-        if (*p=='"' || *p=='\\') fputc('\\',file);
-        if (*p<32) fprintf(file,"\\u%04x",*p);
-        else fputc(*p,file);
-    }
-    fputc('"',file);
-}
-
-static bool collect_code_source(Nob_Walk_Entry entry)
-{
-    const char *name=nob_path_name(entry.path);
-    if (entry.type==NOB_FILE_DIRECTORY && strcmp(entry.path,".") &&
-        (!strcmp(name,"build") || !strcmp(name,"third_party") || name[0]=='.')) {
-        *entry.action=NOB_WALK_SKIP;
-        return true;
-    }
-    if (entry.type==NOB_FILE_REGULAR &&
-        (ends_with(entry.path,".c") || ends_with(entry.path,".C")))
-        files_add(entry.data,entry.path);
-    return true;
-}
-
-static bool write_compilation_database(const char *extra)
-{
-    Files sources={0};
-    bool ok=false;
-    const char *root=nob_get_current_dir_temp();
-    if (!root || !nob_walk_dir(".",collect_code_source,.data=&sources) ||
-        !nob_mkdir_if_not_exists("build")) goto done;
-    if (extra && *extra) files_add(&sources,extra);
-    files_sort(&sources);
-    const char *temporary="build/compile_commands.json.tmp";
-    FILE *file=fopen(temporary,"wb");
-    if (!file) { nob_log(NOB_ERROR,"cannot write %s: %s",temporary,strerror(errno)); goto done; }
-    fputs("[\n",file);
-    for (size_t i=0;i<sources.count;++i) {
-        const char *source=sources.items[i];
-        fputs(i ? ",\n  {\"directory\":" : "  {\"directory\":",file);
-        json_string(file,root);
-        fputs(",\"file\":",file); json_string(file,source);
-        fputs(",\"arguments\":[",file); json_string(file,compiler());
-        fputs(",\"-std=c11\",\"-O2\",\"-Wall\",\"-Wextra\",\"-Iinclude\",\"-Isrc\",\"-I" RAYLIB_SRC "\",\"-x\",\"c\",\"-c\",",file);
-        json_string(file,source); fputs("]}",file);
-    }
-    fputs("\n]\n",file);
-    ok=!ferror(file);
-    if (fclose(file)!=0) ok=false;
-    if (ok) ok=nob_rename(temporary,"build/compile_commands.json");
-    if (!ok && nob_file_exists(temporary)) (void)nob_delete_file(temporary);
-done:
-    files_free(&sources);
-    return ok;
-}
-
 static void print_help(const char *program)
 {
     printf("Usage: %s [command]\n\n", program);
@@ -1050,7 +991,6 @@ static void print_help(const char *program)
     printf("  lib          Build build/libmcmux.a (no GUI dependencies)\n");
     printf("  build-c FILE Build a user C program linked with the simulation core\n");
     printf("  run-c FILE   Build and run a user C program from the repository root\n");
-    printf("  compdb [FILE] Generate build/compile_commands.json for code navigation\n");
     printf("  clean        Remove the build directory\n");
     printf("  help         Show this help\n");
 }
@@ -1067,10 +1007,6 @@ int main(int argc, char **argv)
     if (strcmp(command,"reader")==0)
         return build_headless_tool("tools/inspect_structure.c","inspect_structure",false) ? 0 : 1;
     if (strcmp(command,"lib")==0) return build_core_library() ? 0 : 1;
-    if (strcmp(command,"compdb")==0) {
-        if (argc>1) { nob_log(NOB_ERROR,"usage: %s compdb [FILE]",program); return 1; }
-        return write_compilation_database(argc ? argv[0] : NULL) ? 0 : 1;
-    }
     if (strcmp(command,"build-c")==0 || strcmp(command,"run-c")==0) {
         if (argc!=1) {
             nob_log(NOB_ERROR,"usage: %s %s path/to/program.c",program,command);
