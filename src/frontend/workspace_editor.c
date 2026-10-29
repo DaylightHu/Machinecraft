@@ -1726,7 +1726,8 @@ static bool find_project_root(const char *directory,char root[EDITOR_PATH_CAPACI
     }
 }
 
-static void build_current_program(WorkspaceEditor *editor,bool run)
+static void build_current_program(WorkspaceEditor *editor,bool run,
+    WorkspaceEditorPrepareRun prepare_run,void *context)
 {
     EditorBuffer *buffer=current_buffer(editor);
     if (!buffer || !buffer->named || !extension_equal(buffer->path,".c")) {
@@ -1760,6 +1761,7 @@ static void build_current_program(WorkspaceEditor *editor,bool run)
         return;
     }
     if (!editor_write(editor,"")) return;
+    if (run && prepare_run && !prepare_run(context,editor)) return;
     const char *arguments[]={tool,run ? "run-c" : "build-c",buffer->path,NULL};
     char error[EDITOR_MESSAGE_LENGTH],label[EDITOR_MESSAGE_LENGTH];
     snprintf(label,sizeof(label),"[mc-nvim %d] :%s %.680s",editor->pane,
@@ -1896,7 +1898,7 @@ static void query_code(WorkspaceEditor *editor,WorkspaceCodeKind kind)
 
 static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
     GameSession **session, WorkspaceEditorWorldCommand world_command,
-    void *context)
+    WorkspaceEditorPrepareRun prepare_run, void *context)
 {
     ConsoleCommandReply reply = {0};
     char line[EDITOR_COMMAND_CAPACITY];
@@ -1926,7 +1928,8 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
         (void)editor_write(editor, argument);
     } else if (strcmp(command,"make")==0 || strcmp(command,"run")==0) {
         if (*argument) workspace_editor_message(editor,"usage: :make or :run",true);
-        else build_current_program(editor,strcmp(command,"run")==0);
+        else build_current_program(editor,strcmp(command,"run")==0,
+                                   prepare_run,context);
     } else if (strcmp(command,"definition")==0 || strcmp(command,"declaration")==0 || strcmp(command,"hover")==0) {
         if (*argument) workspace_editor_message(editor,"usage: :definition, :declaration or :hover",true);
         else query_code(editor,!strcmp(command,"hover") ? CODE_HOVER :
@@ -2203,7 +2206,7 @@ static void enter_command_mode(WorkspaceEditor *editor, EditorMode return_mode)
 
 static ConsoleCommandReply update_command_mode(WorkspaceEditor *editor,
     GameSession **session, WorkspaceEditorWorldCommand world_command,
-    void *context)
+    WorkspaceEditorPrepareRun prepare_run, void *context)
 {
     ConsoleCommandReply reply = {0};
     if (IsKeyPressed(KEY_ESCAPE)) {
@@ -2268,7 +2271,8 @@ static ConsoleCommandReply update_command_mode(WorkspaceEditor *editor,
     }
     if (IsKeyPressed(KEY_ENTER)) {
         editor->mode = editor->command_previous_mode;
-        reply = execute_editor_command(editor, session, world_command, context);
+        reply = execute_editor_command(editor, session, world_command,
+                                       prepare_run, context);
         editor->command[0] = '\0';
         editor->command_length = editor->command_cursor = 0;
     }
@@ -2394,7 +2398,7 @@ void workspace_editor_detach_world(WorkspaceEditor *editor)
 
 ConsoleCommandReply workspace_editor_update(WorkspaceEditor *editor,
     GameSession **session, WorkspaceEditorWorldCommand world_command,
-    void *context)
+    WorkspaceEditorPrepareRun prepare_run, void *context)
 {
     ConsoleCommandReply reply = {0};
     if (!editor || !session) return reply;
@@ -2418,7 +2422,8 @@ ConsoleCommandReply workspace_editor_update(WorkspaceEditor *editor,
     }
     if (editor->mode == EDITOR_INSERT) update_insert(editor);
     else if (editor->mode == EDITOR_COMMAND)
-        reply = update_command_mode(editor, session, world_command, context);
+        reply = update_command_mode(editor, session, world_command,
+                                    prepare_run, context);
     else if (editor->mode == EDITOR_BROWSER) update_browser(editor);
     else update_normal(editor);
     return reply;

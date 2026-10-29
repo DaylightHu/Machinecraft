@@ -36,10 +36,16 @@ WorldSessionManager *world_session_manager_create(void)
 
 void world_session_manager_destroy(WorldSessionManager *manager)
 {
+    world_session_manager_clear(manager);
+    free(manager);
+}
+
+void world_session_manager_clear(WorldSessionManager *manager)
+{
     if (!manager) return;
     for (size_t index = 0; index < manager->count; ++index)
         game_session_destroy(manager->worlds[index].session);
-    free(manager);
+    manager->count = 0;
 }
 
 size_t world_session_manager_count(const WorldSessionManager *manager)
