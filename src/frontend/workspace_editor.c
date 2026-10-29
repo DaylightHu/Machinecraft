@@ -4,6 +4,7 @@
 
 #include "workspace_editor.h"
 #include "workspace_output.h"
+#include "workspace_code.h"
 #include "ui_font.h"
 #include "rs/structure.h"
 
@@ -88,6 +89,10 @@ typedef struct {
     bool error;
 } EditorMessage;
 
+typedef struct {
+    size_t buffer,row,column,top,left;
+} EditorLocation;
+
 struct WorkspaceEditor {
     ConsoleCommandState commands;
     EditorBuffer *buffers[EDITOR_BUFFER_LIMIT];
@@ -113,6 +118,12 @@ struct WorkspaceEditor {
     WorkspaceOutput *output;
     int pane;
     bool receiving_output;
+    WorkspaceCode *code;
+    EditorBuffer *code_info;
+    EditorLocation code_origin,jumps[64];
+    size_t jump_count;
+    uint64_t code_hash;
+    bool code_pending;
 };
 
 static void enter_command_mode(WorkspaceEditor *editor, EditorMode return_mode);
@@ -1759,6 +1770,130 @@ static void build_current_program(WorkspaceEditor *editor,bool run)
     else workspace_editor_message(editor,error,true);
 }
 
+static EditorLocation editor_location(const WorkspaceEditor *editor)
+{
+    const EditorBuffer *buffer=current_buffer_const(editor);
+    return (EditorLocation){editor->current,buffer->row,buffer->column,buffer->top,buffer->left};
+}
+
+static uint64_t buffer_hash(const EditorBuffer *buffer)
+{
+    uint64_t hash=UINT64_C(14695981039346656037);
+    for (size_t row=0;row<buffer->line_count;++row) {
+        for (size_t i=0;i<buffer->lines[row].length;++i)
+            hash=(hash^(unsigned char)buffer->lines[row].text[i])*UINT64_C(1099511628211);
+        hash=(hash^'\n')*UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static void close_code_info(WorkspaceEditor *editor)
+{
+    buffer_destroy(editor->code_info); editor->code_info=NULL;
+}
+
+static void jump_back(WorkspaceEditor *editor)
+{
+    if (editor->code_pending) {
+        workspace_code_detach(editor->code,editor); editor->code_pending=false;
+    }
+    close_code_info(editor);
+    if (!editor->jump_count) {
+        workspace_editor_message(editor,"No earlier code jump",true); return;
+    }
+    EditorLocation location=editor->jumps[--editor->jump_count];
+    editor->current=location.buffer;
+    EditorBuffer *buffer=current_buffer(editor);
+    buffer->row=location.row; buffer->column=location.column;
+    buffer->top=location.top; buffer->left=location.left;
+    clamp_cursor(buffer,false); remember_column(buffer);
+    editor->mode=EDITOR_NORMAL; editor->pending_operator=0; editor->messages_visible=false;
+}
+
+static void receive_code(void *source,const WorkspaceCodeReply *reply)
+{
+    WorkspaceEditor *editor=source;
+    editor->code_pending=false;
+    EditorBuffer *buffer=current_buffer(editor);
+    EditorLocation origin=editor->code_origin;
+    if (!buffer || editor->current!=origin.buffer || buffer->row!=origin.row ||
+        buffer->column!=origin.column || editor->mode!=EDITOR_NORMAL ||
+        buffer_hash(buffer)!=editor->code_hash) return;
+    if (reply->error) { workspace_editor_message(editor,reply->text,true); return; }
+    close_code_info(editor);
+    if (!reply->path[0]) {
+        editor->code_info=buffer_from_bytes("[Symbol information]",reply->text,strlen(reply->text));
+        if (!editor->code_info) workspace_editor_message(editor,"Cannot show symbol information: out of memory",true);
+        else editor->messages_visible=false;
+        return;
+    }
+    if (!editor_open_file(editor,reply->path)) return;
+    if (editor->jump_count==sizeof(editor->jumps)/sizeof(editor->jumps[0])) {
+        memmove(editor->jumps,editor->jumps+1,(editor->jump_count-1)*sizeof(editor->jumps[0]));
+        --editor->jump_count;
+    }
+    editor->jumps[editor->jump_count++]=origin;
+    buffer=current_buffer(editor);
+    buffer->row=reply->line<buffer->line_count ? reply->line : buffer->line_count-1;
+    buffer->column=reply->column;
+    buffer->top=buffer->row>5 ? buffer->row-5 : 0; buffer->left=0;
+    clamp_cursor(buffer,false); remember_column(buffer);
+    editor->messages_visible=false;
+}
+
+static void query_code(WorkspaceEditor *editor,WorkspaceCodeKind kind)
+{
+    editor->pending_operator=0;
+    EditorBuffer *buffer=current_buffer(editor);
+    if (!buffer || !buffer->named || buffer->synthetic || !buffer_is_c(buffer)) {
+        workspace_editor_message(editor,"Open a C source or header before looking up a symbol",true); return;
+    }
+    char root[EDITOR_PATH_CAPACITY],directory[EDITOR_PATH_CAPACITY];
+    bool found=path_parent(buffer->path,directory) && find_project_root(directory,root);
+    if (!found) found=find_project_root(editor->command_cwd,root);
+    if (!found || !editor->code) {
+        workspace_editor_message(editor,"Code navigation needs an open mcmux project",true); return;
+    }
+    WorkspaceCodeDocument documents[EDITOR_BUFFER_LIMIT];
+    char *texts[EDITOR_BUFFER_LIMIT]={0};
+    size_t count=0,active=0;
+    size_t total=0;
+    char error[EDITOR_MESSAGE_LENGTH]="Cannot prepare code lookup: out of memory";
+    bool ok=true;
+    for (size_t i=0;i<editor->buffer_count;++i) {
+        const EditorBuffer *b=editor->buffers[i];
+        if (!b->named || b->synthetic || !buffer_is_c(b)) continue;
+        if (b->bytes>16*1024*1024-total) {
+            snprintf(error,sizeof(error),"Open C buffers exceed the code navigation size limit"); ok=false; break;
+        }
+        total+=b->bytes;
+        char *value=malloc(b->bytes+1);
+        if (!value) { ok=false; break; }
+        size_t length=0;
+        for (size_t row=0;row<b->line_count;++row) {
+            if (row) value[length++]='\n';
+            memcpy(value+length,b->lines[row].text,b->lines[row].length); length+=b->lines[row].length;
+        }
+        value[length]='\0'; texts[count]=value;
+        documents[count]=(WorkspaceCodeDocument){b->path,value};
+        if (i==editor->current) active=count;
+        ++count;
+    }
+    if (ok) {
+        EditorLocation origin=editor_location(editor);
+        ok=workspace_code_query(editor->code,root,documents,count,active,buffer->row,
+            buffer->column,kind,editor,
+            receive_code,error,sizeof(error));
+        if (ok) {
+            editor->code_origin=origin; editor->code_hash=buffer_hash(buffer);
+            editor->code_pending=true;
+            workspace_editor_message(editor,kind==CODE_HOVER ? "Reading symbol information..." : "Finding symbol location...",false);
+        }
+    }
+    for (size_t i=0;i<count;++i) free(texts[i]);
+    if (!ok) workspace_editor_message(editor,error,true);
+}
+
 static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
     GameSession **session, WorkspaceEditorWorldCommand world_command,
     void *context)
@@ -1792,6 +1927,13 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
     } else if (strcmp(command,"make")==0 || strcmp(command,"run")==0) {
         if (*argument) workspace_editor_message(editor,"usage: :make or :run",true);
         else build_current_program(editor,strcmp(command,"run")==0);
+    } else if (strcmp(command,"definition")==0 || strcmp(command,"declaration")==0 || strcmp(command,"hover")==0) {
+        if (*argument) workspace_editor_message(editor,"usage: :definition, :declaration or :hover",true);
+        else query_code(editor,!strcmp(command,"hover") ? CODE_HOVER :
+            !strcmp(command,"definition") ? CODE_DEFINITION : CODE_DECLARATION);
+    } else if (strcmp(command,"back")==0) {
+        if (*argument) workspace_editor_message(editor,"usage: :back",true);
+        else jump_back(editor);
     } else if (strcmp(command, "q") == 0) {
         if (*argument) {
             workspace_editor_message(editor, "usage: :q", true);
@@ -1838,6 +1980,10 @@ static void update_normal(WorkspaceEditor *editor)
     EditorBuffer *buffer = current_buffer(editor);
     if (!buffer) return;
     if (IsKeyPressed(KEY_ESCAPE)) {
+        if (editor->code_pending) {
+            workspace_code_detach(editor->code,editor); editor->code_pending=false;
+            editor->messages_visible=false;
+        }
         editor->mode=EDITOR_NORMAL; editor->pending_operator=0;
         while (GetCharPressed()!=0) {}
         return;
@@ -1845,7 +1991,11 @@ static void update_normal(WorkspaceEditor *editor)
     bool control=IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) ||
         IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER);
     if (control) {
-        if (visual_mode(editor) && (IsKeyPressed(KEY_C) || IsKeyPressed(KEY_X)))
+        if (!visual_mode(editor) && (IsKeyPressed(KEY_O) || IsKeyPressed(KEY_T)))
+            jump_back(editor);
+        else if (!visual_mode(editor) && IsKeyPressed(KEY_RIGHT_BRACKET))
+            query_code(editor,CODE_DEFINITION);
+        else if (visual_mode(editor) && (IsKeyPressed(KEY_C) || IsKeyPressed(KEY_X)))
             (void)operate_range(editor,selected_range(editor,buffer),IsKeyPressed(KEY_X));
         else if (IsKeyPressed(KEY_V) && !visual_mode(editor))
             (void)paste_register(editor,false,true);
@@ -1863,19 +2013,20 @@ static void update_normal(WorkspaceEditor *editor)
         return;
     }
     bool moved = false, interacted = false;
-    if (editor_key(KEY_LEFT) || editor_key(KEY_H)) {
+    bool shift=IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    if (editor_key(KEY_LEFT) || (!shift && editor_key(KEY_H))) {
         EditorLine *line = &buffer->lines[buffer->row];
         if (buffer->column) buffer->column = utf8_previous(line, buffer->column);
         moved = interacted = true;
-    } else if (editor_key(KEY_RIGHT) || editor_key(KEY_L)) {
+    } else if (editor_key(KEY_RIGHT) || (!shift && editor_key(KEY_L))) {
         EditorLine *line = &buffer->lines[buffer->row];
         size_t next = utf8_next(line, buffer->column);
         if (next < line->length) buffer->column = next;
         moved = interacted = true;
-    } else if (editor_key(KEY_UP) || editor_key(KEY_K)) {
+    } else if (editor_key(KEY_UP) || (!shift && editor_key(KEY_K))) {
         move_vertical(buffer, -1, false);
         interacted = true;
-    } else if (editor_key(KEY_DOWN) || editor_key(KEY_J)) {
+    } else if (editor_key(KEY_DOWN) || (!shift && editor_key(KEY_J))) {
         move_vertical(buffer, 1, false);
         interacted = true;
     } else if (IsKeyPressed(KEY_HOME)) {
@@ -1915,6 +2066,15 @@ static void update_normal(WorkspaceEditor *editor)
                 (void)operate_range(editor,selected_range(editor,buffer),character!='y');
             continue;
         }
+        if (editor->pending_operator=='g') {
+            editor->pending_operator=0;
+            if (character=='d' || character=='D') {
+                query_code(editor,character=='d' ? CODE_DEFINITION : CODE_DECLARATION);
+                continue;
+            }
+        }
+        if (character=='g') { editor->pending_operator='g'; continue; }
+        if (character=='K') { query_code(editor,CODE_HOVER); continue; }
         EditorLine *line=&buffer->lines[buffer->row];
         if (character=='d' || character=='y') {
             if (editor->pending_operator==character) {
@@ -2196,10 +2356,18 @@ void workspace_editor_set_output(WorkspaceEditor *editor,WorkspaceOutput *output
     editor->output=output; editor->pane=pane;
 }
 
+void workspace_editor_set_code(WorkspaceEditor *editor,WorkspaceCode *code)
+{
+    if (!editor) return;
+    workspace_code_detach(editor->code,editor); editor->code=code; editor->code_pending=false;
+}
+
 void workspace_editor_destroy(WorkspaceEditor *editor)
 {
     if (!editor) return;
     workspace_output_detach(editor->output,editor);
+    workspace_code_detach(editor->code,editor);
+    close_code_info(editor);
     free(editor->yank);
     browser_clear(editor);
     for (size_t i = 0; i < editor->buffer_count; ++i)
@@ -2230,6 +2398,24 @@ ConsoleCommandReply workspace_editor_update(WorkspaceEditor *editor,
 {
     ConsoleCommandReply reply = {0};
     if (!editor || !session) return reply;
+    if (editor->code_info) {
+        EditorBuffer *info=editor->code_info;
+        if (IsKeyPressed(KEY_ESCAPE)) close_code_info(editor);
+        else {
+            if (editor_key(KEY_UP) || editor_key(KEY_K)) { if (info->top) --info->top; }
+            if (editor_key(KEY_DOWN) || editor_key(KEY_J)) ++info->top;
+            if (IsKeyPressed(KEY_PAGE_UP)) info->top=info->top>10 ? info->top-10 : 0;
+            if (IsKeyPressed(KEY_PAGE_DOWN)) info->top+=10;
+            if (IsKeyPressed(KEY_HOME)) info->top=0;
+            if (IsKeyPressed(KEY_END)) info->top=info->line_count-1;
+            if (editor_key(KEY_LEFT)) info->left=info->left>4 ? info->left-4 : 0;
+            if (editor_key(KEY_RIGHT)) info->left+=4;
+            if (info->top>=info->line_count) info->top=info->line_count-1;
+            if (info->left>EDITOR_DRAW_CAPACITY) info->left=EDITOR_DRAW_CAPACITY;
+        }
+        while (GetCharPressed()!=0) {}
+        return reply;
+    }
     if (editor->mode == EDITOR_INSERT) update_insert(editor);
     else if (editor->mode == EDITOR_COMMAND)
         reply = update_command_mode(editor, session, world_command, context);
@@ -2409,6 +2595,34 @@ static void draw_buffer(WorkspaceEditor *editor, Rectangle box,
     }
 }
 
+static void draw_code_info(WorkspaceEditor *editor,Rectangle box,int cell_width)
+{
+    EditorBuffer *info=editor->code_info;
+    if (!info || box.width<100 || box.height<100) return;
+    int rows=((int)box.height-2*EDITOR_HEADER_HEIGHT-24)/EDITOR_ROW_HEIGHT-2;
+    if (rows>20) rows=20;
+    if (rows>(int)info->line_count) rows=(int)info->line_count;
+    if (rows<1) return;
+    if (info->top+(size_t)rows>info->line_count)
+        info->top=info->line_count>(size_t)rows ? info->line_count-(size_t)rows : 0;
+    int width=(int)box.width-24;
+    if (width>880) width=880;
+    int height=(rows+2)*EDITOR_ROW_HEIGHT+12;
+    int x=(int)box.x+((int)box.width-width)/2;
+    int y=(int)box.y+EDITOR_HEADER_HEIGHT+10;
+    DrawRectangle(x,y,width,height,(Color){29,33,44,255});
+    DrawRectangleLines(x,y,width,height,(Color){172,143,255,255});
+    ui_text_draw("Symbol information",x+8,y+5,EDITOR_FONT_SIZE,(Color){205,188,255,255});
+    int columns=(width-16)/cell_width;
+    if (columns<1) columns=1;
+    for (int row=0;row<rows;++row) {
+        char visible[EDITOR_DRAW_CAPACITY];
+        display_slice(&info->lines[info->top+(size_t)row],info->left,(size_t)columns,visible);
+        ui_text_draw(visible,x+8,y+(row+1)*EDITOR_ROW_HEIGHT+5,EDITOR_FONT_SIZE,(Color){211,222,231,255});
+    }
+    ui_text_draw("Esc close | Arrows scroll",x+8,y+(rows+1)*EDITOR_ROW_HEIGHT+5,16,(Color){172,143,255,255});
+}
+
 static const char *mode_name(EditorMode mode)
 {
     switch (mode) {
@@ -2490,6 +2704,7 @@ void workspace_editor_draw(WorkspaceEditor *editor, Rectangle box, int pane,
                          status_y + 3, EDITOR_FONT_SIZE, RAYWHITE);
         }
     }
+    draw_code_info(editor,box,cell_width);
     EndScissorMode();
     DrawRectangleLinesEx(box, focused ? 2 : 1, accent);
 }

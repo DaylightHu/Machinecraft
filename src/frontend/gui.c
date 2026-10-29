@@ -16,6 +16,7 @@
 #include "workspace_layout.h"
 #include "workspace_editor.h"
 #include "workspace_output.h"
+#include "workspace_code.h"
 #include "world_command.h"
 #include "world_session_manager.h"
 #include "raylib.h"
@@ -101,6 +102,7 @@ typedef struct {
     WorkspaceLayout workspace;
     WorkspaceEditor *editors[WORKSPACE_TEXT_LIMIT];
     WorkspaceOutput *output;
+    WorkspaceCode *code;
     int output_pane;
     GameSession *editor_sessions[WORKSPACE_TEXT_LIMIT];
     /* Borrowed from the host; frontends may select sessions but do not own them. */
@@ -1815,6 +1817,11 @@ static bool initialize(GuiApp *app, WorldSessionManager *world_sessions)
         fprintf(stderr,"Cannot allocate mc-output history\n");
         return false;
     }
+    app->code=workspace_code_create();
+    if (!app->code) {
+        fprintf(stderr,"Cannot allocate code navigation state\n");
+        return false;
+    }
     app->workspace.gui_width = GetScreenWidth();
     app->window_gui_visible = true;
     app->window_width = GetScreenWidth();
@@ -1834,6 +1841,8 @@ static void shutdown_gui(GuiApp *app)
     }
     workspace_output_destroy(app->output);
     app->output=NULL;
+    workspace_code_destroy(app->code);
+    app->code=NULL;
     if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
     app->gui_target = (RenderTexture2D){0};
     if (app->title_background.id) UnloadTexture(app->title_background);
@@ -2042,6 +2051,7 @@ static int split_editor_pane(GuiApp *app, bool split_x)
     }
     app->editors[pane - 1] = editor;
     workspace_editor_set_output(editor,app->output,pane);
+    workspace_editor_set_code(editor,app->code);
     app->pane_message[0] = '\0';
     return pane;
 }
@@ -2212,6 +2222,7 @@ static VoxelHit update_workspace_input(GuiApp *app)
 {
     VoxelHit hit = {0};
     workspace_output_poll(app->output);
+    workspace_code_poll(app->code);
     sync_workspace_window(app);
     if (!prepare_gui_view(app)) return hit;
     if (!IsWindowFocused() && app->workspace.focus == 0 && app->session &&
@@ -2262,6 +2273,7 @@ static void draw_pane_help(void)
         "mc-nvim: v/V select, y copy, d delete, dd/yy line, D to end, p/P paste",
         "mc-nvim: i/a insert, Esc normal, :Ex, :e path, :w",
         "mc-nvim: :make builds the current C file; :run builds and runs it",
+        "mc-nvim: gd definition, gD declaration, K information, Ctrl+o/Ctrl+t back",
         "mc-nvim: :q, :q!, :wq; Arrows/hjkl move; :! runs an external command",
         "mc-nvim: regular world commands use the CLI syntax, such as :tick freeze",
         "mc-output: PgUp/PgDn scroll, End follow, Ctrl+C stop command",
