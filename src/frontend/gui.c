@@ -111,6 +111,7 @@ typedef struct {
     Texture2D title_background;
     bool pane_prefix, pane_help;
     bool window_gui_visible, window_text_visible, window_resize_pending;
+    bool program_active, program_gui_visible, skip_world_advance;
     int window_width, window_height, window_text_width;
     char pane_message[MESSAGE_CAPACITY];
 } GuiApp;
@@ -859,6 +860,7 @@ static BlockId pickable_block(BlockId id)
 
 static void advance_world_sessions(GuiApp *app)
 {
+    if (app->program_active || app->skip_world_advance) return;
     GameSession *failed_session = NULL;
     RsResult result = world_session_manager_advance(app->world_sessions,
                                                      GetFrameTime(),
@@ -1945,6 +1947,29 @@ static void pane_notice(GuiApp *app, const char *text)
     snprintf(app->pane_message, sizeof(app->pane_message), "%s", text);
 }
 
+/* The editor/output stay responsive while the child owns simulation time. */
+static void sync_program_activity(GuiApp *app)
+{
+    bool active = workspace_output_is_program_running(app->output);
+    if (active && !app->program_active) {
+        app->program_gui_visible = app->workspace.gui_visible;
+    } else if (!active && app->program_active) {
+        app->workspace.gui_visible = app->program_gui_visible ||
+                                     app->screen == GUI_SAVE_ERROR;
+        for (size_t i = 0; i < world_session_manager_count(app->world_sessions); ++i)
+            game_session_reset_clock(world_session_manager_at(app->world_sessions, i));
+        /* The last frame may include time spent waiting for the child. */
+        app->skip_world_advance = true;
+    }
+    app->program_active = active;
+    /* An exit-time save error must remain visible and actionable. */
+    if (active && app->screen != GUI_SAVE_ERROR) {
+        app->workspace.gui_visible = false;
+        if (!app->workspace.focus) workspace_layout_next(&app->workspace);
+        release_mouse(app);
+    }
+}
+
 typedef struct {
     GuiApp *app;
 } WorldCommandContext;
@@ -2080,6 +2105,11 @@ static bool close_pane(GuiApp *app, bool force)
         if (split_editor_pane(app, false) < 0) return false;
         app->workspace.focus = 0;
     }
+    if (app->program_active && pane > 0 && app->workspace.root >= 0 &&
+        app->workspace.nodes[app->workspace.root].first < 0) {
+        pane_notice(app, "Keep a text pane open until :make/:run finishes");
+        return false;
+    }
     if (!force && pane > 0 && app->editors[pane - 1] &&
         workspace_editor_has_unsaved(app->editors[pane - 1])) {
         pane_notice(app, "mc-nvim has unsaved buffers; save them with :w before closing");
@@ -2170,7 +2200,11 @@ static bool update_pane_keys(GuiApp *app)
             else pane_notice(app, "Text-pane zoom toggled");
             break;
         case 'x': (void)close_pane(app, false); break;
-        case 'g': workspace_layout_show_gui(&app->workspace); break;
+        case 'g':
+            if (app->program_active)
+                pane_notice(app, "mc-gui is paused during :make/:run; stop the task with mc-output Ctrl+C");
+            else workspace_layout_show_gui(&app->workspace);
+            break;
         case '?': app->pane_help = true; break;
         default: pane_notice(app, "Unknown pane key"); break;
         }
@@ -2207,7 +2241,7 @@ static void update_text_pane(GuiApp *app)
              reply.action == CONSOLE_QUIT_FORCE) {
         bool force = reply.action == CONSOLE_QUIT_FORCE;
         if (!close_pane(app, force)) {
-            if (pane > 0 && !app->workspace.gui_visible) {
+            if (pane > 0 && !app->workspace.gui_visible && !app->program_active) {
                 workspace_layout_show_gui(&app->workspace);
                 app->workspace.focus = pane;
                 (void)close_pane(app, force);
@@ -2222,6 +2256,7 @@ static VoxelHit update_workspace_input(GuiApp *app)
 {
     VoxelHit hit = {0};
     workspace_output_poll(app->output);
+    sync_program_activity(app);
     workspace_code_poll(app->code);
     sync_workspace_window(app);
     if (!prepare_gui_view(app)) return hit;
@@ -2250,6 +2285,7 @@ static VoxelHit update_workspace_input(GuiApp *app)
         else if (app->screen == GUI_BARREL) update_barrel(app);
         else if (app->screen == GUI_HOPPER || app->screen == GUI_DROPPER) update_container(app);
     }
+    sync_program_activity(app);
     sync_workspace_window(app);
     return hit;
 }
@@ -2382,6 +2418,7 @@ int gui_run(WorldSessionManager *world_sessions)
         }
         if (!app.running) break;
 
+        app.skip_world_advance = false;
         gui_view_reset();
         VoxelHit hit = {0};
         hit = update_workspace_input(&app);
@@ -2390,7 +2427,8 @@ int gui_run(WorldSessionManager *world_sessions)
         advance_world_sessions(&app);
         if (!app.running) break;
 
-        if (app.world_renderer && !world_renderer_sync(app.world_renderer)) {
+        if (!app.program_active && app.workspace.gui_visible &&
+            app.world_renderer && !world_renderer_sync(app.world_renderer)) {
             fprintf(stderr, "Cannot update render cache\n");
             app.fatal_error = true;
             break;
