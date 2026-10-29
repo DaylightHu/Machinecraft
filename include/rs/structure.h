@@ -33,4 +33,8 @@ StructureResult structure_write(const Structure *structure, const char *path,
 Structure *structure_read(const char *path, StructureResult *result);
 const char *structure_result_name(StructureResult result);
 World *structure_load(const char *path, StructureResult *result);
+/* Load with the saved anchor placed at anchor. A NULL anchor preserves the
+ * file's original coordinates. */
+World *structure_load_at(const char *path, const BlockPos *anchor,
+                         StructureResult *result);
 #endif

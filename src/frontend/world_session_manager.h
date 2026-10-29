@@ -8,6 +8,8 @@ typedef struct WorldSessionManager WorldSessionManager;
 /* The host owns registered sessions; frontend targets are borrowed pointers. */
 WorldSessionManager *world_session_manager_create(void);
 void world_session_manager_destroy(WorldSessionManager *manager);
+/* Detach all frontend targets before clearing the owned sessions. */
+void world_session_manager_clear(WorldSessionManager *manager);
 size_t world_session_manager_count(const WorldSessionManager *manager);
 GameSession *world_session_manager_at(const WorldSessionManager *manager,
                                       size_t index);

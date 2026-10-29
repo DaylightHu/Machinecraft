@@ -1974,6 +1974,42 @@ typedef struct {
     GuiApp *app;
 } WorldCommandContext;
 
+static bool prepare_program_run(void *context, WorkspaceEditor *editor)
+{
+    GuiApp *app = ((WorldCommandContext *)context)->app;
+    if (app->session && app->screen == GUI_BARREL) {
+        (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
+        app->screen = GUI_WORLD;
+    }
+    GameSession *failed_session = NULL;
+    GameSessionResult result = save_all_worlds(app, &failed_session);
+    if (result != GAME_SESSION_OK) {
+        char message[MESSAGE_CAPACITY];
+        snprintf(message, sizeof(message), "Cannot run: %s save failed: %s",
+                 managed_world_name(app, failed_session),
+                 game_session_result_name(result));
+        workspace_editor_message(editor, message, true);
+        return false;
+    }
+
+    return_to_title(app);
+    for (int i = 0; i < WORKSPACE_TEXT_LIMIT; ++i) {
+        app->editor_sessions[i] = NULL;
+        workspace_editor_detach_world(app->editors[i]);
+    }
+    /* A C program may write any save, including worlds without a GUI pane. */
+    world_session_manager_clear(app->world_sessions);
+    if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
+    app->gui_target = (RenderTexture2D){0};
+    app->camera = (Camera3D){0};
+    app->screen_before_error = GUI_TITLE;
+    app->after_save = AFTER_SAVE_NONE;
+    app->world_name[0] = '\0';
+    app->world_name_length = 0;
+    app->workspace.gui_visible = false;
+    return true;
+}
+
 static void editor_world_command_write(void *context, const char *text,
                                        bool error)
 {
@@ -2227,7 +2263,7 @@ static void update_text_pane(GuiApp *app)
     WorldCommandContext context = {app};
     ConsoleCommandReply reply = workspace_editor_update(app->editors[pane - 1],
         &app->editor_sessions[pane - 1],
-        handle_workspace_editor_world_command, &context);
+        handle_workspace_editor_world_command, prepare_program_run, &context);
     if (reply.fatal) {
         app->fatal_error = true;
         app->running = false;
