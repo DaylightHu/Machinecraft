@@ -28,7 +28,7 @@ enum { OUTPUT_LINES=2048, OUTPUT_LINE_LENGTH=1024, OUTPUT_READ_BUDGET=65536,
 typedef struct { char text[OUTPUT_LINE_LENGTH]; bool error; } OutputLine;
 struct WorkspaceOutput {
     OutputLine lines[OUTPUT_LINES];
-    size_t first,count,scroll,left,partial_length;
+    size_t first,count,scroll,left,partial_length,visible_rows;
     char partial[OUTPUT_LINE_LENGTH];
     bool running,exited,eof,cancelling;
     int status;
@@ -42,6 +42,20 @@ struct WorkspaceOutput {
     pid_t process;
 #endif
 };
+
+/* Keep a full page visible instead of scrolling past the oldest page. */
+static size_t scroll_limit(const WorkspaceOutput *output)
+{
+    size_t available=output->count+(output->partial_length ? 1 : 0);
+    size_t rows=output->visible_rows ? output->visible_rows : 1;
+    return available>rows ? available-rows : 0;
+}
+
+static void clamp_scroll(WorkspaceOutput *output)
+{
+    size_t limit=scroll_limit(output);
+    if (output->scroll>limit) output->scroll=limit;
+}
 
 static void push_line(WorkspaceOutput *output,const char *text,bool error)
 {
@@ -303,6 +317,7 @@ static bool start_process(WorkspaceOutput *output,const char *command,
     output->running=true; output->exited=output->eof=output->cancelling=false;
     output->source=source; output->receiver=receiver; output->partial_length=0;
     output->partial[0]='\0'; output->status=0;
+    output->scroll=0;
     workspace_output_message(output,label,false);
     return true;
 }
@@ -406,15 +421,16 @@ void workspace_output_update(WorkspaceOutput *output)
     if (IsKeyPressed(KEY_UP) || IsKeyPressedRepeat(KEY_UP) || IsKeyPressed(KEY_K)) ++output->scroll;
     if (IsKeyPressed(KEY_DOWN) || IsKeyPressedRepeat(KEY_DOWN) || IsKeyPressed(KEY_J))
         output->scroll=output->scroll ? output->scroll-1 : 0;
-    float wheel=GetMouseWheelMove();
+    /* Horizontal trackpad gestures must not move the vertical history. */
+    float wheel=GetMouseWheelMoveV().y;
     if (wheel>0) output->scroll+=3;
     else if (wheel<0) output->scroll=output->scroll>3 ? output->scroll-3 : 0;
-    if (IsKeyPressed(KEY_HOME)) output->scroll=output->count ? output->count-1 : 0;
+    if (IsKeyPressed(KEY_HOME)) output->scroll=scroll_limit(output);
     if (IsKeyPressed(KEY_END)) output->scroll=0;
     if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT)) output->left=output->left>4 ? output->left-4 : 0;
     if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT)) output->left+=4;
     if (output->left>OUTPUT_LINE_LENGTH) output->left=OUTPUT_LINE_LENGTH;
-    if (output->scroll>=output->count) output->scroll=output->count ? output->count-1 : 0;
+    clamp_scroll(output);
     while (GetCharPressed()!=0) {}
 }
 
@@ -431,6 +447,8 @@ void workspace_output_draw(WorkspaceOutput *output,Rectangle box,int pane,bool f
     int bottom=(int)(box.y+box.height)-OUTPUT_HEADER_HEIGHT;
     int rows=(bottom-(int)box.y-OUTPUT_HEADER_HEIGHT-4)/OUTPUT_ROW_HEIGHT;
     if (rows<0) rows=0;
+    output->visible_rows=(size_t)rows;
+    clamp_scroll(output);
     size_t available=output->count+(output->partial_length ? 1 : 0);
     size_t end=available>output->scroll ? available-output->scroll : 0;
     size_t start=end>(size_t)rows ? end-(size_t)rows : 0;
