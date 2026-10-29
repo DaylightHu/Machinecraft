@@ -30,7 +30,7 @@ struct WorkspaceOutput {
     OutputLine lines[OUTPUT_LINES];
     size_t first,count,scroll,left,partial_length,visible_rows;
     char partial[OUTPUT_LINE_LENGTH];
-    bool running,exited,eof,cancelling;
+    bool running,exited,eof,cancelling,program;
     int status;
     double cancel_time;
     void *source;
@@ -166,6 +166,11 @@ void workspace_output_detach(WorkspaceOutput *output,void *source)
 bool workspace_output_is_running(const WorkspaceOutput *output)
 {
     return output && output->running;
+}
+
+bool workspace_output_is_program_running(const WorkspaceOutput *output)
+{
+    return output && output->running && output->program;
 }
 
 #ifdef _WIN32
@@ -315,6 +320,7 @@ static bool start_process(WorkspaceOutput *output,const char *command,
     }
     if (!launch_process(output,command,arguments,directory,error,capacity)) return false;
     output->running=true; output->exited=output->eof=output->cancelling=false;
+    output->program=arguments!=NULL;
     output->source=source; output->receiver=receiver; output->partial_length=0;
     output->partial[0]='\0'; output->status=0;
     output->scroll=0;
