@@ -4,9 +4,10 @@
 #include "rs/structure.h"
 #include "rs/sim.h"
 
-/* Load a fresh, frozen world from an MCS structure file.
- * On failure, print the path and reason to stderr and exit with EXIT_FAILURE.
- * The caller owns the returned world and releases it with world_destroy(). */
+/* Load a fresh, frozen world from an MCS structure file.*/
 World *load_mcs(const char *path);
 
-#endif
+/* Save an independent world at a completed tick boundary.
+ * An existing destination may be replaced.
+ * Does not advance time, destroy the world, or exit on failure. */
+GameSessionResult save_mcw(World *world, const char *path);

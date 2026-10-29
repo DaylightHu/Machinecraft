@@ -16,3 +16,5 @@ engine
 /nob.exe.old
 /saves/
 /structures/
+
+/.cache/clangd/
