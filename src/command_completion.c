@@ -1,5 +1,4 @@
 #include "command_completion.h"
-#include "rs/block.h"
 
 #include <string.h>
 
@@ -8,21 +7,14 @@ static const char *const edit_commands[] = {"pos1", "pos2", "copy", "paste", "st
 static const char *const schem_commands[] = {"save"};
 static const char *const schem_flags[] = {"-f"};
 static const char *const paste_flags[] = {"-a"};
-static const char *const cli_commands[] = {
-    "place", "remove", "get", "dot", "delay", "mode", "tune",
-    "capacity", "hit", "slot", "slots", "stats", "dropper-seed",
-    "save", "title", "quit"
-};
 static const char *const tick_commands[] = {"freeze", "step", "noupdate"};
 static const char *const plot_commands[] = {"info", "expand", "shrink"};
 static const char *const plot_directions[] = {"east", "west", "south", "north"};
 static const char *const directions[] = {"east", "west", "up", "down", "south", "north"};
-static const char *const projectiles[] = {"arrow", "trident", "other"};
 
 #define COUNT(array) (sizeof(array)/sizeof((array)[0]))
 
-bool command_complete(CommandCompletion *state, char *line, size_t capacity,
-                      bool gui)
+bool command_complete(CommandCompletion *state, char *line, size_t capacity)
 {
     if (!state || !line || !capacity) return false;
     size_t length = 0;
@@ -49,7 +41,6 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
     char *word = tokens[count - 1];
     size_t slashes = strspn(tokens[0], "/");
     if (slashes > 2) return false;
-    bool slash = slashes != 0;
     const char *name = tokens[0] + slashes;
     if (slashes == 2 && count > 1) {
         bool editing = false;
@@ -60,8 +51,7 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
     if (count == 1) word += slashes;
     size_t offset = (size_t)(word - copy);
     size_t prefix = strlen(word);
-    const char *choices[BLOCK_INTERNAL_FIRST + COUNT(cli_commands) +
-                         COUNT(shared_commands) + COUNT(edit_commands) + DIR_COUNT + 1];
+    const char *choices[COUNT(shared_commands) + COUNT(edit_commands) + COUNT(directions)];
     size_t choices_count = 0;
 #define ADD(array) do { \
     for (size_t i = 0; i < COUNT(array); ++i) choices[choices_count++] = (array)[i]; \
@@ -69,7 +59,6 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
     if (count == 1) {
         if (slashes < 2) ADD(shared_commands);
         ADD(edit_commands);
-        if (!gui && !slash) ADD(cli_commands);
     } else if (count == 2 && strcmp(name, "paste") == 0) {
         ADD(paste_flags);
     } else if (count == 2 && strcmp(name, "schem") == 0) {
@@ -86,15 +75,6 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
     } else if (count == 3 && strcmp(name, "plot") == 0 &&
                (strcmp(tokens[1], "expand") == 0 || strcmp(tokens[1], "shrink") == 0)) {
         ADD(plot_directions);
-    } else if (!gui && !slash && strcmp(name, "place") == 0) {
-        if (count == 5) {
-            for (BlockId id = BLOCK_IRON; id < BLOCK_INTERNAL_FIRST; ++id)
-                choices[choices_count++] = block_name(id);
-        } else if (count == 6) {
-            ADD(directions);
-        }
-    } else if (!gui && !slash && count == 7 && strcmp(name, "hit") == 0) {
-        ADD(projectiles);
     }
 #undef ADD
     size_t matches = 0;

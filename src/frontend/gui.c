@@ -893,7 +893,7 @@ static void update_command(GuiApp *app)
         app->completion.active = false;
     }
     if (IsKeyPressed(KEY_TAB) && !app->plot_command.pending) {
-        command_complete(&app->completion, app->command, sizeof(app->command), true);
+        command_complete(&app->completion, app->command, sizeof(app->command));
         app->command_length = strlen(app->command);
     }
     if (IsKeyPressed(KEY_ESCAPE)) {

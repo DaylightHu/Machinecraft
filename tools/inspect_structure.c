@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 /* A detached reader: no window, world creation or world mutation. Link against
- * the project's common sources, just like the headless CLI. */
+ * the project's simulation core without GUI dependencies. */
 int main(int argc, char **argv)
 {
     if (argc!=2) { fprintf(stderr,"Usage: %s FILE.mcs\n",argv[0]); return 2; }

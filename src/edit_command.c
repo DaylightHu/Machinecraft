@@ -193,7 +193,7 @@ RsResult edit_command_run(GameSession *session, const EditCommand *c,
         return save_structure(session,c,message,capacity);
     case EDIT_POS1: case EDIT_POS2:
         if (!has_position) {
-            snprintf(message,capacity,"Use pos1 X Y Z or pos2 X Y Z in CLI");
+            snprintf(message,capacity,"Use pos1 X Y Z or pos2 X Y Z");
             return RS_INVALID_ARGUMENT;
         }
         result=region_editor_select(e,c->kind==EDIT_POS1 ? 1 : 2,pos);
@@ -210,7 +210,7 @@ RsResult edit_command_run(GameSession *session, const EditCommand *c,
         break;
     case EDIT_PASTE:
         if (!has_position) {
-            snprintf(message,capacity,"Use paste [-a] X Y Z in CLI");
+            snprintf(message,capacity,"Use paste [-a] X Y Z");
             return RS_INVALID_ARGUMENT;
         }
         result=region_editor_paste(e,pos,c->skip_air,&changed);
@@ -219,7 +219,7 @@ RsResult edit_command_run(GameSession *session, const EditCommand *c,
     case EDIT_STACK: case EDIT_MOVE: {
         Direction direction=c->direction==DIR_COUNT ? context.facing : c->direction;
         if ((unsigned)direction>=DIR_COUNT) {
-            snprintf(message,capacity,"Specify east, west, up, down, south or north in CLI");
+            snprintf(message,capacity,"Specify east, west, up, down, south or north");
             return RS_INVALID_ARGUMENT;
         }
         result=c->kind==EDIT_STACK ? region_editor_stack(e,c->count,direction,&changed) :

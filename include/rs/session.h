@@ -51,7 +51,7 @@ bool game_session_dirty(const GameSession *session);
 GameSessionResult game_session_save(GameSession *session);
 RsResult game_session_flush(GameSession *session);
 RsResult game_session_step(GameSession *session);
-/* Shared GUI/CLI driver. Automatic time runs at 20 TPS; frozen manual steps
+/* Session time driver. Automatic time runs at 20 TPS; frozen manual steps
  * run in bounded batches without real-time pacing. elapsed must be finite and
  * nonnegative. Freeze transitions discard automatic-clock carryover. */
 RsResult game_session_advance(GameSession *session, double elapsed_seconds);

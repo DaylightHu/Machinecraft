@@ -15,6 +15,61 @@ GameSessionResult save_mcw(World *world, const char *path);
  * must match the one passed to load_mcs(). */
 GameSessionResult writeback_mcs(World *world, const char *mcs_path,
                                 BlockPos anchor, const char *mcw_path);
-/* Place the Block in the world */
-// RsResult world_place(World *w, BlockPos p, BlockId id, Direction support);
+
+/* The operations below are declared in rs/world.h and rs/sim.h and are
+ * available by including mcmux.h. Commented prototypes index those APIs. */
+
+/* Place a block. The direction's meaning depends on the block; see rs/world.h. */
+// RsResult world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
+
+/* Remove a block; removing air returns RS_UNCHANGED. */
+// RsResult world_remove(World *world, BlockPos pos);
+
+/* Read a block and its state. Out-of-bounds reads return air; check bounds
+ * separately when the distinction matters. */
+// BlockState world_get(const World *world, BlockPos pos);
+// bool world_in_bounds(const World *world, BlockPos pos);
+
+/* Toggle wire dot/cross mode; constrained connections may return RS_UNCHANGED. */
+// RsResult world_toggle_wire_dot(World *world, BlockPos pos);
+
+/* Cycle the repeater delay. */
+// RsResult world_cycle_repeater_delay(World *world, BlockPos pos);
+
+/* Toggle the comparator between compare and subtract modes. */
+// RsResult world_toggle_comparator_mode(World *world, BlockPos pos);
+
+/* Cycle the note block's note. */
+// RsResult world_cycle_note(World *world, BlockPos pos);
+
+/* Set barrel fullness to 0..15 by replacing its contents when the level changes. */
+// RsResult world_set_barrel_level(World *world, BlockPos pos, uint8_t level);
+
+/* Inspect container slots. The slot count is zero for a non-container;
+ * indices are zero based. Formatting or iterating the results is up to the caller. */
+// size_t world_container_size(const World *world, BlockPos pos);
+// RsResult world_get_container_slot(const World *world, BlockPos pos, size_t slot,
+//                                   ContainerStack *stack);
+
+/* Set one container slot; an empty stack {0, 0, 0} clears it. */
+// RsResult world_set_container_slot(World *world, BlockPos pos, size_t slot,
+//                                   ContainerStack stack);
+
+/* Inject a target hit. u/v must be finite coordinates in [0,1]. Pass true for
+ * arrows/tridents, false for other projectiles. A pending pulse is unchanged. */
+// RsResult world_hit_target(World *world, BlockPos pos, double u, double v,
+//                           bool persistent_projectile);
+
+/* Set the world's dropper RNG seed, which is saved with the world. */
+// RsResult world_set_dropper_seed(World *world, uint64_t seed);
+
+/* Read simulation statistics and world counters. */
+// SimStats sim_stats(const World *world);
+// uint64_t world_revision(const World *world);
+// size_t world_loaded_chunks(const World *world);
+// size_t world_stored_chunks(const World *world);
+
+/* Release an owned World without saving it. Use save_mcw() or writeback_mcs()
+ * above when persistence is needed. */
+// void world_destroy(World *world);
 #endif
