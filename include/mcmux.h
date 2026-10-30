@@ -16,5 +16,5 @@ GameSessionResult save_mcw(World *world, const char *path);
 GameSessionResult writeback_mcs(World *world, const char *mcs_path,
                                 BlockPos anchor, const char *mcw_path);
 /* Place the Block in the world */
-// RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
+// RsResult world_place(World *w, BlockPos p, BlockId id, Direction support);
 #endif
