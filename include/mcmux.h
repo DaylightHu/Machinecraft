@@ -63,14 +63,13 @@ GameSessionResult writeback_mcs(World *world, const char *mcs_path,
 /* Set the world's dropper RNG seed, which is saved with the world. */
 // RsResult world_set_dropper_seed(World *world, uint64_t seed);
 
-/* Read simulation statistics and the world counters shown by CLI stats. */
+/* Read simulation statistics and world counters. */
 // SimStats sim_stats(const World *world);
 // uint64_t world_revision(const World *world);
 // size_t world_loaded_chunks(const World *world);
 // size_t world_stored_chunks(const World *world);
 
-/* Programs can save a World with save_mcw() or writeback_mcs() above.
- * CLI title/quit control the frontend; applications choose their own return/exit
- * flow. world_destroy() releases an owned World without saving it. */
+/* Release an owned World without saving it. Use save_mcw() or writeback_mcs()
+ * above when persistence is needed. */
 // void world_destroy(World *world);
 #endif

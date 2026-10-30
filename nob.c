@@ -39,14 +39,8 @@ static const char *common_sources[] = {
     "src/power.c",
     "src/session.c",
     "src/runtime_clock.c",
-    "src/line_input.c",
-    "src/command_completion.c",
-    "src/console_command.c",
-    "src/plot_command.c",
     "src/region_edit.c",
     "src/structure.c",
-    "src/edit_command.c",
-    "src/tick_command.c",
     "src/item.c",
     "src/container.c",
     "src/save_file.c",
@@ -71,14 +65,12 @@ static const char *common_sources[] = {
     "src/blocks/lamp.c",
 };
 
-static const char *cli_sources[] = {
-    "src/main.c",
-    "src/app.c",
-    "src/frontend/cli.c",
-};
-
 static const char *gui_sources[] = {
     "src/gui_main.c",
+    "src/command_completion.c",
+    "src/edit_command.c",
+    "src/plot_command.c",
+    "src/tick_command.c",
     "src/frontend/gui.c",
     "src/frontend/gui_view.c",
     "src/frontend/ui_font.c",
@@ -562,7 +554,7 @@ static bool compile_raylib_source(const char *source, const Files *dependencies,
     return true;
 }
 
-static bool link_target(const char *output, const Files *objects, bool graphical)
+static bool link_target(const char *output, const Files *objects)
 {
     int state = nob_needs_rebuild(output, objects->items, objects->count);
     if (state < 0) return false;
@@ -574,19 +566,17 @@ static bool link_target(const char *output, const Files *objects, bool graphical
         nob_cmd_append(&command, objects->items[index]);
     }
 
-    if (graphical) {
 #if defined(__APPLE__)
-        nob_cmd_append(&command,
-            "-framework", "OpenGL",
-            "-framework", "Cocoa",
-            "-framework", "IOKit",
-            "-framework", "CoreAudio",
-            "-framework", "CoreVideo");
+    nob_cmd_append(&command,
+        "-framework", "OpenGL",
+        "-framework", "Cocoa",
+        "-framework", "IOKit",
+        "-framework", "CoreAudio",
+        "-framework", "CoreVideo");
 #elif defined(_WIN32)
-        nob_cmd_append(&command,
-            "-lopengl32", "-lgdi32", "-lwinmm", "-lshell32");
+    nob_cmd_append(&command,
+        "-lopengl32", "-lgdi32", "-lwinmm", "-lshell32");
 #endif
-    }
 
     return nob_cmd_run(&command);
 }
@@ -600,14 +590,13 @@ static bool compile_sources(const char **sources, size_t source_count,
     return true;
 }
 
-static bool build_machinecraft(bool build_gui, bool build_cli)
+static bool build_machinecraft(void)
 {
     if (!supported_platform() || !ensure_build_directories()) return false;
 
     bool result = false;
     Files headers = {0};
     Files common_objects = {0};
-    Files cli_objects = {0};
     Files gui_objects = {0};
     Files raylib_objects = {0};
     Files vendor_files = {0};
@@ -617,33 +606,20 @@ static bool build_machinecraft(bool build_gui, bool build_cli)
     if (!compile_sources(common_sources, NOB_ARRAY_LEN(common_sources),
                          &headers, &common_objects)) goto cleanup;
 
-    if (build_cli) {
-        if (!compile_sources(cli_sources, NOB_ARRAY_LEN(cli_sources),
-                             &headers, &cli_objects)) goto cleanup;
-        files_append(&link_objects, &common_objects);
-        files_append(&link_objects, &cli_objects);
-        const char *output = nob_temp_sprintf("%s/machinecraft_cli%s",
-                                              platform_build_dir(), executable_suffix());
-        if (!link_target(output, &link_objects, false)) goto cleanup;
-        files_free(&link_objects);
+    if (!collect_vendor_files(&vendor_files)) goto cleanup;
+    files_add(&vendor_files, RAYLIB_CONFIG);
+    if (!compile_sources(gui_sources, NOB_ARRAY_LEN(gui_sources),
+                         &headers, &gui_objects)) goto cleanup;
+    for (size_t index = 0; index < NOB_ARRAY_LEN(raylib_sources); ++index) {
+        if (!compile_raylib_source(raylib_sources[index], &vendor_files,
+                                   &raylib_objects)) goto cleanup;
     }
-
-    if (build_gui) {
-        if (!collect_vendor_files(&vendor_files)) goto cleanup;
-        files_add(&vendor_files, RAYLIB_CONFIG);
-        if (!compile_sources(gui_sources, NOB_ARRAY_LEN(gui_sources),
-                             &headers, &gui_objects)) goto cleanup;
-        for (size_t index = 0; index < NOB_ARRAY_LEN(raylib_sources); ++index) {
-            if (!compile_raylib_source(raylib_sources[index], &vendor_files,
-                                       &raylib_objects)) goto cleanup;
-        }
-        files_append(&link_objects, &common_objects);
-        files_append(&link_objects, &gui_objects);
-        files_append(&link_objects, &raylib_objects);
-        const char *output = nob_temp_sprintf("%s/machinecraft_gui%s",
-                                              platform_build_dir(), executable_suffix());
-        if (!link_target(output, &link_objects, true)) goto cleanup;
-    }
+    files_append(&link_objects, &common_objects);
+    files_append(&link_objects, &gui_objects);
+    files_append(&link_objects, &raylib_objects);
+    const char *output = nob_temp_sprintf("%s/machinecraft_gui%s",
+                                          platform_build_dir(), executable_suffix());
+    if (!link_target(output, &link_objects)) goto cleanup;
 
     result = true;
 
@@ -652,7 +628,6 @@ cleanup:
     files_free(&vendor_files);
     files_free(&raylib_objects);
     files_free(&gui_objects);
-    files_free(&cli_objects);
     files_free(&common_objects);
     files_free(&headers);
     return result;
@@ -979,11 +954,9 @@ static void print_help(const char *program)
 {
     printf("Usage: %s [command]\n\n", program);
     printf("Commands:\n");
-    printf("  build        Build GUI and CLI (default)\n");
+    printf("  build        Build the GUI (default)\n");
     printf("  gui          Build only the GUI\n");
-    printf("  cli          Build only the CLI\n");
     printf("  run          Build and run the GUI from the repository root\n");
-    printf("  run-cli      Build and run the CLI from the repository root\n");
     printf("  vendor-list  Print the raylib files required by macOS and Windows\n");
     printf("  precommit    Stage the exact raylib set and verify an index-only build\n");
     printf("  test         Build and run the structure persistence tests\n");
@@ -1015,26 +988,15 @@ int main(int argc, char **argv)
         return build_user_program(argv[0],strcmp(command,"run-c")==0) ? 0 : 1;
     }
     if (strcmp(command, "build") == 0) {
-        return build_machinecraft(true, true) ? 0 : 1;
+        return build_machinecraft() ? 0 : 1;
     }
     if (strcmp(command, "gui") == 0) {
-        return build_machinecraft(true, false) ? 0 : 1;
-    }
-    if (strcmp(command, "cli") == 0) {
-        return build_machinecraft(false, true) ? 0 : 1;
+        return build_machinecraft() ? 0 : 1;
     }
     if (strcmp(command, "run") == 0) {
-        if (!build_machinecraft(true, false)) return 1;
+        if (!build_machinecraft()) return 1;
         Nob_Cmd run = {0};
         const char *binary = nob_temp_sprintf("%s/machinecraft_gui%s",
-                                              platform_build_dir(), executable_suffix());
-        nob_cmd_append(&run, binary);
-        return nob_cmd_run(&run) ? 0 : 1;
-    }
-    if (strcmp(command, "run-cli") == 0) {
-        if (!build_machinecraft(false, true)) return 1;
-        Nob_Cmd run = {0};
-        const char *binary = nob_temp_sprintf("%s/machinecraft_cli%s",
                                               platform_build_dir(), executable_suffix());
         nob_cmd_append(&run, binary);
         return nob_cmd_run(&run) ? 0 : 1;

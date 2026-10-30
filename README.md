@@ -72,30 +72,6 @@ mc-nvim's `:` commands operate on editor files and programs.
 | `/plot expand DIRECTION [COUNT]` | Expand the plot. |
 | `/plot shrink DIRECTION [COUNT]` | Shrink the plot; confirm if edits would be deleted. |
 
-## Standalone CLI
-
-The standalone CLI accepts the edit, tick, and plot commands above, plus the
-following commands without a `:` prefix:
-
-| Command | Purpose |
-| --- | --- |
-| `place X Y Z BLOCK [DIRECTION]` | Place a block. |
-| `remove X Y Z` | Remove a block. |
-| `get X Y Z` | Inspect a block and its state. |
-| `dot X Y Z` | Toggle a redstone-wire dot. |
-| `delay X Y Z` | Cycle a repeater delay. |
-| `mode X Y Z` | Toggle comparator mode. |
-| `tune X Y Z` | Cycle a note block note. |
-| `capacity X Y Z LEVEL` | Set a barrel fullness level. |
-| `slots X Y Z` | List a container's slots. |
-| `slot X Y Z INDEX ITEM COUNT LIMIT` | Set one container slot. |
-| `hit X Y Z U V arrow\|trident\|other` | Hit a target at face coordinates `U V` from `0` to `1`. |
-| `dropper-seed SEED` | Set the dropper seed. |
-| `stats` | Show simulation statistics. |
-| `save` | Save the current world. |
-| `title` | Save and return to the title. |
-| `quit` | Save and exit. |
-
 ## References
 
 - https://github.com/raysan5/raylib
