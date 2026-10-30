@@ -28,6 +28,13 @@ typedef struct {
  * Torch delay = 2 game ticks (100 ms at 20 TPS). */
 RsResult sim_flush(World *world);
 RsResult sim_step(World *world);
+/* Synchronously advance a fixed number of game ticks without real-time pacing.
+ * Advances even when frozen, preserving the freeze flag and previously queued
+ * manual steps. Zero ticks returns RS_OK if the current simulation status is OK.
+ * Calls during tick processing and requests that overflow time with queued
+ * steps are rejected before advancing. Stops at the first simulation error;
+ * completed time and state changes are retained. Read world_tick() for progress. */
+RsResult sim_advance_ticks(World *world, uint32_t ticks);
 /* Frozen worlds return RS_UNCHANGED from sim_step() unless manual steps are
  * pending. Changing freeze state cancels pending steps. Only the freeze flag
  * is saved; pending steps reset on load. */

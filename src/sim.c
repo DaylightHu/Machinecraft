@@ -461,6 +461,26 @@ RsResult sim_step(World *w)
     tick_block_entities(w);
     return s->error;
 }
+RsResult sim_advance_ticks(World *w, uint32_t ticks)
+{
+    if (!w || w->sim->handling_tick || w->sim->block_entities.ticking)
+        return RS_INVALID_ARGUMENT;
+    RsResult result = sim_flush(w);
+    if (result != RS_OK) return result;
+    Simulator *s = w->sim;
+    if (s->manual_steps > UINT64_MAX - w->tick ||
+        ticks > UINT64_MAX - w->tick - s->manual_steps)
+        return RS_INVALID_ARGUMENT;
+    for (uint32_t i = 0; i < ticks; ++i) {
+        if (s->frozen) {
+            result = sim_request_steps(w, 1);
+            if (result != RS_OK) return result;
+        }
+        result = sim_step(w);
+        if (result != RS_OK) return result;
+    }
+    return RS_OK;
+}
 SimStats sim_stats(const World *w)
 {
     SimStats stats = {0};
