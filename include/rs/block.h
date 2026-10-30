@@ -86,9 +86,6 @@ typedef struct {
             uint8_t note, instrument;
         } note_block;
         struct {
-            uint8_t power;          /* Own projectile pulse, 0..15; not conducted power. */
-        } target;
-        struct {
             uint8_t facing;         /* Down or horizontal outlet direction. */
             uint8_t level;          /* Derived comparator fullness, 0..15. */
             bool enabled;          /* False when receiving redstone power. */

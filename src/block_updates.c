@@ -165,14 +165,6 @@ static void placed(World *w, StateChange c, bool changed_type)
                     (Direction)state.data.observer.facing);
         }
         break;
-    case BLOCK_TARGET:
-        if (changed_type && c.current.data.target.power &&
-            !sim_has_scheduled_tick(w, c.pos)) {
-            BlockState state = c.current;
-            state.data.target.power = 0;
-            (void)world_set_block(w, c.pos, state, 18);
-        }
-        break;
     default: break;
     }
 }
