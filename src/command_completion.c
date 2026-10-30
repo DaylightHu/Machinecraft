@@ -13,8 +13,6 @@ static const char *const cli_commands[] = {
     "capacity", "hit", "slot", "slots", "stats", "dropper-seed",
     "save", "title", "quit"
 };
-static const char *const workspace_commands[] = {"world"};
-static const char *const world_commands[] = {"create", "attach", "list", "detach"};
 static const char *const tick_commands[] = {"freeze", "step", "noupdate"};
 static const char *const plot_commands[] = {"info", "expand", "shrink"};
 static const char *const plot_directions[] = {"east", "west", "south", "north"};
@@ -24,7 +22,7 @@ static const char *const projectiles[] = {"arrow", "trident", "other"};
 #define COUNT(array) (sizeof(array)/sizeof((array)[0]))
 
 bool command_complete(CommandCompletion *state, char *line, size_t capacity,
-                      bool gui, bool workspace)
+                      bool gui)
 {
     if (!state || !line || !capacity) return false;
     size_t length = 0;
@@ -63,7 +61,6 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
     size_t offset = (size_t)(word - copy);
     size_t prefix = strlen(word);
     const char *choices[BLOCK_INTERNAL_FIRST + COUNT(cli_commands) +
-                         COUNT(workspace_commands) +
                          COUNT(shared_commands) + COUNT(edit_commands) + DIR_COUNT + 1];
     size_t choices_count = 0;
 #define ADD(array) do { \
@@ -73,7 +70,6 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
         if (slashes < 2) ADD(shared_commands);
         ADD(edit_commands);
         if (!gui && !slash) ADD(cli_commands);
-        if (workspace && !gui && !slash) ADD(workspace_commands);
     } else if (count == 2 && strcmp(name, "paste") == 0) {
         ADD(paste_flags);
     } else if (count == 2 && strcmp(name, "schem") == 0) {
@@ -87,8 +83,6 @@ bool command_complete(CommandCompletion *state, char *line, size_t capacity,
         ADD(tick_commands);
     } else if (count == 2 && strcmp(name, "plot") == 0) {
         ADD(plot_commands);
-    } else if (workspace && count == 2 && strcmp(name, "world") == 0) {
-        ADD(world_commands);
     } else if (count == 3 && strcmp(name, "plot") == 0 &&
                (strcmp(tokens[1], "expand") == 0 || strcmp(tokens[1], "shrink") == 0)) {
         ADD(plot_directions);

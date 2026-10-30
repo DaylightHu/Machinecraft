@@ -25,7 +25,7 @@ static bool complete_command(char *line, size_t capacity, bool restart,
     if (input->commands.plot.pending) return false;
     CommandCompletion *completion = &input->completion;
     if (restart) completion->active = false;
-    return command_complete(completion, line, capacity, false, false);
+    return command_complete(completion, line, capacity, false);
 }
 
 CliRunResult cli_run(GameSession *session, FILE *input, FILE *output,

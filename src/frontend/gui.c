@@ -17,7 +17,6 @@
 #include "workspace_editor.h"
 #include "workspace_output.h"
 #include "workspace_code.h"
-#include "world_command.h"
 #include "world_session_manager.h"
 #include "raylib.h"
 #include "rs/session.h"
@@ -104,7 +103,6 @@ typedef struct {
     WorkspaceOutput *output;
     WorkspaceCode *code;
     int output_pane;
-    GameSession *editor_sessions[WORKSPACE_TEXT_LIMIT];
     /* Borrowed from the host; frontends may select sessions but do not own them. */
     WorldSessionManager *world_sessions;
     RenderTexture2D gui_target;
@@ -895,7 +893,7 @@ static void update_command(GuiApp *app)
         app->completion.active = false;
     }
     if (IsKeyPressed(KEY_TAB) && !app->plot_command.pending) {
-        command_complete(&app->completion, app->command, sizeof(app->command), true, false);
+        command_complete(&app->completion, app->command, sizeof(app->command), true);
         app->command_length = strlen(app->command);
     }
     if (IsKeyPressed(KEY_ESCAPE)) {
@@ -1765,11 +1763,6 @@ static void draw_save_error(GuiApp *app)
             detach_gui_frontend(app);
         } else if (action == AFTER_SAVE_HOST_EXIT) {
             close_world(app);
-            for (int pane = 0; pane < WORKSPACE_TEXT_LIMIT; ++pane) {
-                app->editor_sessions[pane] = NULL;
-                if (app->editors[pane])
-                    workspace_editor_detach_world(app->editors[pane]);
-            }
             app->running = false;
         }
     }
@@ -1837,7 +1830,6 @@ static void shutdown_gui(GuiApp *app)
 {
     close_world(app);
     for (int i = 0; i < WORKSPACE_TEXT_LIMIT; ++i) {
-        app->editor_sessions[i] = NULL;
         workspace_editor_destroy(app->editors[i]);
         app->editors[i] = NULL;
     }
@@ -1970,13 +1962,9 @@ static void sync_program_activity(GuiApp *app)
     }
 }
 
-typedef struct {
-    GuiApp *app;
-} WorldCommandContext;
-
 static bool prepare_program_run(void *context, WorkspaceEditor *editor)
 {
-    GuiApp *app = ((WorldCommandContext *)context)->app;
+    GuiApp *app = context;
     if (app->session && app->screen == GUI_BARREL) {
         (void)world_close_barrel(game_session_world(app->session), app->barrel_pos);
         app->screen = GUI_WORLD;
@@ -1993,10 +1981,6 @@ static bool prepare_program_run(void *context, WorkspaceEditor *editor)
     }
 
     return_to_title(app);
-    for (int i = 0; i < WORKSPACE_TEXT_LIMIT; ++i) {
-        app->editor_sessions[i] = NULL;
-        workspace_editor_detach_world(app->editors[i]);
-    }
     /* A C program may write any save, including worlds without a GUI pane. */
     world_session_manager_clear(app->world_sessions);
     if (app->gui_target.id) UnloadRenderTexture(app->gui_target);
@@ -2008,36 +1992,6 @@ static bool prepare_program_run(void *context, WorkspaceEditor *editor)
     app->world_name_length = 0;
     app->workspace.gui_visible = false;
     return true;
-}
-
-static void editor_world_command_write(void *context, const char *text,
-                                       bool error)
-{
-    workspace_editor_message(context, text, error);
-}
-
-static void editor_world_command_reset(void *context)
-{
-    workspace_editor_detach_world(context);
-}
-
-static bool handle_workspace_editor_world_command(void *context,
-    WorkspaceEditor *editor, const char *input, GameSession **target)
-{
-    WorldCommandContext *command_context = context;
-    GuiApp *app = command_context->app;
-    WorkspaceWorldCommandIO io = {
-        .sessions = app->world_sessions,
-        .save_directory = save_directory,
-        .frontend_name = "mc-nvim",
-        .write = editor_world_command_write,
-        .write_context = editor,
-        .reset_target_state = editor_world_command_reset,
-        .reset_context = editor
-    };
-    bool handled = workspace_world_command_run(&io, input, target);
-    if (io.saves_changed) refresh_saves(app);
-    return handled;
 }
 
 static bool prepare_gui_view(GuiApp *app)
@@ -2159,7 +2113,6 @@ static bool close_pane(GuiApp *app, bool force)
     }
     if (pane > 0) {
         if (pane==app->output_pane) app->output_pane=0;
-        app->editor_sessions[pane - 1] = NULL;
         workspace_editor_destroy(app->editors[pane - 1]);
         app->editors[pane - 1] = NULL;
     } else if (app->session && app->screen == GUI_BARREL) {
@@ -2260,22 +2213,11 @@ static void update_text_pane(GuiApp *app)
         return;
     }
     if (pane <= 0 || !app->editors[pane - 1]) return;
-    WorldCommandContext context = {app};
-    ConsoleCommandReply reply = workspace_editor_update(app->editors[pane - 1],
-        &app->editor_sessions[pane - 1],
-        handle_workspace_editor_world_command, prepare_program_run, &context);
-    if (reply.fatal) {
-        app->fatal_error = true;
-        app->running = false;
-    } else if (reply.action == CONSOLE_TITLE) {
-        app->editor_sessions[pane - 1] = NULL;
-        workspace_editor_detach_world(app->editors[pane - 1]);
-        workspace_editor_message(app->editors[pane - 1],
-            "mc-nvim detached from world; GUI unchanged", false);
-    }
-    else if (reply.action == CONSOLE_QUIT ||
-             reply.action == CONSOLE_QUIT_FORCE) {
-        bool force = reply.action == CONSOLE_QUIT_FORCE;
+    WorkspaceEditorAction action = workspace_editor_update(app->editors[pane - 1],
+        prepare_program_run, app);
+    if (action == WORKSPACE_EDITOR_QUIT ||
+        action == WORKSPACE_EDITOR_QUIT_FORCE) {
+        bool force = action == WORKSPACE_EDITOR_QUIT_FORCE;
         if (!close_pane(app, force)) {
             if (pane > 0 && !app->workspace.gui_visible && !app->program_active) {
                 workspace_layout_show_gui(&app->workspace);
@@ -2347,9 +2289,8 @@ static void draw_pane_help(void)
         "mc-nvim: :make builds the current C file; :run builds and runs it",
         "mc-nvim: gd definition, gD declaration, K information, Ctrl+o/Ctrl+t back",
         "mc-nvim: :q, :q!, :wq; Arrows/hjkl move; :! runs an external command",
-        "mc-nvim: regular world commands use the CLI syntax, such as :tick freeze",
         "mc-output: PgUp/PgDn scroll, End follow, Ctrl+C stop command",
-        "GUI and each text pane select worlds independently."
+        "mc-gui: / and // open world and simulation commands."
     };
     int width = GetScreenWidth() - 80;
     if (width > 800) width = 800;
