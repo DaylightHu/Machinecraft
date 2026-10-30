@@ -45,7 +45,7 @@ enum {
     EDITOR_BROWSER_LIMIT = 4096,
     EDITOR_MESSAGE_LIMIT = 32,
     EDITOR_MESSAGE_LENGTH = 768,
-    EDITOR_COMMAND_CAPACITY = CONSOLE_COMMAND_CAPACITY + 8,
+    EDITOR_COMMAND_CAPACITY = 520,
     EDITOR_FONT_SIZE = 20,
     EDITOR_ROW_HEIGHT = 24,
     EDITOR_HEADER_HEIGHT = 25,
@@ -94,7 +94,6 @@ typedef struct {
 } EditorLocation;
 
 struct WorkspaceEditor {
-    ConsoleCommandState commands;
     EditorBuffer *buffers[EDITOR_BUFFER_LIMIT];
     size_t buffer_count, current;
     EditorMode mode;
@@ -1896,11 +1895,10 @@ static void query_code(WorkspaceEditor *editor,WorkspaceCodeKind kind)
     if (!ok) workspace_editor_message(editor,error,true);
 }
 
-static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
-    GameSession **session, WorkspaceEditorWorldCommand world_command,
+static WorkspaceEditorAction execute_editor_command(WorkspaceEditor *editor,
     WorkspaceEditorPrepareRun prepare_run, void *context)
 {
-    ConsoleCommandReply reply = {0};
+    WorkspaceEditorAction action = WORKSPACE_EDITOR_CONTINUE;
     char line[EDITOR_COMMAND_CAPACITY];
     memcpy(line, editor->command, editor->command_length + 1);
     trim_end(line);
@@ -1909,16 +1907,14 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
      * before splitting editor command words, keeping shell quoting intact. */
     if (*command_start == '!') {
         run_external_command(editor, skip_space(command_start + 1));
-        return reply;
+        return action;
     }
-    char command_line[EDITOR_COMMAND_CAPACITY];
-    snprintf(command_line, sizeof(command_line), "%s", command_start);
     char *command = command_start;
     char *argument = command;
     while (*argument && *argument != ' ' && *argument != '\t') ++argument;
     if (*argument) *argument++ = '\0';
     argument = skip_space(argument);
-    if (!*command) return reply;
+    if (!*command) return action;
     if (strcmp(command, "Ex") == 0 || strcmp(command, "Explore") == 0) {
         (void)browser_open(editor, argument);
     } else if (strcmp(command, "e") == 0) {
@@ -1944,13 +1940,13 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
             workspace_editor_message(editor,
                 "unsaved changes; use :q! to discard them", true);
         } else {
-            reply.action = CONSOLE_QUIT;
+            action = WORKSPACE_EDITOR_QUIT;
         }
     } else if (strcmp(command, "q!") == 0) {
         if (*argument)
             workspace_editor_message(editor, "usage: :q!", true);
         else
-            reply.action = CONSOLE_QUIT_FORCE;
+            action = WORKSPACE_EDITOR_QUIT_FORCE;
     } else if (strcmp(command, "wq") == 0) {
         if (editor_write(editor, argument)) {
             if (workspace_editor_has_unsaved(editor))
@@ -1958,24 +1954,12 @@ static ConsoleCommandReply execute_editor_command(WorkspaceEditor *editor,
                     "other buffers have unsaved changes; use :q! to discard them",
                     true);
             else
-                reply.action = CONSOLE_QUIT;
+                action = WORKSPACE_EDITOR_QUIT;
         }
     } else {
-        clear_messages(editor);
-        bool handled = world_command &&
-            world_command(context, editor, command_line, session);
-        if (!handled)
-            reply = console_command_run(*session, &editor->commands,
-                                        command_line, command_output, editor);
-        flush_command_output(editor);
-        if (reply.steps) {
-            char message[96];
-            snprintf(message, sizeof(message), "Queued %u manual ticks",
-                     reply.steps);
-            workspace_editor_message(editor, message, false);
-        }
+        workspace_editor_message(editor, "Unknown editor command", true);
     }
-    return reply;
+    return action;
 }
 
 static void update_normal(WorkspaceEditor *editor)
@@ -2204,17 +2188,16 @@ static void enter_command_mode(WorkspaceEditor *editor, EditorMode return_mode)
     editor->command_length = editor->command_cursor = 0;
 }
 
-static ConsoleCommandReply update_command_mode(WorkspaceEditor *editor,
-    GameSession **session, WorkspaceEditorWorldCommand world_command,
+static WorkspaceEditorAction update_command_mode(WorkspaceEditor *editor,
     WorkspaceEditorPrepareRun prepare_run, void *context)
 {
-    ConsoleCommandReply reply = {0};
+    WorkspaceEditorAction action = WORKSPACE_EDITOR_CONTINUE;
     if (IsKeyPressed(KEY_ESCAPE)) {
         editor->mode = editor->command_previous_mode;
         editor->command[0] = '\0';
         editor->command_length = editor->command_cursor = 0;
         while (GetCharPressed() != 0) {}
-        return reply;
+        return action;
     }
     bool control = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
     bool super = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER);
@@ -2271,12 +2254,11 @@ static ConsoleCommandReply update_command_mode(WorkspaceEditor *editor,
     }
     if (IsKeyPressed(KEY_ENTER)) {
         editor->mode = editor->command_previous_mode;
-        reply = execute_editor_command(editor, session, world_command,
-                                       prepare_run, context);
+        action = execute_editor_command(editor, prepare_run, context);
         editor->command[0] = '\0';
         editor->command_length = editor->command_cursor = 0;
     }
-    return reply;
+    return action;
 }
 
 static void browser_enter(WorkspaceEditor *editor)
@@ -2342,7 +2324,7 @@ WorkspaceEditor *workspace_editor_create(void)
         return NULL;
     }
     slashify(editor->cwd);
-    /* Browsing changes cwd; commands keep the directory used by world saves. */
+    /* Keep the initial directory for commands while browsing other folders. */
     memcpy(editor->command_cwd, editor->cwd, strlen(editor->cwd) + 1);
     EditorBuffer *buffer = buffer_create_empty();
     if (!buffer) { free(editor); return NULL; }
@@ -2387,21 +2369,11 @@ bool workspace_editor_has_unsaved(const WorkspaceEditor *editor)
     return false;
 }
 
-void workspace_editor_detach_world(WorkspaceEditor *editor)
-{
-    if (!editor) return;
-    if (editor->commands.plot.pending)
-        workspace_editor_message(editor,
-            "World detached; pending shrink cancelled", false);
-    editor->commands.plot = (PlotCommandState){0};
-}
-
-ConsoleCommandReply workspace_editor_update(WorkspaceEditor *editor,
-    GameSession **session, WorkspaceEditorWorldCommand world_command,
+WorkspaceEditorAction workspace_editor_update(WorkspaceEditor *editor,
     WorkspaceEditorPrepareRun prepare_run, void *context)
 {
-    ConsoleCommandReply reply = {0};
-    if (!editor || !session) return reply;
+    WorkspaceEditorAction action = WORKSPACE_EDITOR_CONTINUE;
+    if (!editor) return action;
     if (editor->code_info) {
         EditorBuffer *info=editor->code_info;
         if (IsKeyPressed(KEY_ESCAPE)) close_code_info(editor);
@@ -2418,15 +2390,14 @@ ConsoleCommandReply workspace_editor_update(WorkspaceEditor *editor,
             if (info->left>EDITOR_DRAW_CAPACITY) info->left=EDITOR_DRAW_CAPACITY;
         }
         while (GetCharPressed()!=0) {}
-        return reply;
+        return action;
     }
     if (editor->mode == EDITOR_INSERT) update_insert(editor);
     else if (editor->mode == EDITOR_COMMAND)
-        reply = update_command_mode(editor, session, world_command,
-                                    prepare_run, context);
+        action = update_command_mode(editor, prepare_run, context);
     else if (editor->mode == EDITOR_BROWSER) update_browser(editor);
     else update_normal(editor);
-    return reply;
+    return action;
 }
 
 static size_t decimal_digits(size_t value)
