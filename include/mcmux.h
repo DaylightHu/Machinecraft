@@ -59,8 +59,7 @@ GameSessionResult writeback_mcs(World *world, const char *mcs_path,
 /* Set the world's dropper RNG seed, which is saved with the world. */
 // RsResult world_set_dropper_seed(World *world, uint64_t seed);
 
-/* Advance a fixed number of game ticks synchronously, retaining freeze state
- * and queued manual steps. See rs/sim.h for error and partial-progress behavior. */
+/* Advance a fixed number of game ticks synchronously. */
 // RsResult sim_advance_ticks(World *world, uint32_t ticks);
 
 /* Read simulation statistics and world counters. */
