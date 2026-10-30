@@ -51,11 +51,6 @@ GameSessionResult writeback_mcs(World *world, const char *mcs_path,
 // RsResult world_get_container_slot(const World *world, BlockPos pos, size_t slot, ContainerStack *stack);
 // RsResult world_set_container_slot(World *world, BlockPos pos, size_t slot, ContainerStack stack);
 
-/* Inject a target hit. u/v must be finite coordinates in [0,1]. Pass true for
- * arrows/tridents, false for other projectiles. A pending pulse is unchanged. */
-// RsResult world_hit_target(World *world, BlockPos pos, double u, double v,
-//                           bool persistent_projectile);
-
 /* Set the world's dropper RNG seed, which is saved with the world. */
 // RsResult world_set_dropper_seed(World *world, uint64_t seed);
 

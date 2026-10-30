@@ -87,7 +87,6 @@ static bool encode_state(BlockState s, unsigned char out[RECORD_SIZE])
         p[0]=s.data.barrel.facing; p[1]=s.data.barrel.level; p[2]=s.data.barrel.open; break;
     case BLOCK_NOTE_BLOCK:
         p[0]=s.data.note_block.powered; p[1]=s.data.note_block.note; p[2]=s.data.note_block.instrument; break;
-    case BLOCK_TARGET: p[0]=s.data.target.power; break;
     case BLOCK_HOPPER:
         p[0]=s.data.hopper.facing; p[1]=s.data.hopper.level; p[2]=s.data.hopper.enabled; break;
     case BLOCK_DROPPER:
@@ -127,7 +126,6 @@ static bool decode_state(const unsigned char in[RECORD_SIZE], BlockState *s)
         s->data.barrel.facing=p[0]; s->data.barrel.level=p[1]; s->data.barrel.open=p[2]!=0; break;
     case BLOCK_NOTE_BLOCK:
         s->data.note_block.powered=p[0]!=0; s->data.note_block.note=p[1]; s->data.note_block.instrument=p[2]; break;
-    case BLOCK_TARGET: s->data.target.power=p[0]; break;
     case BLOCK_HOPPER:
         s->data.hopper.facing=p[0]; s->data.hopper.level=p[1]; s->data.hopper.enabled=p[2]!=0; break;
     case BLOCK_DROPPER:

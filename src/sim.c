@@ -432,7 +432,7 @@ RsResult sim_step(World *w)
         ++s->stats.events_processed;
         if (action.changed)
             (void)world_set_block(w, event.pos, action.state,
-                state.id == BLOCK_REDSTONE_TORCH || state.id == BLOCK_TARGET ? 3 : 2);
+                state.id == BLOCK_REDSTONE_TORCH ? 3 : 2);
         if (action.next_delay)
             sim_schedule(w, event.pos, action.next_delay);
         if (state.id == BLOCK_OBSERVER)

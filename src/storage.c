@@ -30,9 +30,9 @@ enum {
     STATE_BARREL_COUNT = DIR_COUNT * 16 * 2,
     STATE_NOTE_BLOCK_FIRST = STATE_BARREL_FIRST + STATE_BARREL_COUNT,
     STATE_NOTE_BLOCK_COUNT = NOTE_COUNT * NOTE_INSTRUMENT_COUNT * 2,
-    STATE_TARGET_FIRST = STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT,
-    STATE_TARGET_COUNT = 16,
-    STATE_HOPPER_FIRST = STATE_TARGET_FIRST + STATE_TARGET_COUNT,
+    STATE_TARGET = STATE_NOTE_BLOCK_FIRST + STATE_NOTE_BLOCK_COUNT,
+    /* Keep the former target-state range reserved in v1 palettes. */
+    STATE_HOPPER_FIRST = STATE_TARGET + 16,
     STATE_HOPPER_COUNT = 5 * 2 * 16,
     STATE_DROPPER_FIRST = STATE_HOPPER_FIRST + STATE_HOPPER_COUNT,
     STATE_DROPPER_COUNT = DIR_COUNT * 2 * 16,
@@ -164,8 +164,7 @@ bool state_encode(BlockState s, StateId *id)
         return true;
     }
     if (s.id == BLOCK_TARGET) {
-        if (s.data.target.power > 15) return false;
-        *id = (StateId)(STATE_TARGET_FIRST + s.data.target.power);
+        *id = STATE_TARGET;
         return true;
     }
     if (s.id == BLOCK_HOPPER) {
@@ -319,9 +318,8 @@ bool state_decode(StateId id, BlockState *s)
         s->data.note_block.powered = value >= NOTE_COUNT*NOTE_INSTRUMENT_COUNT;
         return true;
     }
-    if (id >= STATE_TARGET_FIRST && id < STATE_TARGET_FIRST + STATE_TARGET_COUNT) {
+    if (id == STATE_TARGET) {
         *s = block_default(BLOCK_TARGET);
-        s->data.target.power = (uint8_t)(id - STATE_TARGET_FIRST);
         return true;
     }
     if (id >= STATE_HOPPER_FIRST && id < STATE_HOPPER_FIRST + STATE_HOPPER_COUNT) {
