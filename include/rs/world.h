@@ -11,7 +11,8 @@ typedef void (*WorldChangeObserver)(void *context, BlockPos pos,
                                     BlockState previous, BlockState current);
 typedef enum {
     RS_OK = 0, RS_UNCHANGED, RS_OUT_OF_BOUNDS, RS_UNSUPPORTED,
-    RS_INVALID_ARGUMENT, RS_OUT_OF_MEMORY, RS_INTERNAL_ERROR
+    RS_INVALID_ARGUMENT, RS_OUT_OF_MEMORY, RS_INTERNAL_ERROR,
+    RS_IO_ERROR, RS_CORRUPT_DATA
 } RsResult;
 enum { CHUNK_SIZE = 16, SECTION_VOLUME = 4096, WORLD_MIN_Y = -64,
        WORLD_MAX_Y = 319, SECTION_COUNT = 24, STATE_ID_LIMIT = 32768,
@@ -37,6 +38,19 @@ typedef struct {
 WorldConfig world_config_default(void);
 World *world_create(WorldConfig config);
 void world_destroy(World *world);
+/* Void action functions retain and report the first failure. Later edits,
+ * ticks and saves are ignored; host C control flow continues normally.
+ * Read the result once at the end. RS_UNCHANGED is successful and is not
+ * retained as an error. Actions ignore NULL; these queries return
+ * RS_INVALID_ARGUMENT and an explanatory message for NULL worlds. */
+RsResult world_result(const World *world);
+/* Empty when healthy. The returned message is borrowed until clear/destroy. */
+const char *world_error_message(const World *world);
+/* Clear a validation or file error after handling it, without undoing edits.
+ * Internal/allocation failures and errors raised during tick processing cannot
+ * be cleared. No effect during tick processing. A GUI can clear a rejected
+ * edit before accepting the next one. */
+void world_clear_error(World *world);
 bool world_in_bounds(const World *world, BlockPos pos);
 WorldPlotBounds world_plot_bounds(const World *world);
 RsResult world_expand_plot(World *world, Direction direction, uint32_t count);
@@ -54,8 +68,8 @@ bool world_get_piston_motion(const World *world, BlockPos pos,
  * for a repeater/comparator/observer; the push direction for a piston; the lid
  * direction for a barrel; the outlet for a dropper or hopper (hopper up maps to down);
  * and the horizontal orientation for a rail (opposite directions share a shape). */
-RsResult world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
-RsResult world_remove(World *world, BlockPos pos);
+void world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
+void world_remove(World *world, BlockPos pos);
 RsResult world_toggle_wire_dot(World *world, BlockPos pos);
 RsResult world_cycle_repeater_delay(World *world, BlockPos pos);
 RsResult world_toggle_comparator_mode(World *world, BlockPos pos);

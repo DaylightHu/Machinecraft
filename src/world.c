@@ -4,6 +4,7 @@
 #include "world_internal.h"
 #include "sim_internal.h"
 #include "worldgen.h"
+#include <inttypes.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -183,6 +184,57 @@ void world_destroy(World *w)
     free(w->chunks); posmap_destroy(&w->chunk_map);
     if (w->backing) fclose(w->backing);
     free(w);
+}
+RsResult world_result(const World *w)
+{
+    if (!w) return RS_INVALID_ARGUMENT;
+    if (w->action_error != RS_OK) return w->action_error;
+    return w->sim ? w->sim->error : RS_INTERNAL_ERROR;
+}
+const char *world_error_message(const World *w)
+{
+    if (!w) return "invalid world";
+    if (w->action_error != RS_OK) return w->action_error_message;
+    RsResult result = world_result(w);
+    return result == RS_OK ? "" : rs_result_name(result);
+}
+void world_clear_error(World *w)
+{
+    if (!w || !w->sim || !w->action_error_recoverable ||
+        w->sim->handling_tick || w->sim->block_entities.ticking ||
+        w->sim->error != w->action_error) return;
+    w->sim->error = RS_OK;
+    w->action_error = RS_OK;
+    w->action_error_recoverable = false;
+    w->action_error_message[0] = '\0';
+}
+void world_record_error(World *w, RsResult result, const char *operation,
+                         const BlockPos *pos, const char *detail)
+{
+    if (!w || result == RS_OK || result == RS_UNCHANGED ||
+        w->action_error != RS_OK) return;
+    w->action_error = result;
+    w->action_error_recoverable = w->sim->error == RS_OK &&
+        result != RS_INTERNAL_ERROR && result != RS_OUT_OF_MEMORY &&
+        !w->sim->handling_tick && !w->sim->block_entities.ticking;
+    if (w->sim->error == RS_OK) w->sim->error = result;
+    if (pos) {
+        snprintf(w->action_error_message, sizeof(w->action_error_message),
+                 "%s at (%d, %d, %d), tick %" PRIu64 ": %s",
+                 operation, pos->x, pos->y, pos->z, w->tick, detail);
+    } else {
+        snprintf(w->action_error_message, sizeof(w->action_error_message),
+                 "%s at tick %" PRIu64 ": %s", operation, w->tick, detail);
+    }
+    fprintf(stderr, "%s\n", w->action_error_message);
+}
+bool world_action_ready(World *w, const char *operation, const BlockPos *pos)
+{
+    if (!w || w->action_error != RS_OK) return false;
+    RsResult result = sim_flush(w);
+    if (result == RS_OK) return true;
+    world_record_error(w, result, operation, pos, rs_result_name(result));
+    return false;
 }
 bool world_in_bounds(const World *w, BlockPos p)
 {
@@ -460,6 +512,7 @@ bool world_get_piston_motion(const World *w, BlockPos p,
 static bool world_write_state(World *w, BlockPos p, BlockState state,
                                BlockState *before, bool *changed)
 {
+    if (!w || w->sim->error != RS_OK) return false;
     StateId id;
     if (!world_in_bounds(w, p) || !state_encode(state, &id)) { w->sim->error = RS_INTERNAL_ERROR; return false; }
     BlockState previous = world_get(w, p); StateId old;
@@ -523,7 +576,7 @@ void world_remove_internal(World *w, BlockPos p)
 {
     (void)world_set_block(w, p, block_default(BLOCK_AIR), 3);
 }
-RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
+static RsResult place_block(World *w, BlockPos p, BlockId id, Direction support)
 {
     if (!w) return RS_INVALID_ARGUMENT;
     if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
@@ -615,7 +668,13 @@ RsResult world_place(World *w, BlockPos p, BlockId id, Direction support)
     }
     return w->sim->error;
 }
-RsResult world_remove(World *w, BlockPos p)
+void world_place(World *w, BlockPos p, BlockId id, Direction support)
+{
+    if (!world_action_ready(w, "world_place", &p)) return;
+    RsResult result = place_block(w, p, id, support);
+    world_record_error(w, result, "world_place", &p, rs_result_name(result));
+}
+static RsResult remove_block(World *w, BlockPos p)
 {
     if (!w) return RS_INVALID_ARGUMENT;
     if (!world_in_bounds(w, p)) return RS_OUT_OF_BOUNDS;
@@ -640,6 +699,12 @@ RsResult world_remove(World *w, BlockPos p)
             (void)world_set_block(w, behind, block_default(BLOCK_AIR), 3);
     }
     return w->sim->error;
+}
+void world_remove(World *w, BlockPos p)
+{
+    if (!world_action_ready(w, "world_remove", &p)) return;
+    RsResult result = remove_block(w, p);
+    world_record_error(w, result, "world_remove", &p, rs_result_name(result));
 }
 RsResult world_toggle_wire_dot(World *w, BlockPos p)
 {
@@ -768,6 +833,6 @@ void world_set_change_observer(World *w, WorldChangeObserver observer, void *con
 }
 const char *rs_result_name(RsResult result)
 {
-    static const char *const names[] = {"ok", "unchanged", "out of bounds", "unsupported", "invalid argument", "out of memory", "internal error"};
+    static const char *const names[] = {"ok", "unchanged", "out of bounds", "unsupported", "invalid argument", "out of memory", "internal error", "I/O error", "corrupt data"};
     return (unsigned)result < sizeof(names) / sizeof(names[0]) ? names[result] : "unknown";
 }

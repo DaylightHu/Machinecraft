@@ -802,6 +802,7 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
 
     World *world = game_session_world(app->session);
     RsResult result;
+    uint64_t before_revision = world_revision(world);
     bool flexible = place && flexible_placement_held(selected);
     if (place) {
         if (!hit.has_face) {
@@ -835,10 +836,14 @@ static void apply_edit(GuiApp *app, VoxelHit hit, BlockId selected, bool place,
                      "%s must be placed on a top face", block_name(selected));
             return;
         }
-        result = world_place(world, target, selected, plan.placement);
+        world_place(world, target, selected, plan.placement);
     } else {
-        result = world_remove(world, hit.pos);
+        world_remove(world, hit.pos);
     }
+    result = world_result(world);
+    if (result == RS_OK && world_revision(world) == before_revision)
+        result = RS_UNCHANGED;
+    world_clear_error(world);
     if (result == RS_OK || result == RS_UNCHANGED) {
         RsResult flushed = game_session_flush(app->session);
         if (flushed != RS_OK) result = flushed;

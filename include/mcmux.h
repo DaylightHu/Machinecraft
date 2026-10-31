@@ -9,20 +9,22 @@
 #include "rs/structure.h"
 #include "rs/sim.h"
 
-/* Load an MCS structure with its saved anchor placed at anchor. */
+/* Load an MCS structure with its saved anchor placed at anchor. On failure,
+ * report the error and return NULL without terminating the host process. */
 World *load_mcs(const char *path, BlockPos anchor);
 
-/* Save world to an MCW file. */
-GameSessionResult save_mcw(World *world, const char *path);
+/* Save world to an MCW file. Action failures are retained in world. NULL
+ * worlds and worlds with a previous error are ignored by action functions. */
+void save_mcw(World *world, const char *path);
 
 /* Write world back to the original MCS selection in the MCW file. The anchor
  * must match the one passed to load_mcs(). */
-GameSessionResult writeback_mcs(World *world, const char *mcs_path,
-                                BlockPos anchor, const char *mcw_path);
+void writeback_mcs(World *world, const char *mcs_path,
+                   BlockPos anchor, const char *mcw_path);
 
 /* Place a block & Remove a block */
-// RsResult world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
-// RsResult world_remove(World *world, BlockPos pos);
+// void world_place(World *world, BlockPos pos, BlockId id, Direction support_dir);
+// void world_remove(World *world, BlockPos pos);
 
 /* Read a block and its state. Out-of-bounds reads return air; check bounds
  * separately when the distinction matters. */
@@ -55,7 +57,13 @@ GameSessionResult writeback_mcs(World *world, const char *mcs_path,
 // RsResult world_set_dropper_seed(World *world, uint64_t seed);
 
 /* Advance a fixed number of game ticks synchronously. */
-// RsResult sim_advance_ticks(World *world, uint32_t ticks);
+// void sim_advance_ticks(World *world, uint32_t ticks);
+
+/* Inspect the first failure at the end of a sequence of actions, or handle a
+ * recoverable error and clear it before continuing interactive editing. */
+// RsResult world_result(const World *world);
+// const char *world_error_message(const World *world);
+// void world_clear_error(World *world);
 
 /* Read simulation statistics and world counters. */
 // SimStats sim_stats(const World *world);
