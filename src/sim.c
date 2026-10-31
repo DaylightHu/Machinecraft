@@ -461,7 +461,7 @@ RsResult sim_step(World *w)
     tick_block_entities(w);
     return s->error;
 }
-RsResult sim_advance_ticks(World *w, uint32_t ticks)
+static RsResult advance_ticks(World *w, uint32_t ticks)
 {
     if (!w || w->sim->handling_tick || w->sim->block_entities.ticking)
         return RS_INVALID_ARGUMENT;
@@ -480,6 +480,12 @@ RsResult sim_advance_ticks(World *w, uint32_t ticks)
         if (result != RS_OK) return result;
     }
     return RS_OK;
+}
+void sim_advance_ticks(World *w, uint32_t ticks)
+{
+    if (!world_action_ready(w, "sim_advance_ticks", NULL)) return;
+    RsResult result = advance_ticks(w, ticks);
+    world_record_error(w, result, "sim_advance_ticks", NULL, rs_result_name(result));
 }
 SimStats sim_stats(const World *w)
 {

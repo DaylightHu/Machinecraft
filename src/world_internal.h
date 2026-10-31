@@ -31,7 +31,13 @@ struct World {
     uint64_t read_stamp, external_power_stamp;
     WorldReadEntry reads[WORLD_READ_CACHE_SIZE];
     WirePowerEntry wire_powers[WORLD_READ_CACHE_SIZE];
+    RsResult action_error;
+    bool action_error_recoverable;
+    char action_error_message[512];
 };
+bool world_action_ready(World *world, const char *operation, const BlockPos *pos);
+void world_record_error(World *world, RsResult result, const char *operation,
+                         const BlockPos *pos, const char *detail);
 bool world_write_derived(World *world, BlockPos pos, BlockState state);
 enum { UPDATE_NEIGHBORS = 1, UPDATE_CLIENTS = 2, UPDATE_NO_RERENDER = 4,
        UPDATE_KNOWN_SHAPE = 16,
